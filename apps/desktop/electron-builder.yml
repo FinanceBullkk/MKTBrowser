@@ -1,11 +1,13 @@
-appId: com.multizen.desktop
-productName: MultiZen
+appId: com.mkttool.browser
+productName: MKT Browser
+executableName: MKTBrowser
 # Pinned to the version in package.json devDependencies so electron-builder
 # does not need to introspect node_modules. Bump in sync when upgrading.
 electronVersion: 33.2.0
 directories:
   output: release
   buildResources: ../../build
+afterPack: scripts/edit-windows-executable.cjs
 
 files:
   - "out/**/*"
@@ -43,23 +45,15 @@ asarUnpack:
   - "**/*.node"
   - "node_modules/better-sqlite3/**/*"
 
-# Bundled first-party "companion" extension (injects the "Add to MultiZen"
+# Bundled first-party companion extension (injects the "Add to MKT Browser"
 # button on Web Store pages). Copied verbatim into <resources>/companion so the
 # driver can pass it to --load-extension for every profile.
 extraResources:
   - from: resources/companion
     to: companion
 
-# Stable artifact names — no version baked in. The GitHub Releases page
-# still surfaces the version (from package.json) in the release title,
-# but the asset URLs stay predictable:
-#   /releases/latest/download/MultiZen-mac-arm64.dmg
-#   /releases/latest/download/MultiZen-mac-x64.dmg
-#   /releases/latest/download/MultiZen-win-x64.exe
-#   /releases/latest/download/MultiZen-linux-x86_64.AppImage
-#     (electron-builder hardcodes the x86_64 suffix on AppImage,
-#      regardless of artifactName — the landing links to that exact name)
-# This lets the landing page hardcode links that never need updating.
+# Stable local artifact names. W01 intentionally has no publish provider or
+# application update channel; internal release delivery belongs to W04.
 mac:
   category: public.app-category.developer-tools
   icon: ../../build/icon.icns
@@ -76,13 +70,13 @@ mac:
   target:
     - dmg
     - zip
-  artifactName: "${productName}-mac-${arch}.${ext}"
+  artifactName: "MKTBrowser-mac-${arch}.${ext}"
   # Open-source unsigned build: skip Apple notarization (would need a
   # $99/yr Developer ID). We use ad-hoc signing (identity "-") so the
   # binary has at least *some* signature — without it, macOS Sequoia
   # shows the scary "is damaged" Gatekeeper dialog with no override.
   # With ad-hoc sig the user can right-click → Open, or run
-  # `xattr -cr /Applications/MultiZen.app` to strip the quarantine bit.
+  # Use xattr on /Applications/MKT Browser.app to strip the quarantine bit.
   # Both paths are documented in the release notes.
   hardenedRuntime: false
   gatekeeperAssess: false
@@ -94,8 +88,11 @@ win:
     - target: nsis
       arch:
         - x64
-  artifactName: "${productName}-win-${arch}.${ext}"
+  artifactName: "MKTBrowser-win-${arch}.${ext}"
   icon: ../../build/icon.png
+  # Resource editing is handled by the afterPack hook. electron-builder's
+  # bundled winCodeSign archive requires Windows symlink privileges even when
+  # no certificate is configured, which breaks ordinary non-admin W01 builds.
   signAndEditExecutable: false
 
 linux:
@@ -103,19 +100,10 @@ linux:
     - target: AppImage
       arch:
         - x64
-  artifactName: "${productName}-linux-${arch}.${ext}"
+  artifactName: "MKTBrowser-linux-${arch}.${ext}"
   icon: ../../build/icons
 
 nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
-
-publish:
-  provider: github
-  owner: multizenteam
-  repo: multizen-browser
-  # Cut a published release (not draft) directly from CI. Default is
-  # draft which means /releases/latest redirector misses it until a
-  # human un-drafts manually — we don't want that friction.
-  releaseType: release

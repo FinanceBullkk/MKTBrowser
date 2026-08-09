@@ -163,7 +163,7 @@ export async function importProfile(
 ): Promise<Profile> {
   const buf = await readFile(archivePath);
   if (buf.subarray(0, 4).toString("ascii") !== MAGIC) {
-    throw new Error("Not a MultiZen archive");
+    throw new Error("Not an MKT Browser archive");
   }
   const version = buf.readUInt16BE(4);
   if (!SUPPORTED_VERSIONS.has(version)) {

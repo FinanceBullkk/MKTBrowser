@@ -75,7 +75,7 @@ export class HttpTransport {
     // open. (Empty string counts as "no token" for the check in handle().)
     if (!this.opts.authToken) {
       process.stderr.write(
-        "[multizen] WARNING: MCP HTTP transport starting WITHOUT an auth token — " +
+        "[mkt-browser] WARNING: MCP HTTP transport starting WITHOUT an auth token — " +
           "the local control port is UNAUTHENTICATED and any local process can drive it.\n",
       );
     }
@@ -128,7 +128,7 @@ export class HttpTransport {
         JSON.stringify({
           error: "unauthorized",
           detail:
-            "Send 'Authorization: Bearer <token>'. The token is shown in MultiZen → Settings → MCP, or in the 'mcp-token' file in the app data directory.",
+            "Send 'Authorization: Bearer <token>'. The token is shown in MKT Browser → Settings → MCP, or in the 'mcp-token' file in the app data directory.",
         }),
       );
       return;

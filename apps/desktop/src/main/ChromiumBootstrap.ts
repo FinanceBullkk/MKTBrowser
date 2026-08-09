@@ -241,7 +241,7 @@ export class ChromiumBootstrap extends EventEmitter {
         throw new Error(
           `Failed to extract the browser archive — the download was likely ` +
             `corrupted or truncated. It has been cleared; please retry. If it ` +
-            `keeps failing, add MultiZen to your antivirus exclusions or switch ` +
+            `keeps failing, add MKT Browser to your antivirus exclusions or switch ` +
             `the engine to Chrome for Testing in Settings. (${(e as Error).message})`,
         );
       }
@@ -434,7 +434,7 @@ export class ChromiumBootstrap extends EventEmitter {
       `Could not download a complete, valid Chromium archive after ${MAX_ATTEMPTS} attempts. ` +
         `Last error: ${lastError?.message ?? "unknown"}. Your network — or an antivirus / ` +
         `corporate proxy inspecting HTTPS — is likely corrupting the large download. Try a ` +
-        `different network, add MultiZen to your antivirus exclusions, or switch the engine to ` +
+        `different network, add MKT Browser to your antivirus exclusions, or switch the engine to ` +
         `"Chrome for Testing" in Settings.`,
     );
   }
@@ -729,7 +729,7 @@ export class ChromiumBootstrap extends EventEmitter {
       return;
     } catch (e) {
       console.warn(
-        `[multizen] codesign basic verify failed for ${appBundle}: ${(e as Error).message} — proceeding (HTTPS + SHA-256 already trusted).`,
+        `[mkt-browser] codesign basic verify failed for ${appBundle}: ${(e as Error).message} — proceeding (HTTPS + SHA-256 already trusted).`,
       );
     }
   }

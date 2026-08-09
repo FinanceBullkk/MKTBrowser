@@ -23,19 +23,9 @@ export interface AppSettings {
   mcpHttpPort: number;
   /** Which Chromium binary to download + run. Switching requires app restart. */
   browserEngine: BrowserEngine;
-  /**
-   * Automatically check for + (on Windows/Linux) download app updates in the
-   * background. On macOS the app can only notify, not auto-install. Manual
-   * "Check for updates" works regardless of this flag.
-   */
+  /** Reserved for settings-schema compatibility; W01 has no app updater. */
   autoUpdate: boolean;
-  /**
-   * Opt-in anonymous usage heartbeat. OFF by default — for an anti-detect
-   * audience any call-home must be an explicit choice. When on, the app sends
-   * at most one ping/day carrying only app version + OS family + an ephemeral
-   * single-use nonce — no persistent id, no IP sent. The MULTIZEN_NO_TELEMETRY
-   * env var force-disables it regardless. See docs/TELEMETRY.md.
-   */
+  /** Reserved for settings-schema compatibility; W01 has no usage heartbeat. */
   usageReporting: boolean;
 }
 
@@ -46,8 +36,7 @@ const DEFAULTS: AppSettings = {
   // Prefer CloakBrowser as the primary runtime. Chrome for Testing stays
   // available as a compatibility fallback from Settings.
   browserEngine: "cloakbrowser",
-  autoUpdate: true,
-  // Opt-in. Never phone home unless the user explicitly turns this on.
+  autoUpdate: false,
   usageReporting: false,
 };
 

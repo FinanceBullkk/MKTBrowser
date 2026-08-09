@@ -254,28 +254,6 @@ export type ChromiumStatus =
   | { kind: "error"; message: string }
   | { kind: "dev-system"; binaryPath: string };
 
-/**
- * App self-update lifecycle (electron-updater). Drives the in-app update UX.
- *   idle           — nothing known / no update; show nothing
- *   checking       — a check is in flight (manual or automatic)
- *   up-to-date     — a (manual) check completed and we're current
- *   available      — a newer version exists. On macOS this is TERMINAL (no
- *                    auto-install possible without an Apple Developer ID), so
- *                    it carries a `downloadUrl` to the DMG. On win/linux the
- *                    download auto-starts, so this is usually transient.
- *   downloading    — update downloading in the background (win/linux)
- *   ready          — update downloaded and staged; restart applies it (win/linux)
- *   error          — check/download/install failed; carries a human message
- */
-export type UpdateStatus =
-  | { kind: "idle" }
-  | { kind: "checking" }
-  | { kind: "up-to-date"; version: string }
-  | { kind: "available"; version: string; downloadUrl: string }
-  | { kind: "downloading"; version: string; percent: number; bytesPerSecond?: number }
-  | { kind: "ready"; version: string }
-  | { kind: "error"; message: string };
-
 export interface ChromiumManifest {
   version: string;
   /** Direct download URL; we recommend our R2 CDN */

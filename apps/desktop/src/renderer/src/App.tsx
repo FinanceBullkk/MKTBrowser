@@ -13,10 +13,9 @@ import { Confirm, Prompt } from "./components/screens/Confirm";
 import { CommandPalette, type CommandAction } from "./components/palette/CommandPalette";
 import { FirstRun } from "./components/onboarding/FirstRun";
 import { ChromiumBootstrapModal } from "./components/onboarding/ChromiumBootstrapModal";
-import { UpdateBanner } from "./components/UpdateBanner";
 import { Modal, ConfirmHost, confirm } from "./components/atoms";
 import { readPersisted, usePersistedState, writePersisted } from "./lib/persisted";
-import type { ActivityEvent, ChromiumStatus, ProfileSummary, SystemInfo } from "./types";
+import type { ActivityEvent, ProfileSummary, SystemInfo } from "./types";
 
 type ModalState =
   | { kind: "none" }
@@ -47,17 +46,7 @@ export function App(): JSX.Element {
   const closingTimers = useRef<Map<string, number>>(new Map());
   const [events, setEvents] = useState<ActivityEvent[]>([]);
   const [info, setInfo] = useState<SystemInfo | null>(null);
-  // Whether the Chromium runtime is ready — used to suppress the update banner
-  // while the blocking first-run bootstrap modal is up, so they don't compete.
-  const [chromiumReady, setChromiumReady] = useState(false);
-  useEffect(() => {
-    if (!window.multizen) return;
-    const apply = (s: ChromiumStatus): void =>
-      setChromiumReady(s.kind === "ready" || s.kind === "dev-system");
-    void window.multizen.chromium.status().then(apply);
-    return window.multizen.chromium.onStatus(apply);
-  }, []);
-  // Global toast when the companion "Add to MultiZen" button installs an
+  // Global toast when the companion "Add to MKT Browser" button installs an
   // extension into a running profile (the edit sheet may not be open).
   useEffect(() => {
     if (!window.multizen) return;
@@ -331,8 +320,6 @@ export function App(): JSX.Element {
         onCmdK={() => setPaletteOpen(true)}
         onSettings={() => setSection("settings")}
       />
-
-      <UpdateBanner suppressed={!chromiumReady} />
 
       <div className="flex-1 flex min-h-0">
         <LeftRail active={section} onChange={setSection} onCmdK={() => setPaletteOpen(true)} />

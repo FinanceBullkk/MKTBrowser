@@ -1,7 +1,7 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage } from "electron";
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import {
   ProfileManager,
   exportProfile,
@@ -20,12 +20,15 @@ import {
   type ActivityLog,
 } from "@multizen/mcp-server";
 import { SettingsStore, defaultSettingsPath, type AppSettings } from "@multizen/settings-store";
-import type { ChromiumStatus, ExtensionConfig, ProxyConfig, UpdateStatus } from "@multizen/types";
+import type { ChromiumStatus, ExtensionConfig, ProxyConfig } from "@multizen/types";
 import { ChromiumBrowserDriver } from "./ChromiumBrowserDriver.ts";
 import { ChromiumBootstrap } from "./ChromiumBootstrap.ts";
-import { UpdaterService } from "./UpdaterService.ts";
-import { UsageReporting } from "./UsageReporting.ts";
 import { loadOrCreateMcpToken } from "./mcpToken.ts";
+import {
+  PRODUCT_APP_ID,
+  PRODUCT_NAME,
+  resolveProductUserDataPath,
+} from "./productIdentity.ts";
 import { ExtensionsService } from "./extensions/ExtensionsService.ts";
 import {
   sweepOrphans,
@@ -64,8 +67,6 @@ let mainWindow: BrowserWindow | null = null;
 let profileManager: ProfileManager;
 let browserDriver: ChromiumBrowserDriver;
 let chromiumBootstrap: ChromiumBootstrap;
-let updater: UpdaterService;
-let usageReporting: UsageReporting;
 let extensionsService: ExtensionsService;
 /** Recent companion installs, to de-dupe the marker's retry logs. */
 const recentCompanionInstalls = new Set<string>();
@@ -107,11 +108,23 @@ function createWindow(): void {
   });
 }
 
-// Name must be set BEFORE app.whenReady() so the dock and menu bar pick
-// it up — otherwise macOS shows "Electron" until app fully loads.
-app.setName("MultiZen");
+// Product identity and the data root must be configured before app.whenReady().
+// An explicit Electron --user-data-dir remains available solely for disposable
+// development and verification runs; normal launches always use the fixed,
+// product-owned root and never inspect or migrate the legacy MultiZen store.
+app.setName(PRODUCT_NAME);
+if (process.platform === "win32") app.setAppUserModelId(PRODUCT_APP_ID);
+if (!app.commandLine.hasSwitch("user-data-dir")) {
+  const productUserData = resolveProductUserDataPath({
+    platform: process.platform,
+    appData: app.getPath("appData"),
+    localAppData: process.env.LOCALAPPDATA,
+  });
+  mkdirSync(productUserData, { recursive: true });
+  app.setPath("userData", productUserData);
+}
 app.setAboutPanelOptions({
-  applicationName: "MultiZen",
+  applicationName: PRODUCT_NAME,
   applicationVersion: app.getVersion(),
 });
 
@@ -148,7 +161,7 @@ app.whenReady().then(async () => {
   )
     .then((res) => {
       if (res.removed > 0) {
-        process.stdout.write(`[multizen] extension-store sweep reclaimed ${res.removed} orphan(s)\n`);
+        process.stdout.write(`[mkt-browser] extension-store sweep reclaimed ${res.removed} orphan(s)\n`);
       }
     })
     .catch(() => {});
@@ -168,23 +181,6 @@ app.whenReady().then(async () => {
     process.stderr.write(`Chromium bootstrap failed: ${String(e)}\n`);
   });
 
-  // App self-update (electron-updater). No-op in dev / non-packaged. Reads
-  // settings live so the autoUpdate toggle takes effect without restart.
-  updater = new UpdaterService({ getSettings: () => cachedSettings as AppSettings });
-  updater.on("status", (status: UpdateStatus) => {
-    mainWindow?.webContents.send("update:status", status);
-  });
-  updater.init();
-
-  // Opt-in anonymous usage heartbeat. OFF by default; dormant until the user
-  // enables it in Settings. Reads settings live so the toggle takes effect
-  // without restart. See docs/TELEMETRY.md.
-  usageReporting = new UsageReporting({
-    getSettings: () => cachedSettings as AppSettings,
-    statePath: join(dataRoot, "usage-state.json"),
-  });
-  usageReporting.start();
-
   // Per-profile extension management. Engine version feeds the Web Store CRX
   // endpoint's prodversion (falls back to a sane default before the runtime is
   // ready).
@@ -201,7 +197,7 @@ app.whenReady().then(async () => {
     profileManager,
     chromiumBootstrap,
     extensionStoreRoot,
-    // The companion's "Add to MultiZen" button routes here (profile-scoped).
+    // The companion's "Add to MKT Browser" button routes here (profile-scoped).
     // Confirm natively first: any script on the store page could trigger the
     // channel, so an explicit OS dialog makes a drive-by install impossible.
     onCompanionInstall: (profileId, extensionId) => {
@@ -215,7 +211,7 @@ app.whenReady().then(async () => {
         const profile = profileManager.get(profileId);
         const choice = await dialog.showMessageBox(mainWindow!, {
           type: "question",
-          buttons: ["Add to MultiZen", "Cancel"],
+          buttons: ["Add to MKT Browser", "Cancel"],
           defaultId: 0,
           cancelId: 1,
           message: "Add this extension to the profile?",
@@ -327,8 +323,6 @@ app.whenReady().then(async () => {
   ipcMain.handle("settings:get", () => settingsStore.load());
   ipcMain.handle("settings:update", async (_e, patch: Partial<AppSettings>) => {
     cachedSettings = await settingsStore.update(patch);
-    // Let the updater react to an autoUpdate toggle without an app restart.
-    updater?.onSettingsChanged();
     return cachedSettings;
   });
 
@@ -448,15 +442,6 @@ app.whenReady().then(async () => {
     return prepareStaged(r.filePaths[0]);
   });
 
-  // App self-update IPC
-  ipcMain.handle("update:status", () => updater.getStatus());
-  ipcMain.handle("update:lastChecked", () => updater.getLastCheckedAt());
-  ipcMain.handle("update:check", () => updater.checkForUpdates({ manual: true }));
-  ipcMain.handle("update:install", () => updater.installAndRestart());
-  ipcMain.handle("update:download", (_e, version: string) =>
-    shell.openExternal(updater.downloadUrlFor(version)),
-  );
-
   // Fingerprint generator IPC — called from create + edit forms when the
   // user hits Regen. Returns a fresh, internally-consistent preset.
   ipcMain.handle("fingerprint:generate", () => generateFingerprint());
@@ -483,7 +468,7 @@ app.whenReady().then(async () => {
         return reconcileFingerprint(current, patch);
       } catch (e) {
         if (e instanceof FingerprintReconcileError) {
-          console.warn("[multizen] fingerprint reconcile rejected:", e.message);
+          console.warn("[mkt-browser] fingerprint reconcile rejected:", e.message);
           return current;
         }
         throw e;
@@ -525,7 +510,7 @@ app.whenReady().then(async () => {
       const result = await dialog.showSaveDialog(mainWindow ?? undefined!, {
         title: "Export profile",
         defaultPath: `${profile.name.replace(/[^a-z0-9-_]+/gi, "_")}.mzar`,
-        filters: [{ name: "MultiZen archive", extensions: ["mzar"] }],
+        filters: [{ name: "MKT Browser archive", extensions: ["mzar"] }],
       });
       if (result.canceled || !result.filePath) return { ok: false, reason: "cancelled" };
       // Bundle the profile's shared-store extensions so importing on another
@@ -547,7 +532,7 @@ app.whenReady().then(async () => {
     async (_e, passphrase: string): Promise<{ ok: true; id: string } | { ok: false; reason: string }> => {
       const result = await dialog.showOpenDialog(mainWindow ?? undefined!, {
         title: "Import profile",
-        filters: [{ name: "MultiZen archive", extensions: ["mzar"] }],
+        filters: [{ name: "MKT Browser archive", extensions: ["mzar"] }],
         properties: ["openFile"],
       });
       if (result.canceled || result.filePaths.length === 0) {
@@ -601,11 +586,11 @@ app.whenReady().then(async () => {
   // build → crashes on Intel Macs). Surface it as a visible dialog and quit
   // cleanly instead of a mystery no-window.
   const detail = e instanceof Error ? (e.stack ?? e.message) : String(e);
-  process.stderr.write(`[multizen] fatal startup error:\n${detail}\n`);
+  process.stderr.write(`[mkt-browser] fatal startup error:\n${detail}\n`);
   dialog.showErrorBox(
-    "MultiZen failed to start",
+    "MKT Browser failed to start",
     `A startup step failed:\n\n${e instanceof Error ? e.message : String(e)}\n\n` +
-      "Please report this on Discord/GitHub with this message.",
+      "Please report this message to the MKTTool administrator.",
   );
   app.quit();
 });

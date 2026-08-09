@@ -9,11 +9,10 @@ import type {
   LaunchedProfile,
   ChromiumStatus,
   DeviceFamily,
-  UpdateStatus,
   ExtensionConfig,
 } from "@multizen/types";
 
-/** Payload for the `extensions:installed` push (companion "Add to MultiZen"). */
+/** Payload for the `extensions:installed` push (companion "Add to MKT Browser"). */
 export type ExtensionInstalledEvent =
   | { ok: true; profileId: string; extension: ExtensionConfig }
   | { ok: false; profileId: string; error: string };
@@ -113,14 +112,6 @@ export interface MultizenApi {
     icon: (ext: ExtensionConfig, profileId: string | null) => Promise<string | null>;
     onInstalled: (cb: (e: ExtensionInstalledEvent) => void) => () => void;
   };
-  update: {
-    status: () => Promise<UpdateStatus>;
-    lastChecked: () => Promise<number>;
-    check: () => Promise<UpdateStatus>;
-    install: () => Promise<void>;
-    download: (version: string) => Promise<void>;
-    onStatus: (cb: (s: UpdateStatus) => void) => () => void;
-  };
   fingerprint: {
     generate: () => Promise<FingerprintConfig>;
     devices: () => Promise<ReadonlyArray<DeviceCatalogEntry>>;
@@ -155,7 +146,6 @@ export type {
   LaunchedProfile,
   ChromiumStatus,
   DeviceFamily,
-  UpdateStatus,
   ExtensionConfig,
   UpdateProfileInput,
 };

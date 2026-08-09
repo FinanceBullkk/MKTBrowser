@@ -3,7 +3,7 @@
  * In dev mode the app runs as `node_modules/electron/dist/Electron.app`,
  * and macOS reads `CFBundleDisplayName` / `CFBundleName` from that
  * bundle's Info.plist for the dock tooltip and the menu bar app name.
- * Electron's `app.setName('MultiZen')` does NOT override these — it only
+ * Electron's `app.setName('MKT Browser')` does NOT override these — it only
  * affects the About panel and `app.getName()`.
  *
  * Production builds use electron-builder which generates a fresh
@@ -14,14 +14,23 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const APP_NAME = "MultiZen";
-// Distinct from the production bundle id (`com.multizen.app`) so dev and
+const APP_NAME = "MKT Browser";
+// Distinct from the production bundle id (`com.mkttool.browser`) so dev and
 // prod keep separate macOS preferences / Launch Services entries.
-const APP_ID = "com.multizen.dev";
+const APP_ID = "com.mkttool.browser.dev";
 const repoRoot = path.resolve(__dirname, "..", "..", "..");
 const candidates = [
   // Hoisted at desktop workspace level (yarn 4 node-modules linker is unpredictable).
-  path.join(__dirname, "..", "node_modules", "electron", "dist", "Electron.app", "Contents", "Info.plist"),
+  path.join(
+    __dirname,
+    "..",
+    "node_modules",
+    "electron",
+    "dist",
+    "Electron.app",
+    "Contents",
+    "Info.plist",
+  ),
   // Hoisted at root.
   path.join(repoRoot, "node_modules", "electron", "dist", "Electron.app", "Contents", "Info.plist"),
 ];
@@ -34,20 +43,22 @@ if (!plistPath) {
 const original = fs.readFileSync(plistPath, "utf8");
 let patched = original;
 patched = patched.replace(
-  /(<key>CFBundleName<\/key>\s*<string>)Electron(<\/string>)/,
+  /(<key>CFBundleName<\/key>\s*<string>)(?:Electron|MultiZen)(<\/string>)/,
   `$1${APP_NAME}$2`,
 );
 patched = patched.replace(
-  /(<key>CFBundleDisplayName<\/key>\s*<string>)Electron(<\/string>)/,
+  /(<key>CFBundleDisplayName<\/key>\s*<string>)(?:Electron|MultiZen)(<\/string>)/,
   `$1${APP_NAME}$2`,
 );
 patched = patched.replace(
-  /(<key>CFBundleIdentifier<\/key>\s*<string>)com\.github\.Electron(<\/string>)/,
+  /(<key>CFBundleIdentifier<\/key>\s*<string>)(?:com\.github\.Electron|com\.multizen\.dev)(<\/string>)/,
   `$1${APP_ID}$2`,
 );
 if (patched !== original) {
   fs.writeFileSync(plistPath, patched);
-  console.log(`[multizen] Patched ${path.relative(repoRoot, plistPath)} → ${APP_NAME} / ${APP_ID}`);
+  console.log(
+    `[mkt-browser] Patched ${path.relative(repoRoot, plistPath)} → ${APP_NAME} / ${APP_ID}`,
+  );
 }
 
 // Some macOS versions read names from `Contents/Resources/en.lproj/InfoPlist.strings`
@@ -66,10 +77,10 @@ try {
   const existing = fs.existsSync(stringsPath) ? fs.readFileSync(stringsPath, "utf8") : "";
   if (existing !== content) {
     fs.writeFileSync(stringsPath, content);
-    console.log(`[multizen] Wrote ${path.relative(repoRoot, stringsPath)}`);
+    console.log(`[mkt-browser] Wrote ${path.relative(repoRoot, stringsPath)}`);
   }
 } catch (e) {
-  console.warn("[multizen] InfoPlist.strings write skipped:", e.message);
+  console.warn("[mkt-browser] InfoPlist.strings write skipped:", e.message);
 }
 
 const { execFileSync } = require("node:child_process");
@@ -79,7 +90,7 @@ try {
   // Touch the .app so LS notices a change.
   fs.utimesSync(appPath, new Date(), new Date());
   execFileSync(lsregister, ["-f", appPath], { stdio: "ignore" });
-  console.log("[multizen] Refreshed Launch Services cache for", path.basename(appPath));
+  console.log("[mkt-browser] Refreshed Launch Services cache for", path.basename(appPath));
 } catch (e) {
-  console.warn("[multizen] lsregister refresh skipped:", e.message);
+  console.warn("[mkt-browser] lsregister refresh skipped:", e.message);
 }

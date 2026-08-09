@@ -7,14 +7,11 @@ import {
   DownloadCloud,
   Eye,
   EyeOff,
-  RefreshCw,
-  ShieldCheck,
   Sparkles,
   Zap,
 } from "lucide-react";
 import { Pill } from "../atoms";
-import { relativeTime } from "../../lib/relativeTime";
-import type { AppSettings, SystemInfo, UpdateStatus } from "../../types";
+import type { AppSettings, SystemInfo } from "../../types";
 
 interface Props {
   onImport: () => void;
@@ -26,32 +23,16 @@ export function Settings({ onImport }: Props): JSX.Element {
   const [copied, setCopied] = useState(false);
   const [tokenCopied, setTokenCopied] = useState(false);
   const [tokenShown, setTokenShown] = useState(false);
-  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
-  const [lastChecked, setLastChecked] = useState<number>(0);
-
   useEffect(() => {
     if (!window.multizen) return;
     void window.multizen.settings.get().then(setSettings);
     void window.multizen.system.info().then(setInfo);
-    void window.multizen.update.status().then(setUpdateStatus);
-    void window.multizen.update.lastChecked().then(setLastChecked);
-    // Refresh "last checked" on every status change too, so a background
-    // auto-check updates the label live while Settings is open.
-    return window.multizen.update.onStatus((s) => {
-      setUpdateStatus(s);
-      void window.multizen.update.lastChecked().then(setLastChecked);
-    });
   }, []);
 
   async function patch(p: Partial<AppSettings>): Promise<void> {
     if (!settings) return;
     const next = await window.multizen.settings.update(p);
     setSettings(next);
-  }
-
-  async function checkForUpdates(): Promise<void> {
-    await window.multizen.update.check();
-    setLastChecked(await window.multizen.update.lastChecked());
   }
 
   function copyMcpUrl(): void {
@@ -81,8 +62,8 @@ export function Settings({ onImport }: Props): JSX.Element {
       <div className="max-w-[720px] mx-auto">
         <div className="text-lg font-bold tracking-tight text-slate-100 mb-1.5">Settings</div>
         <div className="text-[13px] text-slate-500 mb-5">
-          MCP server, archives, build info. Configuration is local — MultiZen does not call any
-          external API on your behalf.
+          Profile data and configuration stay on this device. W01 has no application update or
+          usage-reporting channel.
         </div>
 
         <Row
@@ -217,81 +198,23 @@ export function Settings({ onImport }: Props): JSX.Element {
             >
               Import .mzar archive
             </button>
-            <a
-              href="https://github.com/multizenteam/multizen-browser#archives"
-              target="_blank"
-              rel="noopener"
-              className="btn-ghost px-3 py-[7px] text-[12px] rounded-[9px]"
-            >
-              Read archive format docs
-            </a>
+            <span className="text-[11px] text-slate-500 self-center">
+              Existing encrypted .mzar archives remain format-compatible.
+            </span>
           </div>
         </Row>
 
         <Row
           icon={<DownloadCloud size={16} strokeWidth={1.5} />}
-          title="Updates"
-          desc={
-            info?.platform === "darwin"
-              ? "Auto-install isn't available on macOS yet — we'll notify you in-app to download the new version."
-              : "MultiZen checks for updates in the background and installs them on restart."
-          }
+          title="Application updates"
+          desc="Automatic checks and installs are disabled in W01. Install only an approved MKT Browser build supplied through the internal release process."
         >
-          <div className="flex items-center gap-2.5 flex-wrap">
-            <button
-              type="button"
-              className="btn-secondary px-3 py-[7px] text-[12px] rounded-[9px] inline-flex items-center gap-1.5"
-              onClick={() => void checkForUpdates()}
-              disabled={updateStatus?.kind === "checking"}
-            >
-              <RefreshCw
-                size={12}
-                className={updateStatus?.kind === "checking" ? "animate-spin" : ""}
-              />
-              Check for updates
-            </button>
-            <span className="text-[12px] text-slate-400">{updateLabel(updateStatus)}</span>
-          </div>
-          <div className="text-[11px] text-slate-600 mt-2">
-            Last checked: {lastChecked ? relativeTime(new Date(lastChecked).toISOString()) : "never"}
-          </div>
-          <label className="flex items-center gap-2.5 mt-3 text-[12px] text-slate-400 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={settings.autoUpdate}
-              onChange={(e) => void patch({ autoUpdate: e.target.checked })}
-              className="w-3.5 h-3.5 rounded accent-purple-500"
-            />
-            Automatically check for updates
-          </label>
-        </Row>
-
-        <Row
-          icon={<ShieldCheck size={16} strokeWidth={1.5} />}
-          title="Anonymous usage"
-          desc="Off by default. Help gauge how many people run MultiZen."
-        >
-          <label className="flex items-center gap-2.5 text-[12px] text-slate-400 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={settings.usageReporting}
-              onChange={(e) => void patch({ usageReporting: e.target.checked })}
-              className="w-3.5 h-3.5 rounded accent-purple-500"
-            />
-            Send an anonymous daily heartbeat
-          </label>
-          <div className="text-[11px] text-slate-600 mt-2 leading-relaxed">
-            When on, sends once a day: app version, OS family, and a random
-            single-use token — <b>no</b> account, <b>no</b> persistent ID, and your IP is
-            never stored (a coarse country is derived server-side then discarded). No
-            profiles, proxies, or browsing are ever included. Set{" "}
-            <code className="text-slate-500">MULTIZEN_NO_TELEMETRY=1</code> to force it off.
-          </div>
+          <Pill kind="idle">disabled</Pill>
         </Row>
 
         <Row icon={<Sparkles size={16} strokeWidth={1.5} />} title="About" desc="">
           <div className="mono text-[12px] text-slate-400 leading-relaxed">
-            MultiZen v{info?.appVersion ?? "0.0.0"} · {info?.platform ?? "—"} · Electron{" "}
+            MKT Browser v{info?.appVersion ?? "0.0.0"} · {info?.platform ?? "—"} · Electron{" "}
             {electronVersion()}
           </div>
         </Row>
@@ -320,25 +243,6 @@ const engineOptions: Array<{
 function electronVersion(): string {
   // Vite injects nothing useful here; just use a stable string for now.
   return "33";
-}
-
-function updateLabel(status: UpdateStatus | null): string {
-  switch (status?.kind) {
-    case "checking":
-      return "Checking…";
-    case "up-to-date":
-      return "You're on the latest version";
-    case "available":
-      return `v${status.version} available`;
-    case "downloading":
-      return `Downloading v${status.version}… ${status.percent}%`;
-    case "ready":
-      return `v${status.version} ready — restart to update`;
-    case "error":
-      return `Check failed: ${status.message}`;
-    default:
-      return "";
-  }
 }
 
 function Row({

@@ -62,6 +62,13 @@ INTERNAL_*.md
 *.md
 !README.md
 
+# MKB gate evidence is intentionally versioned; other internal Markdown stays local.
+!docs/
+docs/**
+!docs/mkb-00-source-license-engine-inventory.md
+!docs/mkb-00-apple-silicon-verification.md
+!docs/mkb-w01-windows-product-isolation.md
+
 # Python bytecode caches
 __pycache__/
 *.pyc

@@ -1,13 +1,8 @@
 {
-  "name": "multizen",
+  "name": "mkt-browser",
   "version": "0.3.1",
   "private": true,
-  "description": "AI-native browser for agents and operators — desktop app + MCP server with anti-detect Chromium",
-  "homepage": "https://getmultizen.com",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/multizenteam/multizen-browser.git"
-  },
+  "description": "Internal MKTTool browser profile runtime derived from MultiZen",
   "license": "MIT",
   "workspaces": [
     "apps/*",

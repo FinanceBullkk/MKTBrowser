@@ -25,7 +25,7 @@ import type { ProfileId, ProxyConfig } from "@multizen/types";
  *   - an upstream SOCKS5 proxy via the `socks` library
  *
  * The host string from the SOCKS5 CONNECT is forwarded as-is — no local
- * DNS resolution happens on the MultiZen process side either.
+ * DNS resolution happens on the MKT Browser process side either.
  */
 
 interface BridgeHandle {
@@ -84,13 +84,13 @@ async function startBridge(upstream: ProxyConfig): Promise<BridgeHandle> {
         sock.destroy();
         return;
       }
-      console.warn("[multizen] socks5 bridge:", msg);
+      console.warn("[mkt-browser] socks5 bridge:", msg);
       sock.destroy();
     });
   });
 
   server.on("error", (e) => {
-    console.error("[multizen] socks5 bridge server error:", e);
+    console.error("[mkt-browser] socks5 bridge server error:", e);
   });
 
   await new Promise<void>((resolve, reject) => {

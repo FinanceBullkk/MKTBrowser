@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 /**
  * Absolute path to the bundled first-party "companion" extension (the one that
- * injects the "Add to MultiZen" button on Web Store pages). It is loaded into
+ * injects the "Add to MKT Browser" button on Web Store pages). It is loaded into
  * every profile via --load-extension and is never part of a profile's
  * user-visible extension list.
  *

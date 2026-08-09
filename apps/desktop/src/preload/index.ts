@@ -15,10 +15,9 @@ import type {
   DeviceFamily,
   ExtensionConfig,
   ProxyConfig,
-  UpdateStatus,
 } from "@multizen/types";
 
-/** Payload for the `extensions:installed` push (companion "Add to MultiZen"). */
+/** Payload for the `extensions:installed` push (companion "Add to MKT Browser"). */
 export type ExtensionInstalledEvent =
   | { ok: true; profileId: string; extension: ExtensionConfig }
   | { ok: false; profileId: string; error: string };
@@ -154,19 +153,6 @@ const api = {
       const listener = (_: unknown, e: ExtensionInstalledEvent): void => cb(e);
       ipcRenderer.on("extensions:installed", listener);
       return () => ipcRenderer.off("extensions:installed", listener);
-    },
-  },
-  update: {
-    status: (): Promise<UpdateStatus> => ipcRenderer.invoke("update:status"),
-    lastChecked: (): Promise<number> => ipcRenderer.invoke("update:lastChecked"),
-    check: (): Promise<UpdateStatus> => ipcRenderer.invoke("update:check"),
-    install: (): Promise<void> => ipcRenderer.invoke("update:install"),
-    download: (version: string): Promise<void> =>
-      ipcRenderer.invoke("update:download", version),
-    onStatus: (cb: (status: UpdateStatus) => void): (() => void) => {
-      const listener = (_: unknown, status: UpdateStatus): void => cb(status);
-      ipcRenderer.on("update:status", listener);
-      return () => ipcRenderer.off("update:status", listener);
     },
   },
   fingerprint: {

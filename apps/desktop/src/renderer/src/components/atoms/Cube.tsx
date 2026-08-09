@@ -20,7 +20,7 @@ export function Cube({ size = 28, glow = true, className }: Props): JSX.Element 
   return (
     <img
       src={logoUrl}
-      alt="MultiZen"
+      alt="MKT Browser"
       width={size}
       height={size}
       className={className}

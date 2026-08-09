@@ -41,7 +41,7 @@ export interface ChromiumBrowserDriverOptions {
   profileManager: ProfileManager;
   chromiumBootstrap: ChromiumBootstrap;
   /**
-   * Called when the companion extension's "Add to MultiZen" button is clicked
+   * Called when the companion extension's "Add to MKT Browser" button is clicked
    * inside a running profile. `profileId` is the profile that made the call
    * (the CDP session is profile-scoped). The host installs the extension.
    */
@@ -69,7 +69,7 @@ interface DriverEvents {
  *
  * `click` and `type` accept CSS selectors only. Natural-language target resolution is
  * intentionally not built in — the MCP client (Claude in Cursor / Claude Desktop / etc.)
- * is responsible for parsing the page snapshot and producing selectors. MultiZen never
+ * is responsible for parsing the page snapshot and producing selectors. MKT Browser never
  * calls any external API.
  */
 export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver {
@@ -182,13 +182,13 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
         }
         if (geo.timezone && geo.timezone !== fp.timezone) {
           console.log(
-            `[multizen] aligning fingerprint timezone ${fp.timezone} → ${geo.timezone} (proxy geo)`,
+            `[mkt-browser] aligning fingerprint timezone ${fp.timezone} → ${geo.timezone} (proxy geo)`,
           );
           fp = { ...fp, timezone: geo.timezone };
         }
       } catch (e) {
         console.warn(
-          "[multizen] proxy IP probe failed; using WebRTC block fallback:",
+          "[mkt-browser] proxy IP probe failed; using WebRTC block fallback:",
           (e as Error).message,
         );
       }
@@ -201,7 +201,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     // PID and silently exits (the "socket hang up" the user sees: CDP
     // briefly opens, profile-in-use check fires, process bails).
     await cleanStaleSingletonLocks(browserDataDir).catch((e: unknown) => {
-      console.warn("[multizen] failed to clean Singleton locks:", (e as Error).message);
+      console.warn("[mkt-browser] failed to clean Singleton locks:", (e as Error).message);
     });
 
     // macOS records app crashes and on next launch shows
@@ -212,7 +212,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     // bundle id, and turn off persistence in user defaults.
     if (process.platform === "darwin") {
       await disableMacOsPersistentStateRestore().catch((e: unknown) => {
-        console.warn("[multizen] persistent-state cleanup skipped:", (e as Error).message);
+        console.warn("[mkt-browser] persistent-state cleanup skipped:", (e as Error).message);
       });
     }
 
@@ -222,7 +222,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     // Preferences JSON. We mutate it before spawn (Chrome must be off
     // to avoid corruption).
     await ensureSessionRestore(browserDataDir).catch((e: unknown) => {
-      console.warn("[multizen] failed to write session restore preference:", (e as Error).message);
+      console.warn("[mkt-browser] failed to write session restore preference:", (e as Error).message);
     });
 
     // Best-effort: suppress CFT's "is only for automated testing" infobar
@@ -231,7 +231,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     if (process.platform === "darwin" && engine === "cft") {
       await ensureCftInfobarSuppressed().catch((e: unknown) => {
         console.warn(
-          "[multizen] failed to suppress CFT infobar (continuing):",
+          "[mkt-browser] failed to suppress CFT infobar (continuing):",
           (e as Error).message,
         );
       });
@@ -360,7 +360,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     }
 
     // Browser extensions: load this profile's enabled extensions plus the
-    // bundled companion (the "Add to MultiZen" injector). Same flag pair
+    // bundled companion (the "Add to MKT Browser" injector). Same flag pair
     // CloakBrowser's own `extension_paths` emits; requires the persistent
     // user-data-dir we already use. Extensions live under the profile dir
     // (shared across engines), so we pass absolute paths.
@@ -458,7 +458,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       // running-changed teardown.
       if (code !== 0 && code !== null) {
         process.stderr.write(
-          `[multizen] Chromium pid ${child.pid} exited code=${code} signal=${signal ?? "—"}\n`,
+          `[mkt-browser] Chromium pid ${child.pid} exited code=${code} signal=${signal ?? "—"}\n`,
         );
       }
     });
@@ -522,12 +522,12 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
           await send("Page.addScriptToEvaluateOnNewDocument", {
             source: webrtcScript,
           }).catch((e: unknown) => {
-            console.error("[multizen] WebRTC addScript failed:", e);
+            console.error("[mkt-browser] WebRTC addScript failed:", e);
           });
           await send("Runtime.evaluate", { expression: webrtcScript }).catch((e: unknown) => {
             const msg = (e as Error).message;
             if (!/default execution context/i.test(msg)) {
-              console.error("[multizen] WebRTC eval failed:", e);
+              console.error("[mkt-browser] WebRTC eval failed:", e);
             }
           });
         }
@@ -538,13 +538,13 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
           await send("Page.addScriptToEvaluateOnNewDocument", {
             source: fingerprintScript,
           }).catch((e: unknown) => {
-            console.error("[multizen] fingerprint addScript failed:", e);
+            console.error("[mkt-browser] fingerprint addScript failed:", e);
           });
           await send("Runtime.evaluate", { expression: fingerprintScript }).catch(
             (e: unknown) => {
               const msg = (e as Error).message;
               if (!/default execution context/i.test(msg)) {
-                console.error("[multizen] fingerprint eval failed:", e);
+                console.error("[mkt-browser] fingerprint eval failed:", e);
               }
             },
           );
@@ -569,7 +569,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
               screenOrientation: { type: "landscapePrimary", angle: 0 },
             });
           } catch (e) {
-            console.error("[multizen] setDeviceMetricsOverride failed:", e);
+            console.error("[mkt-browser] setDeviceMetricsOverride failed:", e);
           }
         }
         // 2-4. Timezone / Locale / UA+UA-CH overrides via CDP.
@@ -587,7 +587,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
               timezoneId: fp.timezone,
             });
           } catch (e) {
-            console.error("[multizen] setTimezoneOverride failed:", e);
+            console.error("[mkt-browser] setTimezoneOverride failed:", e);
           }
           try {
             await send("Emulation.setLocaleOverride", { locale: fp.locale });
@@ -597,7 +597,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
             // the override is in place, we just can't replace it. Harmless.
             const msg = (e as Error).message;
             if (!/already in effect/i.test(msg)) {
-              console.error("[multizen] setLocaleOverride failed:", e);
+              console.error("[mkt-browser] setLocaleOverride failed:", e);
             }
           }
           const meta = safeBuildUserAgentMetadata(fp);
@@ -611,7 +611,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
             if (meta) params.userAgentMetadata = meta;
             await send("Emulation.setUserAgentOverride", params);
           } catch (e) {
-            console.error("[multizen] setUserAgentOverride failed:", e);
+            console.error("[mkt-browser] setUserAgentOverride failed:", e);
           }
         } else {
           // CloakBrowser: we skip the CDP UA/timezone overrides above because
@@ -631,7 +631,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
           } catch (e) {
             const msg = (e as Error).message;
             if (!/already in effect/i.test(msg)) {
-              console.error("[multizen] setLocaleOverride (cloakbrowser) failed:", e);
+              console.error("[mkt-browser] setLocaleOverride (cloakbrowser) failed:", e);
             }
           }
         }
@@ -658,17 +658,17 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
             returnByValue: true,
           });
           const value = probe?.result?.value;
-          if (value) console.log("[multizen] post-bootstrap probe:", value);
+          if (value) console.log("[mkt-browser] post-bootstrap probe:", value);
         } catch (e) {
           // Non-fatal — diagnostic only.
           void e;
         }
       })
       .catch((e: unknown) => {
-        console.error("[multizen] CDP bootstrap failed:", e);
+        console.error("[mkt-browser] CDP bootstrap failed:", e);
       });
 
-    // Wire the companion's "Add to MultiZen" channel for this profile — scoped
+    // Wire the companion's "Add to MKT Browser" channel for this profile — scoped
     // to Web Store pages only (the host polls a DOM attribute there, never on
     // the user's normal browsing). The CDP session is profile-scoped, so any
     // signal belongs to this profileId — no cross-profile ambiguity.
@@ -738,7 +738,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
   async close(profileId: ProfileId): Promise<void> {
     const r = this.running.get(profileId);
     if (!r) return;
-    console.log(`[multizen] close() profile=${profileId} pid=${r.pid}`);
+    console.log(`[mkt-browser] close() profile=${profileId} pid=${r.pid}`);
     // Signal the terminating phase up front (covers MCP/external callers that
     // don't drive the button's local "Stopping…" state).
     this.emit("running-changed", { kind: "closing", profileId });
@@ -763,7 +763,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       // anyway so a stuck socket can never strand Stop.
       await withTimeout(stopBridgeForProfile(profileId), 2000);
     } finally {
-      console.log(`[multizen] close() done profile=${profileId} pid=${r.pid} alive=${isPidAlive(r.pid)}`);
+      console.log(`[mkt-browser] close() done profile=${profileId} pid=${r.pid} alive=${isPidAlive(r.pid)}`);
       this.emit("running-changed", { kind: "closed", profileId, reason: "user-close" });
     }
   }
@@ -846,7 +846,7 @@ function safeBuildUserAgentMetadata(
   try {
     return buildUserAgentMetadata(fp);
   } catch (e) {
-    console.error("[multizen] buildUserAgentMetadata threw:", e);
+    console.error("[mkt-browser] buildUserAgentMetadata threw:", e);
     return null;
   }
 }
@@ -1088,7 +1088,7 @@ function deviceMemoryApiValue(physicalGb: number): number {
 
 function fingerprintSeed(profileId: ProfileId, fp: FingerprintConfig): string {
   // CloakBrowser accepts a stable seed. Keep it numeric and deterministic
-  // so a MultiZen profile keeps the same native fingerprint across launches.
+  // so an MKT Browser profile keeps the same native fingerprint across launches.
   // When the persona carries an explicit `seed`, key off it instead of the
   // profile id so the canvas/audio/WebGL readback noise can be rotated
   // without changing the profile id.
@@ -1113,7 +1113,7 @@ function browserDataDirForEngine(profileDataDir: string, engine: BrowserEngine):
   // Chrome profile data is not safely reusable across different Chromium
   // forks/major versions. CloakBrowser 145 SIGTRAPs on profile roots that
   // were previously opened by CFT 147/148, so keep its browser state in a
-  // separate user-data-dir while preserving the logical MultiZen profile.
+  // separate user-data-dir while preserving the logical MKT Browser profile.
   if (engine === "cloakbrowser") {
     return join(profileDataDir, "engines", "cloakbrowser");
   }
@@ -1154,14 +1154,14 @@ async function gracefulShutdown(r: RunningProcess): Promise<void> {
   await withTimeout(r.session.close(), 1000);
 
   // 2. SIGTERM by PID (not r.child.kill — don't trust the child flags).
-  console.log(`[multizen] shutdown pid=${pid}: Browser.close didn't exit in 4s → SIGTERM`);
+  console.log(`[mkt-browser] shutdown pid=${pid}: Browser.close didn't exit in 4s → SIGTERM`);
   killPid(pid, "SIGTERM");
   if (await waitForPidDeath(pid, 2000)) return;
 
   // 3. SIGKILL — the kernel guarantees this. We poll to confirm the process is
   //    genuinely gone before returning, so close() never reports a false
   //    "closed" while Chromium is still on screen.
-  console.log(`[multizen] shutdown pid=${pid}: SIGTERM didn't exit in 2s → SIGKILL`);
+  console.log(`[mkt-browser] shutdown pid=${pid}: SIGTERM didn't exit in 2s → SIGKILL`);
   killPid(pid, "SIGKILL");
   await waitForPidDeath(pid, 2000);
 }
@@ -1191,7 +1191,7 @@ async function pidsUsingDataDir(dataDir: string): Promise<number[]> {
 async function killBrowsersUsingDataDir(dataDir: string): Promise<void> {
   const pids = await pidsUsingDataDir(dataDir);
   if (pids.length === 0) return;
-  console.log(`[multizen] sweep: SIGKILL ${pids.length} lingering proc(s) for ${dataDir}: ${pids.join(", ")}`);
+  console.log(`[mkt-browser] sweep: SIGKILL ${pids.length} lingering proc(s) for ${dataDir}: ${pids.join(", ")}`);
   for (const pid of pids) killPid(pid, "SIGKILL");
 }
 
@@ -1742,13 +1742,13 @@ async function ensureCftInfobarSuppressed(): Promise<void> {
     `/bin/cp '${tempPath}' '${userPlistPath}' && ` +
     `/bin/chmod 644 '${userPlistPath}' && ` +
     `/usr/sbin/chown root:wheel '${userPlistPath}'`;
-  const apple = `do shell script "${shellScript.replace(/"/g, '\\"')}" with administrator privileges with prompt "MultiZen needs a one-time admin authorization to hide the 'Chrome for Testing' warning bar."`;
+  const apple = `do shell script "${shellScript.replace(/"/g, '\\"')}" with administrator privileges with prompt "MKT Browser needs a one-time admin authorization to hide the 'Chrome for Testing' warning bar."`;
 
   try {
     await execFileP("osascript", ["-e", apple]);
     // Cleanup tempfile after copy succeeds (no admin needed since we own it).
     await fsp.unlink(tempPath).catch(() => {});
-    console.log("[multizen] CFT infobar suppressed via managed-preferences plist");
+    console.log("[mkt-browser] CFT infobar suppressed via managed-preferences plist");
   } catch (e) {
     await fsp.unlink(tempPath).catch(() => {});
     // User cancelled or osascript failed. Plant the sentinel so we
@@ -1849,7 +1849,7 @@ async function cleanStaleSingletonLocks(dataDir: string): Promise<void> {
     if (pid !== null && !isPidAlive(pid)) {
       try {
         await fsp.unlink(path);
-        console.log(`[multizen] cleaned stale ${name} (was → ${target}, pid ${pid} not running)`);
+        console.log(`[mkt-browser] cleaned stale ${name} (was → ${target}, pid ${pid} not running)`);
       } catch {
         // ignore
       }
@@ -1860,7 +1860,7 @@ async function cleanStaleSingletonLocks(dataDir: string): Promise<void> {
     // no longer exists, remove the symlink even when no PID is encoded.
     if (name === "SingletonSocket" && !existsSync(target)) {
       await fsp.unlink(path).catch(() => {});
-      console.log(`[multizen] cleaned stale ${name} (missing target ${target})`);
+      console.log(`[mkt-browser] cleaned stale ${name} (missing target ${target})`);
     }
   }
 }
@@ -1893,7 +1893,7 @@ async function unlinkSingletonFiles(
     const path = join(dataDir, name);
     await fsp.unlink(path).catch(() => {});
   }
-  console.log(`[multizen] cleaned stale Singleton files (${reason})`);
+  console.log(`[mkt-browser] cleaned stale Singleton files (${reason})`);
 }
 
 /**
