@@ -194,6 +194,24 @@ and joined them with LF and no trailing newline; its SHA-256 was
 The real `%LOCALAPPDATA%\MKTTool\MKTBrowser` root was absent before and after the test. Cleanup left
 no disposable root, MKT Browser/CloakBrowser process, or listener on ports `7777` or `47822`.
 
+## Coverage gap found after this record was written
+
+The verification above covers both repositories' test suites, typechecks, the desktop package, and
+the packaged browser lifecycle. It does not cover the MKTTool Relay packaging pipeline, and one W02
+regression was hiding in exactly that gap.
+
+The MKTTool side of the slice had saved `relay/install-relay.ps1` without its UTF-8 byte order mark
+while the file still held 986 non-ASCII characters. Windows PowerShell 5.1 reads a BOM-less `.ps1`
+in the machine ANSI code page, so the installer still installs correctly and only its on-screen text
+becomes unreadable. The MKTTool packaging script already guarded this, which is why the defect
+surfaced as a halted Relay build rather than a silent bad installer — but that guard runs only when
+someone packages a release, so the regression passed a full 1,120-test suite untouched.
+
+Restoring the mark changed nothing else, because the file bytes were already valid UTF-8. The same
+check now also lives in the MKTTool installer encoding tests, and the repackaged Relay executable
+passed its 24-check acceptance while carrying the W02 contract and port `47822`. This does not alter
+any browser-side result recorded above; the packaged browser artifact and its hash are unchanged.
+
 ## Open distribution and product gates
 
 W02 is technical-only. It does not close MKB-00 or MKB-01, and it does not authorize a pilot.
