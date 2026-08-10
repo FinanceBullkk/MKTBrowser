@@ -1,7 +1,7 @@
 import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
-import type { ProfileManager } from "@multizen/profile-manager";
-import type { ExtensionConfig, Profile } from "@multizen/types";
+import type { ProfileManager } from "@mktbrowser/profile-manager";
+import type { ExtensionConfig, Profile } from "@mktbrowser/types";
 import { unpackToStore } from "./crxPipeline.ts";
 import { gcEntry } from "./extensionStore.ts";
 import { downloadCrxById, parseExtensionId } from "./webstoreDownload.ts";
@@ -137,9 +137,7 @@ export class ExtensionsService {
 
   setEnabled(profileId: string, extId: string, enabled: boolean): void {
     const profile = this.requireProfile(profileId);
-    const next = (profile.extensions ?? []).map((e) =>
-      e.id === extId ? { ...e, enabled } : e,
-    );
+    const next = (profile.extensions ?? []).map((e) => (e.id === extId ? { ...e, enabled } : e));
     this.pm.update(profileId, { extensions: next });
   }
 
@@ -171,7 +169,10 @@ export class ExtensionsService {
     this.pm.update(fresh.id, { extensions: next });
     // Reclaim the prior copy if it pointed somewhere different (changed version,
     // or a legacy per-profile dir being superseded by a shared entry).
-    if (prior && (prior.scope !== cfg.scope || prior.version !== cfg.version || prior.dir !== cfg.dir)) {
+    if (
+      prior &&
+      (prior.scope !== cfg.scope || prior.version !== cfg.version || prior.dir !== cfg.dir)
+    ) {
       await this.reclaim(fresh, prior);
     }
   }

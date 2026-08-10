@@ -1,5 +1,5 @@
 {
-  "name": "@multizen/settings-store",
+  "name": "@mktbrowser/settings-store",
   "version": "0.2.9",
   "private": true,
   "type": "module",

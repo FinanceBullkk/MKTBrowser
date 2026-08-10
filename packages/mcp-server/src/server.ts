@@ -1,25 +1,24 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import type { ProfileManager } from "@multizen/profile-manager";
+import type { ProfileManager } from "@mktbrowser/profile-manager";
 import {
   generateFingerprint,
   reconcileFingerprint,
   FingerprintReconcileError,
   deviceCatalog,
   localeCatalog,
-} from "@multizen/profile-manager";
-import type {
-  LaunchedProfile,
-  ProfileId,
-  CreateProfileInput,
-  UpdateProfileInput,
-  FingerprintConfig,
-  ProxyConfig,
-} from "@multizen/types";
+} from "@mktbrowser/profile-manager";
+import {
+  MKT_BROWSER_MCP_SERVER_NAME,
+  MKT_BROWSER_MCP_SERVER_VERSION,
+  type LaunchedProfile,
+  type ProfileId,
+  type CreateProfileInput,
+  type UpdateProfileInput,
+  type FingerprintConfig,
+  type ProxyConfig,
+} from "@mktbrowser/types";
 import { ActivityLog } from "./ActivityLog.js";
 
 // ── Security gates (engine-independent, enforced in the MCP dispatch layer) ──
@@ -177,7 +176,7 @@ function rawCdpEnabled(): boolean {
   // Fail-closed + unsurprising: only an explicit truthy value enables it, so
   // `=0` / `=false` / `=` (empty) / unset all stay OFF. (Avoids the `!!env`
   // footgun where any non-empty string — including "0" — reads as true.)
-  const v = (process.env.MULTIZEN_MCP_ALLOW_RAW_CDP ?? "").trim().toLowerCase();
+  const v = (process.env.MKT_BROWSER_MCP_ALLOW_RAW_CDP ?? "").trim().toLowerCase();
   return v === "1" || v === "true" || v === "yes" || v === "on";
 }
 
@@ -210,14 +209,14 @@ export interface BrowserDriver {
   ): Promise<unknown>;
 }
 
-export interface MultizenMcpServerOptions {
+export interface MktBrowserMcpServerOptions {
   profileManager: ProfileManager;
   browserDriver: BrowserDriver;
   /** Optional activity log; if not provided, a fresh one is created */
   activityLog?: ActivityLog;
 }
 
-export interface MultizenMcpServer {
+export interface MktBrowserMcpServer {
   server: Server;
   activityLog: ActivityLog;
 }
@@ -273,7 +272,7 @@ const NewTabSchema = ProfileIdSchema.extend({
 });
 
 /** Real device families a fingerprint can impersonate. MUST stay in lockstep
- *  with the `DeviceFamily` union in @multizen/types (and the DEVICES catalog);
+ *  with the `DeviceFamily` union in @mktbrowser/types (and the DEVICES catalog);
  *  call `list_fingerprint_options` for the human-readable catalog. */
 const DEVICE_FAMILIES = [
   "macbook-pro-14-m3",
@@ -354,7 +353,7 @@ const UpdateProfileSchema = ProfileIdSchema.extend({
  * and the non-obvious constraints (profiles are real windows, headful only,
  * a human may step in) that an agent can't infer from tool signatures alone.
  */
-const MULTIZEN_MCP_INSTRUCTIONS = [
+const MKT_BROWSER_MCP_INSTRUCTIONS = [
   "MKT Browser drives real, persistent Chromium profiles — each has its own cookies, login state, fingerprint, and proxy, kept on disk between sessions.",
   "",
   "Workflow:",
@@ -369,19 +368,19 @@ const MULTIZEN_MCP_INSTRUCTIONS = [
   "- Do not create or launch profiles in bulk to farm accounts; this is a human-in-the-loop tool for authorized workflows.",
 ].join("\n");
 
-export function createMultizenMcpServer(opts: MultizenMcpServerOptions): MultizenMcpServer {
+export function createMktBrowserMcpServer(opts: MktBrowserMcpServerOptions): MktBrowserMcpServer {
   const { profileManager, browserDriver } = opts;
   const activityLog = opts.activityLog ?? new ActivityLog();
 
   const server = new Server(
-    { name: "multizen", version: "0.2.0-pre" },
+    { name: MKT_BROWSER_MCP_SERVER_NAME, version: MKT_BROWSER_MCP_SERVER_VERSION },
     {
       capabilities: {
         tools: {},
       },
       // Returned in the `initialize` result so a connecting agent learns the
       // overall workflow up front, not just per-tool descriptions.
-      instructions: MULTIZEN_MCP_INSTRUCTIONS,
+      instructions: MKT_BROWSER_MCP_INSTRUCTIONS,
     },
   );
 
@@ -404,7 +403,8 @@ export function createMultizenMcpServer(opts: MultizenMcpServerOptions): Multize
       activityLog.finish(event, "ok", summarize(result), startedAt);
       return ok(result);
     } catch (e) {
-      const message = e instanceof z.ZodError ? e.message : e instanceof Error ? e.message : String(e);
+      const message =
+        e instanceof z.ZodError ? e.message : e instanceof Error ? e.message : String(e);
       const code =
         e instanceof CdpPolicyError
           ? "FORBIDDEN"
@@ -560,19 +560,16 @@ async function dispatch(
       const { profile_id, selector, timeout_ms, sessionId } = WaitForSelectorSchema.parse(args);
       assertProfileRunning(browserDriver, profile_id);
       const expression = `!!document.querySelector(${JSON.stringify(selector)})`;
-      const found = await pollUntil(
-        async () => {
-          const res = (await browserDriver.cdpSend(
-            profile_id,
-            "Runtime.evaluate",
-            { expression, returnByValue: true },
-            sessionId,
-            { safe: true },
-          )) as { result?: { value?: unknown } };
-          return res?.result?.value === true;
-        },
-        timeout_ms ?? 30000,
-      );
+      const found = await pollUntil(async () => {
+        const res = (await browserDriver.cdpSend(
+          profile_id,
+          "Runtime.evaluate",
+          { expression, returnByValue: true },
+          sessionId,
+          { safe: true },
+        )) as { result?: { value?: unknown } };
+        return res?.result?.value === true;
+      }, timeout_ms ?? 30000);
       return { found, selector };
     }
     case "list_tabs": {
@@ -612,19 +609,16 @@ async function dispatch(
       // requires an event subscription the single cdpSend primitive can't
       // express. Polling document.readyState gives the same readiness signal
       // purely through Runtime.evaluate (no domain enable).
-      const loaded = await pollUntil(
-        async () => {
-          const res = (await browserDriver.cdpSend(
-            profile_id,
-            "Runtime.evaluate",
-            { expression: "document.readyState", returnByValue: true },
-            sessionId,
-            { safe: true },
-          )) as { result?: { value?: unknown } };
-          return res?.result?.value === "complete";
-        },
-        timeout_ms ?? 30000,
-      );
+      const loaded = await pollUntil(async () => {
+        const res = (await browserDriver.cdpSend(
+          profile_id,
+          "Runtime.evaluate",
+          { expression: "document.readyState", returnByValue: true },
+          sessionId,
+          { safe: true },
+        )) as { result?: { value?: unknown } };
+        return res?.result?.value === "complete";
+      }, timeout_ms ?? 30000);
       return { loaded };
     }
     case "cdp_send": {
@@ -632,7 +626,7 @@ async function dispatch(
       // tool is also hidden from tools/list) unless explicitly enabled.
       if (!rawCdpEnabled()) {
         throw new CdpPolicyError(
-          "raw cdp_send is disabled. Set MULTIZEN_MCP_ALLOW_RAW_CDP=1 to enable it " +
+          "raw cdp_send is disabled. Set MKT_BROWSER_MCP_ALLOW_RAW_CDP=1 to enable it " +
             "(power-user / trusted context); the curated tools (evaluate_js, get_cookies, " +
             "list_tabs, wait_for_*, …) cover normal use.",
         );
@@ -744,7 +738,10 @@ const TOOL_DEFINITIONS = [
         tags: { type: "array", items: { type: "string" } },
         proxy: PROXY_JSON_SCHEMA,
         fingerprint: FINGERPRINT_JSON_SCHEMA,
-        seed: { type: "string", description: "Optional entropy seed for the native fingerprint noise." },
+        seed: {
+          type: "string",
+          description: "Optional entropy seed for the native fingerprint noise.",
+        },
       },
     },
   },
@@ -889,7 +886,11 @@ const TOOL_DEFINITIONS = [
       properties: {
         profile_id: { type: "string" },
         selector: { type: "string", description: "CSS selector to wait for" },
-        timeout_ms: { type: "integer", minimum: 1, description: "Wait budget in ms (default 30000)" },
+        timeout_ms: {
+          type: "integer",
+          minimum: 1,
+          description: "Wait budget in ms (default 30000)",
+        },
         sessionId: { type: "string" },
       },
     },
@@ -938,7 +939,11 @@ const TOOL_DEFINITIONS = [
       required: ["profile_id"],
       properties: {
         profile_id: { type: "string" },
-        timeout_ms: { type: "integer", minimum: 1, description: "Wait budget in ms (default 30000)" },
+        timeout_ms: {
+          type: "integer",
+          minimum: 1,
+          description: "Wait budget in ms (default 30000)",
+        },
         sessionId: { type: "string" },
       },
     },
@@ -952,7 +957,11 @@ const TOOL_DEFINITIONS = [
       required: ["profile_id"],
       properties: {
         profile_id: { type: "string" },
-        timeout_ms: { type: "integer", minimum: 1, description: "Wait budget in ms (default 30000)" },
+        timeout_ms: {
+          type: "integer",
+          minimum: 1,
+          description: "Wait budget in ms (default 30000)",
+        },
         sessionId: { type: "string" },
       },
     },
@@ -960,7 +969,7 @@ const TOOL_DEFINITIONS = [
   {
     name: "cdp_send",
     description:
-      "OPT-IN (requires MULTIZEN_MCP_ALLOW_RAW_CDP=1; off by default — prefer the curated tools). Send a raw Chrome DevTools Protocol command (stealth-safe). Any domain this call had to enable is auto-disabled afterwards so the anti-detect baseline is preserved; domains enabled at connect (Page) are never touched. On anti-detect engines, enabling a DCHECK-sensitive domain (Runtime/Network) is refused — use the convenience wrappers (evaluate_js, get_cookies, …) which need no enable. For safety, host-reaching and cross-origin-secret methods (IO.read, Fetch.*, Storage.getCookies, …) and privileged/local URL schemes (file:/chrome:/devtools:/view-source:) are rejected.",
+      "OPT-IN (requires MKT_BROWSER_MCP_ALLOW_RAW_CDP=1; off by default — prefer the curated tools). Send a raw Chrome DevTools Protocol command (stealth-safe). Any domain this call had to enable is auto-disabled afterwards so the anti-detect baseline is preserved; domains enabled at connect (Page) are never touched. On anti-detect engines, enabling a DCHECK-sensitive domain (Runtime/Network) is refused — use the convenience wrappers (evaluate_js, get_cookies, …) which need no enable. For safety, host-reaching and cross-origin-secret methods (IO.read, Fetch.*, Storage.getCookies, …) and privileged/local URL schemes (file:/chrome:/devtools:/view-source:) are rejected.",
     inputSchema: {
       type: "object",
       required: ["profile_id", "method"],
@@ -968,7 +977,10 @@ const TOOL_DEFINITIONS = [
         profile_id: { type: "string" },
         method: { type: "string", description: "CDP method, e.g. 'Runtime.evaluate'" },
         params: { type: "object", description: "CDP command params" },
-        sessionId: { type: "string", description: "Optional flattened CDP sessionId for a sub-target" },
+        sessionId: {
+          type: "string",
+          description: "Optional flattened CDP sessionId for a sub-target",
+        },
       },
     },
   },

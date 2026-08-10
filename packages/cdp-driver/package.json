@@ -1,5 +1,5 @@
 {
-  "name": "@multizen/cdp-driver",
+  "name": "@mktbrowser/cdp-driver",
   "version": "0.2.9",
   "private": true,
   "type": "module",
@@ -13,7 +13,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@multizen/types": "workspace:*",
+    "@mktbrowser/types": "workspace:*",
     "chrome-remote-interface": "^0.33.3",
     "ws": "^8.18.0"
   },

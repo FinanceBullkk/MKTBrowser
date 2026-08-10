@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
-const NAMESPACE = "multizen.ui";
+const NAMESPACE = "mkt-browser.ui";
 
 function read<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
@@ -24,26 +24,26 @@ function write<T>(key: string, value: T): void {
 
 /**
  * Like useState, but value persists across app restarts under
- * localStorage[`multizen.ui.${key}`].
+ * localStorage[`mkt-browser.ui.${key}`].
  *
  * Reads on mount (sync), writes on every change.
  */
-export function usePersistedState<T>(key: string, initial: T): [T, (v: T | ((prev: T) => T)) => void] {
+export function usePersistedState<T>(
+  key: string,
+  initial: T,
+): [T, (v: T | ((prev: T) => T)) => void] {
   const [value, setValue] = useState<T>(() => read(key, initial));
 
   useEffect(() => {
     write(key, value);
   }, [key, value]);
 
-  const setter = useCallback(
-    (v: T | ((prev: T) => T)) => {
-      setValue((prev) => {
-        const next = typeof v === "function" ? (v as (prev: T) => T)(prev) : v;
-        return next;
-      });
-    },
-    [],
-  );
+  const setter = useCallback((v: T | ((prev: T) => T)) => {
+    setValue((prev) => {
+      const next = typeof v === "function" ? (v as (prev: T) => T)(prev) : v;
+      return next;
+    });
+  }, []);
 
   return [value, setter];
 }

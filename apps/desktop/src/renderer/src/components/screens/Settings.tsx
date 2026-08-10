@@ -24,14 +24,14 @@ export function Settings({ onImport }: Props): JSX.Element {
   const [tokenCopied, setTokenCopied] = useState(false);
   const [tokenShown, setTokenShown] = useState(false);
   useEffect(() => {
-    if (!window.multizen) return;
-    void window.multizen.settings.get().then(setSettings);
-    void window.multizen.system.info().then(setInfo);
+    if (!window.mktBrowser) return;
+    void window.mktBrowser.settings.get().then(setSettings);
+    void window.mktBrowser.system.info().then(setInfo);
   }, []);
 
   async function patch(p: Partial<AppSettings>): Promise<void> {
     if (!settings) return;
-    const next = await window.multizen.settings.update(p);
+    const next = await window.mktBrowser.settings.update(p);
     setSettings(next);
   }
 
@@ -62,8 +62,8 @@ export function Settings({ onImport }: Props): JSX.Element {
       <div className="max-w-[720px] mx-auto">
         <div className="text-lg font-bold tracking-tight text-slate-100 mb-1.5">Settings</div>
         <div className="text-[13px] text-slate-500 mb-5">
-          Profile data and configuration stay on this device. W01 has no application update or
-          usage-reporting channel.
+          Profile data and configuration stay on this device. This technical build has no
+          application update or usage-reporting channel.
         </div>
 
         <Row
@@ -73,7 +73,7 @@ export function Settings({ onImport }: Props): JSX.Element {
         >
           <div className="flex gap-2 items-center flex-wrap">
             <Pill kind={info?.mcpHttpUrl ? "running" : "idle"} dot={!!info?.mcpHttpUrl}>
-              {info?.mcpHttpUrl ? `running on :${settings.mcpHttpPort}` : "off"}
+              {info?.mcpHttpUrl ? `running on :${new URL(info.mcpHttpUrl).port}` : "off"}
             </Pill>
 
             {info?.mcpHttpUrl && (
@@ -105,8 +105,8 @@ export function Settings({ onImport }: Props): JSX.Element {
             <div className="mt-2">
               <div className="text-[11px] text-slate-500 mb-1">
                 Auth token — required. Send as{" "}
-                <span className="mono text-slate-400">Authorization: Bearer &lt;token&gt;</span>. Keep
-                it secret.
+                <span className="mono text-slate-400">Authorization: Bearer &lt;token&gt;</span>.
+                Keep it secret.
               </div>
               <div
                 className="flex items-center gap-2"
@@ -207,7 +207,7 @@ export function Settings({ onImport }: Props): JSX.Element {
         <Row
           icon={<DownloadCloud size={16} strokeWidth={1.5} />}
           title="Application updates"
-          desc="Automatic checks and installs are disabled in W01. Install only an approved MKT Browser build supplied through the internal release process."
+          desc="Automatic checks and installs are disabled. Install only an approved MKT Browser build supplied through the internal release process."
         >
           <Pill kind="idle">disabled</Pill>
         </Row>

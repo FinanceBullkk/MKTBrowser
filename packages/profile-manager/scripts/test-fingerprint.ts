@@ -12,7 +12,7 @@ import {
   deviceCatalog,
   localeCatalog,
 } from "../src/fingerprint.js";
-import type { FingerprintConfig } from "@multizen/types";
+import type { FingerprintConfig } from "@mktbrowser/types";
 
 interface InvariantResult {
   name: string;
@@ -146,9 +146,7 @@ function check(fp: FingerprintConfig): InvariantResult[] {
   const deviceEntry = deviceCatalog().find((d) => d.family === fp.device);
   const screenInDevice =
     !!deviceEntry &&
-    deviceEntry.screens.some(
-      (s) => s.width === fp.screen.width && s.height === fp.screen.height,
-    );
+    deviceEntry.screens.some((s) => s.width === fp.screen.width && s.height === fp.screen.height);
   results.push({
     name: "screen size belongs to device family",
     passed: screenInDevice,
@@ -159,8 +157,7 @@ function check(fp: FingerprintConfig): InvariantResult[] {
     name: "availScreen ≤ screen",
     passed:
       !fp.availScreen ||
-      (fp.availScreen.width <= fp.screen.width &&
-        fp.availScreen.height <= fp.screen.height),
+      (fp.availScreen.width <= fp.screen.width && fp.availScreen.height <= fp.screen.height),
   });
 
   results.push({
@@ -188,8 +185,7 @@ function check(fp: FingerprintConfig): InvariantResult[] {
     });
     results.push({
       name: "Win → WebGL not Apple/Mesa-only",
-      passed:
-        fp.webgl.vendor !== "Apple Inc." && !fp.webgl.vendor.startsWith("Mesa"),
+      passed: fp.webgl.vendor !== "Apple Inc." && !fp.webgl.vendor.startsWith("Mesa"),
     });
   } else if (fp.platform === "Linux x86_64") {
     results.push({
@@ -209,13 +205,10 @@ function check(fp: FingerprintConfig): InvariantResult[] {
   });
 
   const uaChromeMatch = fp.userAgent.match(/Chrome\/(\d+\.\d+\.\d+\.\d+)/);
-  const chFullMatch = fp.clientHints.secChUaFullVersionList.match(
-    /"Google Chrome";v="([^"]+)"/,
-  );
+  const chFullMatch = fp.clientHints.secChUaFullVersionList.match(/"Google Chrome";v="([^"]+)"/);
   results.push({
     name: "UA Chrome version == Sec-CH-UA-Full-Version-List Chrome",
-    passed:
-      !!uaChromeMatch && !!chFullMatch && uaChromeMatch[1] === chFullMatch[1],
+    passed: !!uaChromeMatch && !!chFullMatch && uaChromeMatch[1] === chFullMatch[1],
     message: `UA: ${uaChromeMatch?.[1]}, CH: ${chFullMatch?.[1]}`,
   });
 
@@ -231,9 +224,7 @@ function assertLocaleCatalog(): void {
       throw new Error(`P0-6 FAIL: locale catalog missing id=${req.id}`);
     }
     if (entry.country !== req.country) {
-      throw new Error(
-        `P0-6 FAIL: ${req.id} country=${entry.country}, expected ${req.country}`,
-      );
+      throw new Error(`P0-6 FAIL: ${req.id} country=${entry.country}, expected ${req.country}`);
     }
     if (!entry.timezones.includes(req.timezone)) {
       throw new Error(
@@ -241,7 +232,9 @@ function assertLocaleCatalog(): void {
       );
     }
   }
-  console.log(`P0-6 locale catalog: ${REQUIRED_LOCALES.length}/${REQUIRED_LOCALES.length} required ids OK`);
+  console.log(
+    `P0-6 locale catalog: ${REQUIRED_LOCALES.length}/${REQUIRED_LOCALES.length} required ids OK`,
+  );
 }
 
 function assertReconcileCoherence(): void {
@@ -287,13 +280,15 @@ function assertReconcileCoherence(): void {
     pk.hardwareConcurrency !== 8 ||
     pk.deviceMemory !== 8
   ) {
-    throw new Error(`P0-4 FAIL: honor mismatch ${JSON.stringify({
-      locale: pk.locale,
-      timezone: pk.timezone,
-      screen: pk.screen,
-      hwc: pk.hardwareConcurrency,
-      mem: pk.deviceMemory,
-    })}`);
+    throw new Error(
+      `P0-4 FAIL: honor mismatch ${JSON.stringify({
+        locale: pk.locale,
+        timezone: pk.timezone,
+        screen: pk.screen,
+        hwc: pk.hardwareConcurrency,
+        mem: pk.deviceMemory,
+      })}`,
+    );
   }
   console.log("P0-4/P0-5 reconcile path checks OK");
 }

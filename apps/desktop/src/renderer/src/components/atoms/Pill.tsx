@@ -24,7 +24,7 @@ export function Pill({ kind = "idle", children, glow, dot, className }: Props): 
   const [bg, fg, glowColor, animated] = PALETTE[kind];
   return (
     <span
-      className={`mz-pill ${className ?? ""}`}
+      className={`mkt-browser-pill ${className ?? ""}`}
       style={{
         background: bg,
         color: fg,
@@ -38,7 +38,7 @@ export function Pill({ kind = "idle", children, glow, dot, className }: Props): 
             height: 5,
             borderRadius: "50%",
             background: "currentColor",
-            animation: animated ? "mz-dotpulse 1.6s ease-in-out infinite" : undefined,
+            animation: animated ? "mkt-browser-dotpulse 1.6s ease-in-out infinite" : undefined,
           }}
         />
       )}

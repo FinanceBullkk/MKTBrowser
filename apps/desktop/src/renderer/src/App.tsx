@@ -5,7 +5,7 @@ import { Constellation } from "./components/profile/Constellation";
 import { ProfilesEmptyState } from "./components/profile/EmptyState";
 import { NewProfileSheet } from "./components/profile/NewProfileSheet";
 import { ProfileEditSheet } from "./components/profile/ProfileEditSheet";
-import type { Profile } from "@multizen/types";
+import type { Profile } from "@mktbrowser/types";
 import { ActivityDrawer } from "./components/activity/ActivityDrawer";
 import { McpPanel } from "./components/mcp/McpPanel";
 import { Settings } from "./components/screens/Settings";
@@ -24,7 +24,7 @@ type ModalState =
   | { kind: "delete-confirm"; profileId: string };
 
 export function App(): JSX.Element {
-  // Persisted UI state — survives app restarts under localStorage `multizen.ui.*`.
+  // Persisted UI state — survives app restarts under localStorage `mkt-browser.ui.*`.
   const [section, setSection] = usePersistedState<Section>("section", "profiles");
   const [drawerOpen, setDrawerOpen] = usePersistedState<boolean>("drawerOpen", false);
 
@@ -49,8 +49,8 @@ export function App(): JSX.Element {
   // Global toast when the companion "Add to MKT Browser" button installs an
   // extension into a running profile (the edit sheet may not be open).
   useEffect(() => {
-    if (!window.multizen) return;
-    return window.multizen.extensions.onInstalled((e) => {
+    if (!window.mktBrowser) return;
+    return window.mktBrowser.extensions.onInstalled((e) => {
       showToast(
         e.ok
           ? `Added "${e.extension.name}" — relaunch the profile to apply`
@@ -65,7 +65,7 @@ export function App(): JSX.Element {
 
   async function openEditFor(id: string): Promise<void> {
     setSelectedId(id);
-    const p = await window.multizen.profiles.get(id);
+    const p = await window.mktBrowser.profiles.get(id);
     if (p) setEditingProfile(p);
   }
   const [showOnboarding, setShowOnboarding] = useState(
@@ -79,19 +79,19 @@ export function App(): JSX.Element {
   const [toast, setToast] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    if (!window.multizen) return;
-    const list = await window.multizen.profiles.list();
+    if (!window.mktBrowser) return;
+    const list = await window.mktBrowser.profiles.list();
     setProfiles(list);
   }, []);
 
   // Initial load + activity stream subscription
   useEffect(() => {
-    if (!window.multizen) return;
+    if (!window.mktBrowser) return;
     void refresh();
-    void window.multizen.system.info().then(setInfo);
-    void window.multizen.activity.recent().then(setEvents);
+    void window.mktBrowser.system.info().then(setInfo);
+    void window.mktBrowser.activity.recent().then(setEvents);
 
-    const offEvents = window.multizen.activity.onEvent((e) => {
+    const offEvents = window.mktBrowser.activity.onEvent((e) => {
       setEvents((prev) => {
         const idx = prev.findIndex((x) => x.id === e.id);
         if (idx >= 0) {
@@ -116,7 +116,7 @@ export function App(): JSX.Element {
     // Chromium window directly" case which doesn't go through MCP at all.
     // Track the transient "closing" phase separately so the card can show
     // "Terminating…" while the process winds down (still in the running map).
-    const offRunning = window.multizen.profiles.onRunningChanged((change) => {
+    const offRunning = window.mktBrowser.profiles.onRunningChanged((change) => {
       const id = change.profileId;
       const timers = closingTimers.current;
       // Any state transition ends the previous episode's safety timer, so a
@@ -154,7 +154,7 @@ export function App(): JSX.Element {
 
     // Background proxy-country backfill emits this as each probe lands —
     // refresh so the flag chip updates without the user touching anything.
-    const offProxyCountry = window.multizen.profiles.onProxyCountryUpdated(() => {
+    const offProxyCountry = window.mktBrowser.profiles.onProxyCountryUpdated(() => {
       void refresh();
     });
 
@@ -220,14 +220,14 @@ export function App(): JSX.Element {
   }
 
   async function onboardCreate(name: string, tags: string[]): Promise<void> {
-    await window.multizen.profiles.create({ name, tags });
+    await window.mktBrowser.profiles.create({ name, tags });
     dismissOnboarding();
     await refresh();
   }
 
   async function launchProfile(id: string): Promise<void> {
     try {
-      await window.multizen.profiles.launch(id);
+      await window.mktBrowser.profiles.launch(id);
     } catch (e) {
       showToast(`Launch failed: ${(e as Error).message}`);
     }
@@ -239,7 +239,7 @@ export function App(): JSX.Element {
     // finally still emits "closed" (which drives its own refresh), so a
     // rejection here is cosmetic — swallow it to avoid an unhandled rejection.
     try {
-      await window.multizen.profiles.close(id);
+      await window.mktBrowser.profiles.close(id);
     } catch {
       /* driver emits "closed" regardless; state self-heals */
     }
@@ -248,7 +248,7 @@ export function App(): JSX.Element {
 
   async function importProfile(passphrase: string): Promise<void> {
     setModal({ kind: "none" });
-    const result = await window.multizen.profiles.importArchive(passphrase);
+    const result = await window.mktBrowser.profiles.importArchive(passphrase);
     if (!result.ok) {
       if (result.reason !== "cancelled") showToast(`Import failed: ${result.reason}`);
       return;
@@ -262,7 +262,7 @@ export function App(): JSX.Element {
       showToast("Passphrase must be at least 8 characters");
       return;
     }
-    const result = await window.multizen.profiles.exportArchive(profileId, passphrase);
+    const result = await window.mktBrowser.profiles.exportArchive(profileId, passphrase);
     if (result.ok) {
       const file = result.path.split("/").slice(-1)[0];
       showToast(`Exported to ${file}`);
@@ -273,8 +273,8 @@ export function App(): JSX.Element {
 
   async function deleteProfile(id: string): Promise<void> {
     setModal({ kind: "none" });
-    await window.multizen.profiles.close(id).catch(() => {});
-    await window.multizen.profiles.delete(id);
+    await window.mktBrowser.profiles.close(id).catch(() => {});
+    await window.mktBrowser.profiles.delete(id);
     if (selectedId === id) setSelectedId(null);
     await refresh();
   }
@@ -307,7 +307,7 @@ export function App(): JSX.Element {
 
   const runningCount = profiles.filter((p) => p.isRunning).length;
 
-  if (showOnboarding && window.multizen) {
+  if (showOnboarding && window.mktBrowser) {
     return <FirstRun onCreate={onboardCreate} />;
   }
 
@@ -325,12 +325,16 @@ export function App(): JSX.Element {
         <LeftRail active={section} onChange={setSection} onCmdK={() => setPaletteOpen(true)} />
 
         <div className="flex-1 flex flex-col min-w-0 min-h-0">
-          {!window.multizen && (
+          {!window.mktBrowser && (
             <div
               className="m-6 px-4 py-3 rounded-lg text-sm text-red-300"
-              style={{ background: "rgba(239,68,68,0.06)", boxShadow: "inset 0 0 0 1px rgba(239,68,68,0.25)" }}
+              style={{
+                background: "rgba(239,68,68,0.06)",
+                boxShadow: "inset 0 0 0 1px rgba(239,68,68,0.25)",
+              }}
             >
-              Preload bridge missing — <code>window.multizen</code> is undefined. Open DevTools for details.
+              Preload bridge missing — <code>window.mktBrowser</code> is undefined. Open DevTools
+              for details.
             </div>
           )}
 
@@ -398,9 +402,10 @@ export function App(): JSX.Element {
             />
           )}
 
-          {section === "settings" && <Settings onImport={() => setModal({ kind: "import-passphrase" })} />}
+          {section === "settings" && (
+            <Settings onImport={() => setModal({ kind: "import-passphrase" })} />
+          )}
         </div>
-
       </div>
 
       {/* Edit profile — autosaves as you go (Discord-settings style), so no
@@ -491,7 +496,7 @@ export function App(): JSX.Element {
             background: "rgba(15,16,22,0.92)",
             boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.08), 0 20px 60px rgba(0,0,0,0.5)",
             backdropFilter: "blur(20px)",
-            animation: "mz-slide-up 200ms ease-out",
+            animation: "mkt-browser-slide-up 200ms ease-out",
           }}
         >
           {toast}

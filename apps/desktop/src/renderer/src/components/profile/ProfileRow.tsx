@@ -20,10 +20,10 @@ import type { TileData, TileState } from "./ProfileTile";
 import { PROFILE_TABLE_GRID_TEMPLATE } from "./ProfileTable";
 
 const STATE_RING_COLOR: Record<TileState, string> = {
-  idle: "rgba(148,163,184,0.3)",      // slate
-  running: "rgba(52,211,153,0.6)",    // emerald
-  ai: "rgba(192,132,252,0.6)",        // purple
-  error: "rgba(248,113,113,0.6)",     // red
+  idle: "rgba(148,163,184,0.3)", // slate
+  running: "rgba(52,211,153,0.6)", // emerald
+  ai: "rgba(192,132,252,0.6)", // purple
+  error: "rgba(248,113,113,0.6)", // red
 };
 
 interface Props {
@@ -133,7 +133,7 @@ export function ProfileRow({
         {profile.tags.slice(0, 3).map((t) => (
           <span
             key={t}
-            className="mz-pill mono text-slate-400 truncate"
+            className="mkt-browser-pill mono text-slate-400 truncate"
             style={{
               background: "rgba(255,255,255,0.04)",
               boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.05)",
@@ -144,7 +144,7 @@ export function ProfileRow({
           </span>
         ))}
         {profile.tags.length > 3 && (
-          <span className="mz-pill mono text-slate-600 flex-shrink-0">
+          <span className="mkt-browser-pill mono text-slate-600 flex-shrink-0">
             +{profile.tags.length - 3}
           </span>
         )}
@@ -220,7 +220,11 @@ function PillForState({ profile }: { profile: TileData }): JSX.Element {
     );
   }
   if (profile.state === "running")
-    return <Pill kind="running" dot>running</Pill>;
+    return (
+      <Pill kind="running" dot>
+        running
+      </Pill>
+    );
   if (profile.state === "error")
     // Dense row: surface the message as a hover tooltip (the grid card has room
     // for a full error line; here the status column does not).
@@ -284,7 +288,7 @@ function RowProxyHealth({ profile }: { profile: TileData }): JSX.Element {
       {health.status === "ok" && (
         <span
           className="w-[6px] h-[6px] rounded-full bg-emerald-500 flex-shrink-0"
-          style={{ animation: "mz-dotpulse 1.6s ease-in-out infinite" }}
+          style={{ animation: "mkt-browser-dotpulse 1.6s ease-in-out infinite" }}
         />
       )}
       {health.status === "checking" && (
@@ -336,13 +340,11 @@ function RowMenu({
       >
         <MoreHorizontal size={13} strokeWidth={1.5} />
       </Button>
-      {open && coords &&
+      {open &&
+        coords &&
         createPortal(
           <>
-            <div
-              className="fixed inset-0 z-[60]"
-              onMouseDown={() => setOpen(false)}
-            />
+            <div className="fixed inset-0 z-[60]" onMouseDown={() => setOpen(false)} />
             <div
               className="fixed z-[61] w-44 py-1 rounded-md"
               // Belt-and-suspenders: contain ALL clicks inside the menu panel
@@ -355,19 +357,34 @@ function RowMenu({
                 top: coords.top,
                 right: coords.right,
                 background: "rgba(15,16,22,0.98)",
-                boxShadow:
-                  "inset 0 0 0 1px rgba(255,255,255,0.08), 0 20px 40px rgba(0,0,0,0.6)",
+                boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.08), 0 20px 40px rgba(0,0,0,0.6)",
                 backdropFilter: "blur(20px)",
               }}
             >
-              <MenuItem onClick={() => { setOpen(false); onEdit(); }}>
+              <MenuItem
+                onClick={() => {
+                  setOpen(false);
+                  onEdit();
+                }}
+              >
                 Edit profile
               </MenuItem>
-              <MenuItem onClick={() => { setOpen(false); onExport(); }}>
+              <MenuItem
+                onClick={() => {
+                  setOpen(false);
+                  onExport();
+                }}
+              >
                 Export archive…
               </MenuItem>
               <div style={{ height: 1, margin: "4px 0", background: "rgba(255,255,255,0.06)" }} />
-              <MenuItem onClick={() => { setOpen(false); onDelete(); }} tone="danger">
+              <MenuItem
+                onClick={() => {
+                  setOpen(false);
+                  onDelete();
+                }}
+                tone="danger"
+              >
                 Delete profile
               </MenuItem>
             </div>

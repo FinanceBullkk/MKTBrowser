@@ -15,7 +15,7 @@ export function Kbd({ children, variant = "default", className }: Props): JSX.El
   if (variant === "on-brand") {
     return (
       <span
-        className={cn("mz-kbd-on-brand", className)}
+        className={cn("mkt-browser-kbd-on-brand", className)}
         style={{
           fontFamily: "var(--font-mono)",
           fontSize: 11,
@@ -24,7 +24,8 @@ export function Kbd({ children, variant = "default", className }: Props): JSX.El
           borderRadius: 4,
           background: "rgba(255, 255, 255, 0.18)",
           color: "rgba(255, 255, 255, 0.95)",
-          boxShadow: "inset 0 -1px 0 rgba(0, 0, 0, 0.18), inset 0 0 0 1px rgba(255, 255, 255, 0.12)",
+          boxShadow:
+            "inset 0 -1px 0 rgba(0, 0, 0, 0.18), inset 0 0 0 1px rgba(255, 255, 255, 0.12)",
           letterSpacing: "0.02em",
         }}
       >
@@ -32,5 +33,5 @@ export function Kbd({ children, variant = "default", className }: Props): JSX.El
       </span>
     );
   }
-  return <span className={cn("mz-kbd", className)}>{children}</span>;
+  return <span className={cn("mkt-browser-kbd", className)}>{children}</span>;
 }

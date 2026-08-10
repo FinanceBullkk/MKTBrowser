@@ -1,8 +1,4 @@
-import type {
-  ClientHints,
-  DeviceFamily,
-  FingerprintConfig,
-} from "@multizen/types";
+import type { ClientHints, DeviceFamily, FingerprintConfig } from "@mktbrowser/types";
 
 /**
  * Coherent fingerprint generator.
@@ -22,7 +18,7 @@ import type {
  * Limit of this open-source generator: only fields injectable via Chromium
  * launch flags or runtime preload scripts can be applied without a patched
  * binary. Sec-CH-UA / navigator.userAgentData / TLS JA3-JA4 / Canvas-Audio
- * noise require the closed-source patched Chromium build (multizen-pro).
+ * noise require an approved source-patched Chromium build.
  * The fingerprint we generate stores those fields anyway so the patched
  * binary can apply them when it ships.
  */
@@ -262,8 +258,7 @@ const DEVICES: ReadonlyArray<DeviceSpec> = [
     webgl: [
       {
         vendor: "Google Inc. (Intel)",
-        renderer:
-          "ANGLE (Intel, Intel(R) Iris(R) Xe Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)",
+        renderer: "ANGLE (Intel, Intel(R) Iris(R) Xe Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)",
       },
       {
         vendor: "Google Inc. (Intel)",
@@ -288,18 +283,15 @@ const DEVICES: ReadonlyArray<DeviceSpec> = [
     webgl: [
       {
         vendor: "Google Inc. (Intel)",
-        renderer:
-          "ANGLE (Intel, Intel(R) UHD Graphics 620 Direct3D11 vs_5_0 ps_5_0, D3D11)",
+        renderer: "ANGLE (Intel, Intel(R) UHD Graphics 620 Direct3D11 vs_5_0 ps_5_0, D3D11)",
       },
       {
         vendor: "Google Inc. (Intel)",
-        renderer:
-          "ANGLE (Intel, Intel(R) UHD Graphics 770 Direct3D11 vs_5_0 ps_5_0, D3D11)",
+        renderer: "ANGLE (Intel, Intel(R) UHD Graphics 770 Direct3D11 vs_5_0 ps_5_0, D3D11)",
       },
       {
         vendor: "Google Inc. (Intel)",
-        renderer:
-          "ANGLE (Intel, Intel(R) UHD Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)",
+        renderer: "ANGLE (Intel, Intel(R) UHD Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)",
       },
     ],
     hardwareConcurrency: [4, 6, 8],
@@ -319,13 +311,11 @@ const DEVICES: ReadonlyArray<DeviceSpec> = [
     webgl: [
       {
         vendor: "Google Inc. (AMD)",
-        renderer:
-          "ANGLE (AMD, AMD Radeon RX 7600M XT Direct3D11 vs_5_0 ps_5_0, D3D11)",
+        renderer: "ANGLE (AMD, AMD Radeon RX 7600M XT Direct3D11 vs_5_0 ps_5_0, D3D11)",
       },
       {
         vendor: "Google Inc. (AMD)",
-        renderer:
-          "ANGLE (AMD, AMD Radeon(TM) Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)",
+        renderer: "ANGLE (AMD, AMD Radeon(TM) Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)",
       },
     ],
     hardwareConcurrency: [6, 8, 12],
@@ -449,13 +439,11 @@ const DEVICES: ReadonlyArray<DeviceSpec> = [
     webgl: [
       {
         vendor: "Google Inc. (AMD)",
-        renderer:
-          "ANGLE (AMD, AMD Radeon RX 7800 XT Direct3D11 vs_5_0 ps_5_0, D3D11)",
+        renderer: "ANGLE (AMD, AMD Radeon RX 7800 XT Direct3D11 vs_5_0 ps_5_0, D3D11)",
       },
       {
         vendor: "Google Inc. (AMD)",
-        renderer:
-          "ANGLE (AMD, AMD Radeon RX 6700 XT Direct3D11 vs_5_0 ps_5_0, D3D11)",
+        renderer: "ANGLE (AMD, AMD Radeon RX 6700 XT Direct3D11 vs_5_0 ps_5_0, D3D11)",
       },
     ],
     hardwareConcurrency: [8, 12, 16],
@@ -475,13 +463,11 @@ const DEVICES: ReadonlyArray<DeviceSpec> = [
     webgl: [
       {
         vendor: "Google Inc. (Intel)",
-        renderer:
-          "ANGLE (Intel, Intel(R) UHD Graphics 770 Direct3D11 vs_5_0 ps_5_0, D3D11)",
+        renderer: "ANGLE (Intel, Intel(R) UHD Graphics 770 Direct3D11 vs_5_0 ps_5_0, D3D11)",
       },
       {
         vendor: "Google Inc. (Intel)",
-        renderer:
-          "ANGLE (Intel, Intel(R) Arc(TM) A770 Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)",
+        renderer: "ANGLE (Intel, Intel(R) Arc(TM) A770 Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)",
       },
     ],
     hardwareConcurrency: [6, 8, 12, 16],
@@ -517,8 +503,14 @@ const DEVICES: ReadonlyArray<DeviceSpec> = [
     screens: COMMON_DESKTOP_SCREENS,
     dpr: 1,
     webgl: [
-      { vendor: "Mesa", renderer: "AMD Radeon RX 7800 XT (radeonsi, navi32, LLVM 17.0.6, DRM 3.57, 6.6.0)" },
-      { vendor: "Mesa", renderer: "AMD Radeon Graphics (radeonsi, renoir, LLVM 17.0.6, DRM 3.57, 6.6.0)" },
+      {
+        vendor: "Mesa",
+        renderer: "AMD Radeon RX 7800 XT (radeonsi, navi32, LLVM 17.0.6, DRM 3.57, 6.6.0)",
+      },
+      {
+        vendor: "Mesa",
+        renderer: "AMD Radeon Graphics (radeonsi, renoir, LLVM 17.0.6, DRM 3.57, 6.6.0)",
+      },
     ],
     hardwareConcurrency: [6, 8, 12, 16],
     deviceMemory: [8, 16, 32],
@@ -623,12 +615,7 @@ const LOCALES: ReadonlyArray<LocaleGroup> = [
     locale: "en-US",
     languages: ["en-US", "en"],
     country: "us",
-    timezones: [
-      "America/New_York",
-      "America/Chicago",
-      "America/Denver",
-      "America/Los_Angeles",
-    ],
+    timezones: ["America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles"],
   },
   {
     id: "en-GB",
@@ -1324,10 +1311,7 @@ export function hostPlatformFamily(): "mac" | "windows" | "linux" {
   return "linux";
 }
 
-function deviceMatchesHost(
-  d: DeviceSpec,
-  host: ReturnType<typeof hostPlatformFamily>,
-): boolean {
+function deviceMatchesHost(d: DeviceSpec, host: ReturnType<typeof hostPlatformFamily>): boolean {
   // Device family naming convention in DEVICES is "<os>-<form>-<gpu>",
   // e.g. "macbook-pro-14-m3", "windows-laptop-intel", "linux-desktop-intel".
   if (host === "mac") return d.family.startsWith("mac") || d.family.startsWith("imac");
@@ -1345,9 +1329,7 @@ function deviceMatchesHost(
  * detectable via V8/Blink/CSS feature signatures. The only safe match
  * for stock binaries is "device family == host family".
  */
-export function reconcileDeviceFamilyToHost(
-  fp: FingerprintConfig,
-): FingerprintConfig {
+export function reconcileDeviceFamilyToHost(fp: FingerprintConfig): FingerprintConfig {
   const host = hostPlatformFamily();
   const currentDevice = DEVICES.find((d) => d.family === fp.device);
   if (currentDevice && deviceMatchesHost(currentDevice, host)) return fp;
@@ -1362,14 +1344,10 @@ export function reconcileDeviceFamilyToHost(
   const device = candidates[seed % candidates.length]!;
 
   const screen =
-    device.screens.find(
-      (s) => s.width === fp.screen.width && s.height === fp.screen.height,
-    ) ?? device.screens[0]!;
-  const locale =
-    LOCALES.find((l) => l.locale === fp.locale) ?? LOCALES[0]!;
-  const tz = locale.timezones.includes(fp.timezone)
-    ? fp.timezone
-    : locale.timezones[0]!;
+    device.screens.find((s) => s.width === fp.screen.width && s.height === fp.screen.height) ??
+    device.screens[0]!;
+  const locale = LOCALES.find((l) => l.locale === fp.locale) ?? LOCALES[0]!;
+  const tz = locale.timezones.includes(fp.timezone) ? fp.timezone : locale.timezones[0]!;
   const hwc = device.hardwareConcurrency.includes(fp.hardwareConcurrency)
     ? fp.hardwareConcurrency
     : device.hardwareConcurrency[0]!;
@@ -1426,8 +1404,7 @@ export function reconcileFingerprint(
     }
     locale = found;
   } else {
-    locale =
-      LOCALES.find((l) => l.locale === current.locale) ?? LOCALES[0]!;
+    locale = LOCALES.find((l) => l.locale === current.locale) ?? LOCALES[0]!;
   }
 
   // ── Device ──────────────────────────────────────────────────────────
@@ -1435,10 +1412,7 @@ export function reconcileFingerprint(
   if (patch.device !== undefined) {
     const found = DEVICES.find((d) => d.family === patch.device);
     if (!found) {
-      throw new FingerprintReconcileError(
-        "device",
-        `unknown device family '${patch.device}'`,
-      );
+      throw new FingerprintReconcileError("device", `unknown device family '${patch.device}'`);
     }
     device = found;
   } else {
@@ -1467,10 +1441,7 @@ export function reconcileFingerprint(
         (d) => deviceMatchesHost(d, hostFamily) && ownsScreen(d),
       );
       const anyCandidates = DEVICES.filter(ownsScreen);
-      const next =
-        hostCandidates[0] ??
-        anyCandidates[0] ??
-        null;
+      const next = hostCandidates[0] ?? anyCandidates[0] ?? null;
       if (!next) {
         throw new FingerprintReconcileError(
           "screen",
@@ -1490,9 +1461,8 @@ export function reconcileFingerprint(
   } else {
     const requested = current.screen;
     screen =
-      device.screens.find(
-        (s) => s.width === requested.width && s.height === requested.height,
-      ) ?? device.screens[0]!;
+      device.screens.find((s) => s.width === requested.width && s.height === requested.height) ??
+      device.screens[0]!;
   }
 
   // Desktop screen ⇒ desktop UA (all our devices are desktop; assert width).
@@ -1535,9 +1505,7 @@ export function reconcileFingerprint(
     }
     hardwareConcurrency = patch.hardwareConcurrency;
   } else {
-    hardwareConcurrency = device.hardwareConcurrency.includes(
-      current.hardwareConcurrency,
-    )
+    hardwareConcurrency = device.hardwareConcurrency.includes(current.hardwareConcurrency)
       ? current.hardwareConcurrency
       : device.hardwareConcurrency[0]!;
   }
@@ -1558,15 +1526,7 @@ export function reconcileFingerprint(
   }
 
   const webgl = resolveWebgl(device, current.webgl);
-  const next = assemble(
-    device,
-    locale,
-    screen,
-    timezone,
-    hardwareConcurrency,
-    deviceMemory,
-    webgl,
-  );
+  const next = assemble(device, locale, screen, timezone, hardwareConcurrency, deviceMemory, webgl);
   return current.seed ? { ...next, seed: current.seed } : next;
 }
 
@@ -1645,8 +1605,7 @@ function defaultAvail(
   platform: "MacIntel" | "Win32" | "Linux x86_64",
 ): { width: number; height: number } {
   // macOS dock: ~80px bottom; Win taskbar: ~40px bottom; Linux varies.
-  const bottom =
-    platform === "MacIntel" ? 80 : platform === "Win32" ? 40 : 30;
+  const bottom = platform === "MacIntel" ? 80 : platform === "Win32" ? 40 : 30;
   return { width: screen.width, height: Math.max(0, screen.height - bottom) };
 }
 

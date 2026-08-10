@@ -10,7 +10,7 @@ import type {
   ChromiumStatus,
   DeviceFamily,
   ExtensionConfig,
-} from "@multizen/types";
+} from "@mktbrowser/types";
 
 /** Payload for the `extensions:installed` push (companion "Add to MKT Browser"). */
 export type ExtensionInstalledEvent =
@@ -44,8 +44,8 @@ export interface ProxyGeoResult {
   city: string;
   ip: string;
 }
-import type { ActivityEvent } from "@multizen/mcp-server";
-import type { AppSettings } from "@multizen/settings-store";
+import type { ActivityEvent } from "@mktbrowser/mcp-server";
+import type { AppSettings } from "@mktbrowser/settings-store";
 
 export interface SystemInfo {
   mcpHttpUrl: string | null;
@@ -59,7 +59,7 @@ export type RunningStateChange =
   | { kind: "closing"; profileId: ProfileId }
   | { kind: "closed"; profileId: ProfileId; reason: "user-close" | "external-exit" };
 
-export interface MultizenApi {
+export interface MktBrowserApi {
   profiles: {
     list: () => Promise<ProfileSummary[]>;
     get: (id: ProfileId) => Promise<Profile | null>;
@@ -76,9 +76,7 @@ export interface MultizenApi {
       passphrase: string,
     ) => Promise<{ ok: true; id: ProfileId } | { ok: false; reason: string }>;
     onRunningChanged: (cb: (change: RunningStateChange) => void) => () => void;
-    onProxyCountryUpdated: (
-      cb: (update: { id: string; country: string }) => void,
-    ) => () => void;
+    onProxyCountryUpdated: (cb: (update: { id: string; country: string }) => void) => () => void;
   };
   settings: {
     get: () => Promise<AppSettings>;
@@ -132,7 +130,7 @@ export interface MultizenApi {
 
 declare global {
   interface Window {
-    multizen: MultizenApi;
+    mktBrowser: MktBrowserApi;
   }
 }
 

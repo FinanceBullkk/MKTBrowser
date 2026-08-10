@@ -11,7 +11,7 @@ import type {
   ProxyConfig,
   FingerprintConfig,
   ExtensionConfig,
-} from "@multizen/types";
+} from "@mktbrowser/types";
 import { defaultFingerprint } from "./fingerprint.js";
 
 interface ProfileRow {
@@ -113,9 +113,9 @@ export class ProfileManager {
   }
 
   get(id: ProfileId): Profile | null {
-    const row = this.db
-      .prepare(`SELECT * FROM profiles WHERE id = ?`)
-      .get(id) as ProfileRow | undefined;
+    const row = this.db.prepare(`SELECT * FROM profiles WHERE id = ?`).get(id) as
+      | ProfileRow
+      | undefined;
     if (!row) return null;
     return this.rowToProfile(row);
   }
@@ -268,9 +268,7 @@ export class ProfileManager {
 
   /** Persist the country code resolved from the proxy's egress IP. */
   setProxyCountry(id: ProfileId, country: string | null): void {
-    this.db
-      .prepare(`UPDATE profiles SET proxy_country = ? WHERE id = ?`)
-      .run(country, id);
+    this.db.prepare(`UPDATE profiles SET proxy_country = ? WHERE id = ?`).run(country, id);
   }
 
   delete(id: ProfileId): void {
@@ -304,9 +302,9 @@ export class ProfileManager {
    * separate counter to drift out of sync).
    */
   allExtensionRefs(): Array<{ profileId: string; dataDir: string; ext: ExtensionConfig }> {
-    const rows = this.db
-      .prepare(`SELECT id, data_dir, extensions FROM profiles`)
-      .all() as Array<Pick<ProfileRow, "id" | "data_dir" | "extensions">>;
+    const rows = this.db.prepare(`SELECT id, data_dir, extensions FROM profiles`).all() as Array<
+      Pick<ProfileRow, "id" | "data_dir" | "extensions">
+    >;
     const out: Array<{ profileId: string; dataDir: string; ext: ExtensionConfig }> = [];
     for (const r of rows) {
       for (const ext of normalizeExtensions(r.extensions)) {

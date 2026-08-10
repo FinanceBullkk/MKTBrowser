@@ -1,7 +1,7 @@
 import { request } from "node:https";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { SocksProxyAgent } from "socks-proxy-agent";
-import type { ProxyConfig } from "@multizen/types";
+import type { ProxyConfig } from "@mktbrowser/types";
 
 /**
  * Result of probing a proxy for its public IP geolocation.
@@ -33,9 +33,7 @@ export async function probeProxyGeo(
 ): Promise<ProxyGeoResult> {
   const proxyUrl = buildProxyUrl(proxy);
   const agent =
-    proxy.type === "socks5"
-      ? new SocksProxyAgent(proxyUrl)
-      : new HttpsProxyAgent(proxyUrl);
+    proxy.type === "socks5" ? new SocksProxyAgent(proxyUrl) : new HttpsProxyAgent(proxyUrl);
 
   const json = await new Promise<RawIpapi>((resolve, reject) => {
     const req = request(
@@ -58,16 +56,10 @@ export async function probeProxyGeo(
         res.on("data", (c: Buffer) => chunks.push(c));
         res.on("end", () => {
           try {
-            const parsed = JSON.parse(
-              Buffer.concat(chunks).toString("utf8"),
-            ) as RawIpapi;
+            const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8")) as RawIpapi;
             resolve(parsed);
           } catch (e) {
-            reject(
-              new Error(
-                `ipapi.co returned invalid JSON: ${(e as Error).message}`,
-              ),
-            );
+            reject(new Error(`ipapi.co returned invalid JSON: ${(e as Error).message}`));
           }
         });
         res.on("error", reject);

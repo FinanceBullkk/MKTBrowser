@@ -13,12 +13,12 @@ files:
   - "out/**/*"
   - "package.json"
   - "!**/*.map"
-  - "!node_modules/@multizen/**"
+  - "!node_modules/@mktbrowser/**"
 
 # Override package.json metadata in the packaged app. We strip the
-# @multizen/* workspace deps because electron-vite has already inlined
+# @mktbrowser/* workspace deps because electron-vite has already inlined
 # them into out/main/index.js — there's no runtime need for the
-# symlinked dirs in node_modules/@multizen/. Without this override,
+# symlinked dirs in node_modules/@mktbrowser/. Without this override,
 # electron-builder follows the symlinks to packages/<x>/package.json,
 # which is outside apps/desktop, and refuses to package
 # ("package.json must be under apps/desktop").
@@ -52,7 +52,7 @@ extraResources:
   - from: resources/companion
     to: companion
 
-# Stable local artifact names. W01 intentionally has no publish provider or
+# Stable local artifact names. W02 intentionally has no publish provider or
 # application update channel; internal release delivery belongs to W04.
 mac:
   category: public.app-category.developer-tools

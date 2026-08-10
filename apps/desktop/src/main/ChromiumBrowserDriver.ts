@@ -9,13 +9,13 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileP = promisify(execFile);
-import type { BrowserDriver } from "@multizen/mcp-server";
-import type { ProfileManager } from "@multizen/profile-manager";
-import { reconcileDeviceFamilyToHost } from "@multizen/profile-manager";
-import type { ClientHints, FingerprintConfig, LaunchedProfile, ProfileId } from "@multizen/types";
+import type { BrowserDriver } from "@mktbrowser/mcp-server";
+import type { ProfileManager } from "@mktbrowser/profile-manager";
+import { reconcileDeviceFamilyToHost } from "@mktbrowser/profile-manager";
+import type { ClientHints, FingerprintConfig, LaunchedProfile, ProfileId } from "@mktbrowser/types";
 import { waitForCdpSessionReady } from "./cdpReadiness";
-import type { BrowserEngine } from "@multizen/settings-store";
-import { CdpSession } from "@multizen/cdp-driver";
+import type { BrowserEngine } from "@mktbrowser/settings-store";
+import { CdpSession } from "@mktbrowser/cdp-driver";
 import type { ChromiumBootstrap } from "./ChromiumBootstrap";
 import { startBridgeForProfile, stopBridgeForProfile } from "./socks5Bridge";
 import { probeProxyGeo } from "./proxyGeo";
@@ -222,7 +222,10 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     // Preferences JSON. We mutate it before spawn (Chrome must be off
     // to avoid corruption).
     await ensureSessionRestore(browserDataDir).catch((e: unknown) => {
-      console.warn("[mkt-browser] failed to write session restore preference:", (e as Error).message);
+      console.warn(
+        "[mkt-browser] failed to write session restore preference:",
+        (e as Error).message,
+      );
     });
 
     // Best-effort: suppress CFT's "is only for automated testing" infobar
@@ -346,8 +349,10 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       // and a SOCKS5 upstream makes it redundant anyway. Real anti-
       // detect products (Multilogin Mimic) solve the residual leak
       // with a custom DNS-resolver source patch — a Phase-1 item for
-      // multizen-pro, not the open-source build.
-      args.push("--disable-features=DnsOverHttps,DnsOverHttpsUpgrade,EncryptedClientHello,AsyncDns,DnsHttpsSvcb,DnsHttpsSvcbAlpn,NetworkPrediction");
+      // an approved source-patched Chromium build, not the vanilla fallback.
+      args.push(
+        "--disable-features=DnsOverHttps,DnsOverHttpsUpgrade,EncryptedClientHello,AsyncDns,DnsHttpsSvcb,DnsHttpsSvcbAlpn,NetworkPrediction",
+      );
       args.push("--dns-over-https-mode=off");
       args.push("--dns-prefetch-disable");
       args.push("--disable-async-dns");
@@ -387,7 +392,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     // `Sec-CH-UA-Bitness`, etc.) and `navigator.userAgentData` are NOT
     // overridable via CLI flags. They are baked into the compiled Chromium
     // binary at build time. To make them coherent with our chosen `userAgent`
-    // we need our patched Chromium build (multizen-pro) which applies native
+    // we need an approved patched Chromium build which applies native
     // overrides. Until that ships, system Chrome will emit its real Client
     // Hints and detection vendors will see a UA-vs-CH mismatch.
     //
@@ -504,9 +509,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     // natively in C++, so we skip our preload entirely on it — double-
     // patching produces inconsistent values that detection vendors flag.
     const fingerprintScript =
-      engine === "cloakbrowser"
-        ? null
-        : buildFingerprintPreloadScript(fp, { includeWebGl: true });
+      engine === "cloakbrowser" ? null : buildFingerprintPreloadScript(fp, { includeWebGl: true });
     await session
       .bootstrapTargets(async (send, ctx) => {
         // 1. WebRTC kill-switch / spoof when proxy is on.
@@ -540,14 +543,12 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
           }).catch((e: unknown) => {
             console.error("[mkt-browser] fingerprint addScript failed:", e);
           });
-          await send("Runtime.evaluate", { expression: fingerprintScript }).catch(
-            (e: unknown) => {
-              const msg = (e as Error).message;
-              if (!/default execution context/i.test(msg)) {
-                console.error("[mkt-browser] fingerprint eval failed:", e);
-              }
-            },
-          );
+          await send("Runtime.evaluate", { expression: fingerprintScript }).catch((e: unknown) => {
+            const msg = (e as Error).message;
+            if (!/default execution context/i.test(msg)) {
+              console.error("[mkt-browser] fingerprint eval failed:", e);
+            }
+          });
         }
         // 1c. Screen / device metrics — TOP-LEVEL TARGETS ONLY. iframes
         //     reject with "Command can only be executed on top-level
@@ -763,7 +764,9 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       // anyway so a stuck socket can never strand Stop.
       await withTimeout(stopBridgeForProfile(profileId), 2000);
     } finally {
-      console.log(`[mkt-browser] close() done profile=${profileId} pid=${r.pid} alive=${isPidAlive(r.pid)}`);
+      console.log(
+        `[mkt-browser] close() done profile=${profileId} pid=${r.pid} alive=${isPidAlive(r.pid)}`,
+      );
       this.emit("running-changed", { kind: "closed", profileId, reason: "user-close" });
     }
   }
@@ -1191,14 +1194,22 @@ async function pidsUsingDataDir(dataDir: string): Promise<number[]> {
 async function killBrowsersUsingDataDir(dataDir: string): Promise<void> {
   const pids = await pidsUsingDataDir(dataDir);
   if (pids.length === 0) return;
-  console.log(`[mkt-browser] sweep: SIGKILL ${pids.length} lingering proc(s) for ${dataDir}: ${pids.join(", ")}`);
+  console.log(
+    `[mkt-browser] sweep: SIGKILL ${pids.length} lingering proc(s) for ${dataDir}: ${pids.join(", ")}`,
+  );
   for (const pid of pids) killPid(pid, "SIGKILL");
 }
 
 /** Resolve when `p` settles or after `ms`, whichever comes first. Never
  *  rejects — a hung or failing shutdown step must not block the kill path. */
 function withTimeout(p: Promise<unknown>, ms: number): Promise<void> {
-  return Promise.race([p.then(() => {}, () => {}), sleep(ms)]);
+  return Promise.race([
+    p.then(
+      () => {},
+      () => {},
+    ),
+    sleep(ms),
+  ]);
 }
 
 function killPid(pid: number, signal: NodeJS.Signals): void {
@@ -1731,7 +1742,7 @@ async function ensureCftInfobarSuppressed(): Promise<void> {
 </dict>
 </plist>
 `;
-  const tempPath = `${app.getPath("temp")}/multizen-cft-policy-${process.pid}.plist`;
+  const tempPath = `${app.getPath("temp")}/mkt-browser-cft-policy-${process.pid}.plist`;
   await writeFile(tempPath, plistXml);
 
   const shellScript =
@@ -1849,7 +1860,9 @@ async function cleanStaleSingletonLocks(dataDir: string): Promise<void> {
     if (pid !== null && !isPidAlive(pid)) {
       try {
         await fsp.unlink(path);
-        console.log(`[mkt-browser] cleaned stale ${name} (was → ${target}, pid ${pid} not running)`);
+        console.log(
+          `[mkt-browser] cleaned stale ${name} (was → ${target}, pid ${pid} not running)`,
+        );
       } catch {
         // ignore
       }
@@ -1945,7 +1958,7 @@ async function ensureSessionRestore(dataDir: string): Promise<void> {
 
   await fsp.mkdir(join(dataDir, "Default"), { recursive: true });
   // Atomic-ish write: write to .tmp then rename.
-  const tmpPath = `${prefsPath}.multizen.tmp`;
+  const tmpPath = `${prefsPath}.mkt-browser.tmp`;
   await fsp.writeFile(tmpPath, JSON.stringify(prefs));
   await fsp.rename(tmpPath, prefsPath);
 }

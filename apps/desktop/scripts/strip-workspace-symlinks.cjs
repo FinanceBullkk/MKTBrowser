@@ -3,7 +3,7 @@
  * Remove the workspace symlink directory before electron-builder packs.
  *
  * Yarn 4 with nodeLinker:node-modules creates symlinks under
- *   apps/desktop/node_modules/@multizen/*
+ *   apps/desktop/node_modules/@mktbrowser/*
  * pointing to packages/<x>/. electron-builder follows those symlinks
  * and refuses to package "package.json under a path outside the app"
  * with the error:
@@ -11,7 +11,7 @@
  *
  * Workspace packages are already bundled into out/main/index.js by
  * electron-vite (see NATIVE_EXTERNALS in electron.vite.config.ts;
- * @multizen/* is NOT in that list, so rollup inlines them). The
+ * @mktbrowser/* is NOT in that list, so rollup inlines them). The
  * symlinks have served their purpose by the time this script runs.
  *
  * Cross-platform: uses fs.rmSync, no shell tools.
@@ -20,7 +20,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const target = path.resolve(__dirname, "..", "node_modules", "@multizen");
+const target = path.resolve(__dirname, "..", "node_modules", "@mktbrowser");
 
 if (fs.existsSync(target)) {
   fs.rmSync(target, { recursive: true, force: true });

@@ -34,8 +34,8 @@ export function ExtensionsSection({
     }
     return (
       <div className="text-[12px] text-slate-500 leading-relaxed">
-        Save the profile first — then you can add extensions (.crx / .zip / folder, or by
-        Chrome Web Store link) and they&apos;ll load in this profile only.
+        Save the profile first — then you can add extensions (.crx / .zip / folder, or by Chrome Web
+        Store link) and they&apos;ll load in this profile only.
       </div>
     );
   }
@@ -53,13 +53,13 @@ function LiveExtensions({ profileId }: { profileId: string }): JSX.Element {
   const [catalogBusyId, setCatalogBusyId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!window.multizen) return;
-    void window.multizen.extensions.list(profileId).then(setItems);
+    if (!window.mktBrowser) return;
+    void window.mktBrowser.extensions.list(profileId).then(setItems);
     // A companion "Add to MKT Browser" install (while editing a running profile)
     // pushes here — refresh the list.
-    return window.multizen.extensions.onInstalled((e) => {
+    return window.mktBrowser.extensions.onInstalled((e) => {
       if (e.profileId === profileId) {
-        void window.multizen.extensions.list(profileId).then(setItems);
+        void window.mktBrowser.extensions.list(profileId).then(setItems);
         if (!e.ok) setError(e.error);
       }
     });
@@ -81,7 +81,7 @@ function LiveExtensions({ profileId }: { profileId: string }): JSX.Element {
     setCatalogBusyId(ext.id);
     setError(null);
     try {
-      setItems(await window.multizen.extensions.addFromWebStore(profileId, ext.id));
+      setItems(await window.mktBrowser.extensions.addFromWebStore(profileId, ext.id));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -99,9 +99,11 @@ function LiveExtensions({ profileId }: { profileId: string }): JSX.Element {
               ext={ext}
               profileId={profileId}
               onToggle={(enabled) =>
-                void run(() => window.multizen.extensions.toggle(profileId, ext.id, enabled))
+                void run(() => window.mktBrowser.extensions.toggle(profileId, ext.id, enabled))
               }
-              onRemove={() => void run(() => window.multizen.extensions.remove(profileId, ext.id))}
+              onRemove={() =>
+                void run(() => window.mktBrowser.extensions.remove(profileId, ext.id))
+              }
             />
           ))}
         </div>
@@ -113,13 +115,13 @@ function LiveExtensions({ profileId }: { profileId: string }): JSX.Element {
         busy={busy}
         onAddWebStore={() =>
           void run(async () => {
-            const next = await window.multizen.extensions.addFromWebStore(profileId, url.trim());
+            const next = await window.mktBrowser.extensions.addFromWebStore(profileId, url.trim());
             setUrl("");
             return next;
           })
         }
-        onAddFile={() => void run(() => window.multizen.extensions.addFromFile(profileId))}
-        onAddFolder={() => void run(() => window.multizen.extensions.addFromFolder(profileId))}
+        onAddFile={() => void run(() => window.mktBrowser.extensions.addFromFile(profileId))}
+        onAddFolder={() => void run(() => window.mktBrowser.extensions.addFromFolder(profileId))}
       />
 
       <CatalogToggle open={showCatalog} onToggle={() => setShowCatalog((v) => !v)} />
@@ -184,7 +186,7 @@ function StagingExtensions({
     setShowAttach((v) => !v);
     if (available === null) {
       try {
-        setAvailable(await window.multizen.extensions.storeEntries());
+        setAvailable(await window.mktBrowser.extensions.storeEntries());
       } catch {
         setAvailable([]);
       }
@@ -195,7 +197,7 @@ function StagingExtensions({
     setCatalogBusyId(ext.id);
     setError(null);
     try {
-      upsert(await window.multizen.extensions.prepareFromWebStore(ext.id));
+      upsert(await window.mktBrowser.extensions.prepareFromWebStore(ext.id));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -215,9 +217,7 @@ function StagingExtensions({
               ext={ext}
               profileId={null}
               onToggle={(enabled) =>
-                onChange((prev) =>
-                  prev.map((e) => (e.id === ext.id ? { ...e, enabled } : e)),
-                )
+                onChange((prev) => prev.map((e) => (e.id === ext.id ? { ...e, enabled } : e)))
               }
               onRemove={() => onChange((prev) => prev.filter((e) => e.id !== ext.id))}
             />
@@ -231,13 +231,13 @@ function StagingExtensions({
         busy={busy}
         onAddWebStore={() =>
           void run(async () => {
-            const cfg = await window.multizen.extensions.prepareFromWebStore(url.trim());
+            const cfg = await window.mktBrowser.extensions.prepareFromWebStore(url.trim());
             setUrl("");
             return cfg;
           })
         }
-        onAddFile={() => void run(() => window.multizen.extensions.prepareFromFile())}
-        onAddFolder={() => void run(() => window.multizen.extensions.prepareFromFolder())}
+        onAddFile={() => void run(() => window.mktBrowser.extensions.prepareFromFile())}
+        onAddFolder={() => void run(() => window.mktBrowser.extensions.prepareFromFolder())}
       />
 
       <CatalogToggle open={showCatalog} onToggle={() => setShowCatalog((v) => !v)} />
@@ -268,8 +268,8 @@ function StagingExtensions({
             </div>
           ) : attachable.length === 0 ? (
             <div className="text-[11px] text-slate-600 leading-relaxed">
-              No other extensions in your library yet. Add one above and it becomes attachable
-              to future profiles.
+              No other extensions in your library yet. Add one above and it becomes attachable to
+              future profiles.
             </div>
           ) : (
             attachable.map((ext) => (
@@ -293,8 +293,8 @@ function StagingExtensions({
       )}
 
       <div className="text-[11px] text-slate-600 leading-relaxed">
-        Extensions load on first launch. Login/state is not copied — attached extensions start
-        fresh in this profile.
+        Extensions load on first launch. Login/state is not copied — attached extensions start fresh
+        in this profile.
       </div>
 
       {error && <ErrorBox message={error} />}
@@ -404,13 +404,7 @@ function AddRow({
   );
 }
 
-function CatalogToggle({
-  open,
-  onToggle,
-}: {
-  open: boolean;
-  onToggle: () => void;
-}): JSX.Element {
+function CatalogToggle({ open, onToggle }: { open: boolean; onToggle: () => void }): JSX.Element {
   return (
     <button
       type="button"

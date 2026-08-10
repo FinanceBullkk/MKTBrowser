@@ -19,25 +19,16 @@ export interface AppSettings {
   theme: "dark";
   /** Whether to spawn local MCP HTTP server on app start */
   mcpHttpEnabled: boolean;
-  /** Port for MCP HTTP server */
-  mcpHttpPort: number;
   /** Which Chromium binary to download + run. Switching requires app restart. */
   browserEngine: BrowserEngine;
-  /** Reserved for settings-schema compatibility; W01 has no app updater. */
-  autoUpdate: boolean;
-  /** Reserved for settings-schema compatibility; W01 has no usage heartbeat. */
-  usageReporting: boolean;
 }
 
 const DEFAULTS: AppSettings = {
   theme: "dark",
   mcpHttpEnabled: true,
-  mcpHttpPort: 7777,
   // Prefer CloakBrowser as the primary runtime. Chrome for Testing stays
   // available as a compatibility fallback from Settings.
   browserEngine: "cloakbrowser",
-  autoUpdate: false,
-  usageReporting: false,
 };
 
 export class SettingsStore {
@@ -62,16 +53,15 @@ export class SettingsStore {
       }
     }
 
-    const merged: AppSettings = { ...DEFAULTS, ...raw };
-    if (merged.browserEngine !== "cft" && merged.browserEngine !== "cloakbrowser") {
-      merged.browserEngine = DEFAULTS.browserEngine;
-    }
-    if (typeof merged.autoUpdate !== "boolean") {
-      merged.autoUpdate = DEFAULTS.autoUpdate;
-    }
-    if (typeof merged.usageReporting !== "boolean") {
-      merged.usageReporting = DEFAULTS.usageReporting;
-    }
+    const merged: AppSettings = {
+      theme: "dark",
+      mcpHttpEnabled:
+        typeof raw.mcpHttpEnabled === "boolean" ? raw.mcpHttpEnabled : DEFAULTS.mcpHttpEnabled,
+      browserEngine:
+        raw.browserEngine === "cft" || raw.browserEngine === "cloakbrowser"
+          ? raw.browserEngine
+          : DEFAULTS.browserEngine,
+    };
     this.cache = merged;
     return merged;
   }

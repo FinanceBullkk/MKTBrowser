@@ -1,8 +1,14 @@
-import { createServer, type IncomingMessage, type ServerResponse, type Server as HttpServer } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type ServerResponse,
+  type Server as HttpServer,
+} from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import type { Server as McpServer } from "@modelcontextprotocol/sdk/server/index.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { MKT_BROWSER_MCP_HEALTH_NAME } from "@mktbrowser/types";
 
 export interface HttpTransportOptions {
   port: number;
@@ -138,7 +144,11 @@ export class HttpTransport {
 
     if (url === "/healthz") {
       res.writeHead(200, { "content-type": "application/json" }).end(
-        JSON.stringify({ ok: true, name: "multizen-mcp", connected: this.sseTransport !== null }),
+        JSON.stringify({
+          ok: true,
+          name: MKT_BROWSER_MCP_HEALTH_NAME,
+          connected: this.sseTransport !== null,
+        }),
       );
       return;
     }

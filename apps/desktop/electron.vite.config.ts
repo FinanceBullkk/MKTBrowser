@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 
 /**
  * Native modules and Electron itself cannot be bundled — they must be
- * marked external. Pure-JS workspace deps (@multizen/*) get bundled so
+ * marked external. Pure-JS workspace deps (@mktbrowser/*) get bundled so
  * we can ship .ts source files without a separate build step in dev.
  */
 const NATIVE_EXTERNALS = [

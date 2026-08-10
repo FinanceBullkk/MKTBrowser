@@ -78,7 +78,10 @@ function toPatch(f: FormState): UpdateProfileInput {
   return {
     name: f.name.trim(),
     notes: f.notes || undefined,
-    tags: f.tagsRaw.split(",").map((s) => s.trim()).filter(Boolean),
+    tags: f.tagsRaw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
     icon: f.icon ?? null, // null clears a custom icon (revert to derived default)
     startUrl: f.startUrl.trim() || null, // null → app default start page
     proxy,
@@ -86,10 +89,7 @@ function toPatch(f: FormState): UpdateProfileInput {
   };
 }
 
-type SaveStatus =
-  | { kind: "saved" }
-  | { kind: "saving" }
-  | { kind: "error"; message: string };
+type SaveStatus = { kind: "saved" } | { kind: "saving" } | { kind: "error"; message: string };
 
 const AUTOSAVE_MS = 600;
 
@@ -125,7 +125,7 @@ export function ProfileEditSheet({ profile, onSaved }: Props): JSX.Element {
   async function persist(f: FormState): Promise<void> {
     setStatus({ kind: "saving" });
     try {
-      await window.multizen.profiles.update(profile.id, toPatch(f));
+      await window.mktBrowser.profiles.update(profile.id, toPatch(f));
       savedRef.current = JSON.stringify(f);
       setStatus({ kind: "saved" });
       onSavedRef.current?.();
@@ -159,7 +159,7 @@ export function ProfileEditSheet({ profile, onSaved }: Props): JSX.Element {
     return () => {
       const { form: f, id } = latestRef.current;
       if (JSON.stringify(f) !== savedRef.current && !validate(f)) {
-        void window.multizen.profiles
+        void window.mktBrowser.profiles
           .update(id, toPatch(f))
           .then(() => onSavedRef.current?.())
           .catch(() => {
@@ -204,7 +204,10 @@ export function ProfileEditSheet({ profile, onSaved }: Props): JSX.Element {
                   value={form.icon}
                   onChange={(v) => update("icon", v)}
                   name={form.name}
-                  tags={form.tagsRaw.split(",").map((s) => s.trim()).filter(Boolean)}
+                  tags={form.tagsRaw
+                    .split(",")
+                    .map((s) => s.trim())
+                    .filter(Boolean)}
                   id={profile.id}
                 />
               </Field>

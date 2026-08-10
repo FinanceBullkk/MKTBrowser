@@ -1,7 +1,8 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Space Grotesk", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-sans:
+    "Space Grotesk", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Monaco, monospace;
 }
 
@@ -59,7 +60,7 @@
 }
 
 /* Atoms used across the app */
-.mz-card {
+.mkt-browser-card {
   background: rgba(255, 255, 255, 0.02);
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.05),
@@ -68,13 +69,13 @@
   backdrop-filter: blur(20px);
 }
 
-.mz-panel {
+.mkt-browser-panel {
   background: rgba(255, 255, 255, 0.02);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
   border-radius: 12px;
 }
 
-.mz-pill {
+.mkt-browser-pill {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -87,7 +88,7 @@
   letter-spacing: 0.02em;
 }
 
-.mz-kbd {
+.mkt-browser-kbd {
   font-family: var(--font-mono);
   font-size: 11px;
   padding: 1px 5px;
@@ -98,35 +99,35 @@
 }
 
 /* Hover/active treatment shared by all <Button>s — variant tokens live in Button.tsx */
-.mz-button {
+.mkt-browser-button {
   border: 0;
   cursor: pointer;
   letter-spacing: 0.005em;
   -webkit-app-region: no-drag;
 }
-.mz-button:hover:not(:disabled)[data-variant="primary"] {
+.mkt-browser-button:hover:not(:disabled)[data-variant="primary"] {
   filter: brightness(1.06);
 }
-.mz-button:hover:not(:disabled)[data-variant="secondary"] {
+.mkt-browser-button:hover:not(:disabled)[data-variant="secondary"] {
   background: rgba(255, 255, 255, 0.07) !important;
 }
-.mz-button:hover:not(:disabled)[data-variant="ghost"] {
+.mkt-browser-button:hover:not(:disabled)[data-variant="ghost"] {
   background: rgba(255, 255, 255, 0.04) !important;
   color: #cbd5e1 !important;
 }
-.mz-button:hover:not(:disabled)[data-variant="accent"] {
+.mkt-browser-button:hover:not(:disabled)[data-variant="accent"] {
   background: rgba(168, 85, 247, 0.16) !important;
 }
-.mz-button:hover:not(:disabled)[data-variant="success"] {
+.mkt-browser-button:hover:not(:disabled)[data-variant="success"] {
   background: rgba(16, 185, 129, 0.16) !important;
 }
-.mz-button:hover:not(:disabled)[data-variant="warning"] {
+.mkt-browser-button:hover:not(:disabled)[data-variant="warning"] {
   background: rgba(245, 158, 11, 0.16) !important;
 }
-.mz-button:hover:not(:disabled)[data-variant="danger"] {
+.mkt-browser-button:hover:not(:disabled)[data-variant="danger"] {
   background: rgba(239, 68, 68, 0.14) !important;
 }
-.mz-button:active:not(:disabled) {
+.mkt-browser-button:active:not(:disabled) {
   transform: scale(0.97);
 }
 
@@ -146,9 +147,16 @@
     inset 0 0 0 1px rgba(255, 255, 255, 0.15);
   transition: all 150ms ease-out;
 }
-.btn-brand:hover { filter: brightness(1.06); }
-.btn-brand:active { transform: scale(0.97); }
-.btn-brand:disabled { opacity: 0.5; pointer-events: none; }
+.btn-brand:hover {
+  filter: brightness(1.06);
+}
+.btn-brand:active {
+  transform: scale(0.97);
+}
+.btn-brand:disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
 
 .btn-secondary {
   background: rgba(255, 255, 255, 0.04);
@@ -162,8 +170,12 @@
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
   transition: all 150ms ease-out;
 }
-.btn-secondary:hover { background: rgba(255, 255, 255, 0.07); }
-.btn-secondary:active { transform: scale(0.97); }
+.btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+.btn-secondary:active {
+  transform: scale(0.97);
+}
 
 .btn-ghost {
   background: transparent;
@@ -181,10 +193,12 @@
   color: #cbd5e1;
   background: rgba(255, 255, 255, 0.04);
 }
-.btn-ghost:active { transform: scale(0.97); }
+.btn-ghost:active {
+  transform: scale(0.97);
+}
 
 /* Pulsing dot used in 'live' / 'running' / 'ai' states */
-@keyframes mz-dotpulse {
+@keyframes mkt-browser-dotpulse {
   0%,
   100% {
     opacity: 1;
@@ -194,7 +208,7 @@
   }
 }
 
-@keyframes mz-pulse-ring {
+@keyframes mkt-browser-pulse-ring {
   0% {
     box-shadow: 0 0 0 0 currentColor;
     opacity: 0.6;
@@ -209,7 +223,7 @@
   }
 }
 
-@keyframes mz-shimmer {
+@keyframes mkt-browser-shimmer {
   0% {
     background-position: -200% 0;
   }
@@ -218,7 +232,7 @@
   }
 }
 
-@keyframes mz-blink {
+@keyframes mkt-browser-blink {
   0%,
   50% {
     opacity: 1;
@@ -229,7 +243,7 @@
   }
 }
 
-@keyframes mz-fade-in {
+@keyframes mkt-browser-fade-in {
   from {
     opacity: 0;
   }
@@ -238,7 +252,7 @@
   }
 }
 
-@keyframes mz-slide-up {
+@keyframes mkt-browser-slide-up {
   from {
     opacity: 0;
     transform: translateY(8px);
@@ -249,7 +263,7 @@
   }
 }
 
-@keyframes mz-modal-pop {
+@keyframes mkt-browser-modal-pop {
   from {
     opacity: 0;
     transform: translateY(8px) scale(0.97);
@@ -260,7 +274,7 @@
   }
 }
 
-.mz-shimmer {
+.mkt-browser-shimmer {
   background: linear-gradient(
     90deg,
     rgba(255, 255, 255, 0.02) 0%,
@@ -268,7 +282,7 @@
     rgba(255, 255, 255, 0.02) 100%
   );
   background-size: 200% 100%;
-  animation: mz-shimmer 1.4s linear infinite;
+  animation: mkt-browser-shimmer 1.4s linear infinite;
 }
 
 .drag-region {

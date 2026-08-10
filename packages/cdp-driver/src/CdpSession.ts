@@ -30,11 +30,7 @@ function buildSender(client: CDP.Client, sessionId: string | undefined): TargetS
     }
     return (
       client as unknown as {
-        send: (
-          m: string,
-          p: Record<string, unknown> | undefined,
-          sid: string,
-        ) => Promise<unknown>;
+        send: (m: string, p: Record<string, unknown> | undefined, sid: string) => Promise<unknown>;
       }
     ).send(method, params, sessionId);
   }) as TargetSender;
@@ -235,11 +231,7 @@ export class CdpSession {
             }
           } finally {
             try {
-              await client.send(
-                "Runtime.runIfWaitingForDebugger",
-                undefined,
-                params.sessionId,
-              );
+              await client.send("Runtime.runIfWaitingForDebugger", undefined, params.sessionId);
             } catch {
               // Already detached.
             }
@@ -252,7 +244,7 @@ export class CdpSession {
   /**
    * Watch for a companion signal on page targets whose URL contains
    * `urlIncludes`. Channel: the content script writes the payload to
-   * `<html data-mz-add-ext="…">` and the host polls it via Runtime.evaluate.
+   * `<html data-mkt-browser-add-ext="…">` and the host polls it via Runtime.evaluate.
    *
    * Why DOM, not a CDP binding/console: CloakBrowser puts content scripts in an
    * ISOLATED world (it ignores manifest `world:MAIN`) and suppresses console
@@ -267,7 +259,7 @@ export class CdpSession {
   }): Promise<void> {
     const client = this.require();
     const { Target } = client;
-    const ATTR = "data-mz-add-ext";
+    const ATTR = "data-mkt-browser-add-ext";
     const armed = new Map<string, NodeJS.Timeout>();
     this.teardowns.push(() => {
       for (const iv of armed.values()) clearInterval(iv);
@@ -396,7 +388,9 @@ export class CdpSession {
     // A "tracked" enable is one the safe layer is responsible for undoing:
     // an allowlisted domain that wasn't already enabled at connect.
     const tracked =
-      isEnable && SAFE_PAIRED_DISABLE_DOMAINS.has(domain) && !this.connectEnabledDomains.has(domain);
+      isEnable &&
+      SAFE_PAIRED_DISABLE_DOMAINS.has(domain) &&
+      !this.connectEnabledDomains.has(domain);
 
     if (tracked && this.opts.engine === "cloakbrowser" && CLOAK_RISKY_ENABLE_DOMAINS.has(domain)) {
       throw new Error(
@@ -421,7 +415,10 @@ export class CdpSession {
         const next = (this.safeEnableRefcount.get(domain) ?? 1) - 1;
         if (next <= 0) {
           this.safeEnableRefcount.delete(domain);
-          await buildSender(client, sessionId)(`${domain}.disable`).catch(() => {
+          await buildSender(
+            client,
+            sessionId,
+          )(`${domain}.disable`).catch(() => {
             // Domain may already be disabled / session gone — best effort.
           });
         } else {
@@ -431,7 +428,10 @@ export class CdpSession {
     }
   }
 
-  async navigate(url: string, opts: { timeoutMs?: number } = {}): Promise<{ url: string; title: string }> {
+  async navigate(
+    url: string,
+    opts: { timeoutMs?: number } = {},
+  ): Promise<{ url: string; title: string }> {
     const client = this.require();
     const { Page } = client;
     const timeoutMs = opts.timeoutMs ?? 30000;
@@ -477,8 +477,20 @@ export class CdpSession {
   private async dispatchMouseClick(x: number, y: number): Promise<void> {
     const client = this.require();
     await client.Input.dispatchMouseEvent({ type: "mouseMoved", x, y });
-    await client.Input.dispatchMouseEvent({ type: "mousePressed", x, y, button: "left", clickCount: 1 });
-    await client.Input.dispatchMouseEvent({ type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+    await client.Input.dispatchMouseEvent({
+      type: "mousePressed",
+      x,
+      y,
+      button: "left",
+      clickCount: 1,
+    });
+    await client.Input.dispatchMouseEvent({
+      type: "mouseReleased",
+      x,
+      y,
+      button: "left",
+      clickCount: 1,
+    });
   }
 
   /**
@@ -510,7 +522,7 @@ export class CdpSession {
   /**
    * Snapshot the page: URL, title, accessibility tree, text fallback.
    * The calling LLM is expected to parse this into whatever structured
-   * shape it needs. MultiZen does not call any external API here.
+   * shape it needs. MKT Browser does not call any external API here.
    */
   async extract(): Promise<{ result: ExtractContext }> {
     const snapshot = await this.snapshot();
@@ -537,7 +549,10 @@ export class CdpSession {
       expression: "JSON.stringify({ url: location.href, title: document.title })",
       returnByValue: true,
     });
-    const { url, title } = JSON.parse(meta.result.value as string) as { url: string; title: string };
+    const { url, title } = JSON.parse(meta.result.value as string) as {
+      url: string;
+      title: string;
+    };
 
     // Enable Accessibility only for the duration of this snapshot —
     // keeping it enabled globally is a stealth-build DCHECK trigger.
@@ -625,7 +640,10 @@ function trimAccessibilityTree(rawNodes: RawAxNode[]): AccessibilityNode[] {
       role !== "presentation" &&
       role !== "none" &&
       role !== "InlineTextBox" &&
-      (name || value || description || ["link", "button", "textbox", "checkbox", "combobox", "option"].includes(role));
+      (name ||
+        value ||
+        description ||
+        ["link", "button", "textbox", "checkbox", "combobox", "option"].includes(role));
 
     if (!isInteresting) return children; // drop the generic wrapper, hoist its content
 

@@ -69,7 +69,7 @@ export function EmojiField({
 
       {open && (
         <div
-          className="absolute z-50 mt-2 rounded-xl overflow-hidden mz-slide-up"
+          className="absolute z-50 mt-2 rounded-xl overflow-hidden mkt-browser-slide-up"
           style={{ boxShadow: "0 20px 40px rgba(0,0,0,0.6)" }}
         >
           <div

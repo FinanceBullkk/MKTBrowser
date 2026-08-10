@@ -37,9 +37,9 @@ export function FingerprintForm({ fingerprint, onChange, proxy }: Props): JSX.El
   const [detected, setDetected] = useState<ProxyGeoResult | null>(null);
 
   useEffect(() => {
-    if (!window.multizen) return;
-    void window.multizen.fingerprint.devices().then(setDevices);
-    void window.multizen.fingerprint.locales().then(setLocales);
+    if (!window.mktBrowser) return;
+    void window.mktBrowser.fingerprint.devices().then(setDevices);
+    void window.mktBrowser.fingerprint.locales().then(setLocales);
   }, []);
 
   // Reset detection state when proxy changes
@@ -52,14 +52,14 @@ export function FingerprintForm({ fingerprint, onChange, proxy }: Props): JSX.El
   const currentLocale = locales.find((l) => l.locale === fingerprint.locale);
 
   async function regen(): Promise<void> {
-    const next = await window.multizen.fingerprint.generate();
+    const next = await window.mktBrowser.fingerprint.generate();
     onChange(next);
   }
 
   async function reconcile(
-    patch: Parameters<typeof window.multizen.fingerprint.reconcile>[1],
+    patch: Parameters<typeof window.mktBrowser.fingerprint.reconcile>[1],
   ): Promise<void> {
-    const next = await window.multizen.fingerprint.reconcile(fingerprint, patch);
+    const next = await window.mktBrowser.fingerprint.reconcile(fingerprint, patch);
     onChange(next);
   }
 
@@ -68,7 +68,7 @@ export function FingerprintForm({ fingerprint, onChange, proxy }: Props): JSX.El
     setDetecting(true);
     setDetectError(null);
     try {
-      const result = await window.multizen.proxy.detectGeo(proxy);
+      const result = await window.mktBrowser.proxy.detectGeo(proxy);
       if (!result.ok) {
         setDetectError(result.error);
         return;
@@ -77,9 +77,7 @@ export function FingerprintForm({ fingerprint, onChange, proxy }: Props): JSX.El
       // Resolve locale for the proxy's country. Falls back to a culturally
       // adjacent locale for countries that don't have an explicit preset
       // (e.g. Liechtenstein → de-DE, San Marino → it-IT).
-      const localeId = await window.multizen.fingerprint.localeForCountry(
-        result.geo.country,
-      );
+      const localeId = await window.mktBrowser.fingerprint.localeForCountry(result.geo.country);
       if (!localeId) {
         setDetectError(
           `Proxy is in ${result.geo.countryName} (${result.geo.country}) — no locale preset matches. Pick a locale manually below.`,
@@ -88,9 +86,7 @@ export function FingerprintForm({ fingerprint, onChange, proxy }: Props): JSX.El
       }
       const match = locales.find((l) => l.id === localeId);
       if (!match) {
-        setDetectError(
-          `Locale ${localeId} not in catalog. Pick one manually.`,
-        );
+        setDetectError(`Locale ${localeId} not in catalog. Pick one manually.`);
         return;
       }
       // Use the detected timezone if it's in the locale's allowed list,
@@ -107,8 +103,7 @@ export function FingerprintForm({ fingerprint, onChange, proxy }: Props): JSX.El
   }
 
   // Proxy-coherence warning: locale country must match detected proxy country.
-  const showProxyMismatch =
-    detected && fingerprint.country !== detected.country;
+  const showProxyMismatch = detected && fingerprint.country !== detected.country;
 
   return (
     <div className="space-y-3">
@@ -122,10 +117,8 @@ export function FingerprintForm({ fingerprint, onChange, proxy }: Props): JSX.El
           onClick={() => void regen()}
           className="flex-1 inline-flex items-center justify-center gap-1.5 h-8 text-[12px] font-medium text-purple-200 hover:text-white transition-colors rounded-lg"
           style={{
-            background:
-              "linear-gradient(180deg, rgba(168,85,247,0.18), rgba(168,85,247,0.10))",
-            boxShadow:
-              "inset 0 0 0 1px rgba(168,85,247,0.35), 0 1px 0 rgba(255,255,255,0.05)",
+            background: "linear-gradient(180deg, rgba(168,85,247,0.18), rgba(168,85,247,0.10))",
+            boxShadow: "inset 0 0 0 1px rgba(168,85,247,0.35), 0 1px 0 rgba(255,255,255,0.05)",
           }}
           title="Generate a new coherent device + locale + screen + UA"
         >
@@ -170,9 +163,10 @@ export function FingerprintForm({ fingerprint, onChange, proxy }: Props): JSX.El
         <Select
           value={fingerprint.timezone}
           onChange={(v) => void reconcile({ timezone: v })}
-          options={(currentLocale?.timezones ?? [fingerprint.timezone]).map(
-            (tz) => ({ value: tz, label: tz }),
-          )}
+          options={(currentLocale?.timezones ?? [fingerprint.timezone]).map((tz) => ({
+            value: tz,
+            label: tz,
+          }))}
         />
       </Field>
 
@@ -186,13 +180,15 @@ export function FingerprintForm({ fingerprint, onChange, proxy }: Props): JSX.El
               screen: { width: Number(m[1]), height: Number(m[2]) },
             });
           }}
-          options={(currentDevice?.screens ?? [
-            {
-              width: fingerprint.screen.width,
-              height: fingerprint.screen.height,
-              label: `${fingerprint.screen.width} × ${fingerprint.screen.height}`,
-            },
-          ]).map((s) => ({
+          options={(
+            currentDevice?.screens ?? [
+              {
+                width: fingerprint.screen.width,
+                height: fingerprint.screen.height,
+                label: `${fingerprint.screen.width} × ${fingerprint.screen.height}`,
+              },
+            ]
+          ).map((s) => ({
             value: `${s.width}×${s.height}`,
             label: s.label,
           }))}
@@ -237,9 +233,8 @@ export function FingerprintForm({ fingerprint, onChange, proxy }: Props): JSX.El
           <AlertTriangle size={12} className="mt-0.5 flex-shrink-0" />
           <span>
             Locale country is{" "}
-            <strong className="text-amber-200 uppercase">{fingerprint.country}</strong>{" "}
-            but proxy IP is in{" "}
-            <strong className="text-amber-200 uppercase">{detected.country}</strong>
+            <strong className="text-amber-200 uppercase">{fingerprint.country}</strong> but proxy IP
+            is in <strong className="text-amber-200 uppercase">{detected.country}</strong>
             {" — anti-bot systems flag this. Pick a matching locale or proxy."}
           </span>
         </div>
@@ -319,11 +314,7 @@ function Select({
       }}
     >
       {options.map((o) => (
-        <option
-          key={o.value}
-          value={o.value}
-          style={{ background: "#12131a", color: "#e2e8f0" }}
-        >
+        <option key={o.value} value={o.value} style={{ background: "#12131a", color: "#e2e8f0" }}>
           {o.label}
         </option>
       ))}

@@ -17,14 +17,7 @@ import { cn } from "../../lib/cn";
  *
  * Sizes: sm (h-7), md (h-8 default), lg (h-10).
  */
-type Variant =
-  | "primary"
-  | "secondary"
-  | "ghost"
-  | "accent"
-  | "success"
-  | "warning"
-  | "danger";
+type Variant = "primary" | "secondary" | "ghost" | "accent" | "success" | "warning" | "danger";
 type Size = "sm" | "md" | "lg" | "icon";
 
 interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -110,7 +103,7 @@ export const Button = forwardRef<HTMLButtonElement, Props>(function Button(
       type="button"
       data-variant={variant}
       className={cn(
-        "mz-button inline-flex items-center justify-center font-medium",
+        "mkt-browser-button inline-flex items-center justify-center font-medium",
         "transition-all duration-150",
         "disabled:opacity-50 disabled:pointer-events-none",
         SIZE_CLASSES[size],

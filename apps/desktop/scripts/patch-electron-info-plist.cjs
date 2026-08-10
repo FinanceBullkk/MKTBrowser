@@ -43,15 +43,15 @@ if (!plistPath) {
 const original = fs.readFileSync(plistPath, "utf8");
 let patched = original;
 patched = patched.replace(
-  /(<key>CFBundleName<\/key>\s*<string>)(?:Electron|MultiZen)(<\/string>)/,
+  /(<key>CFBundleName<\/key>\s*<string>)Electron(<\/string>)/,
   `$1${APP_NAME}$2`,
 );
 patched = patched.replace(
-  /(<key>CFBundleDisplayName<\/key>\s*<string>)(?:Electron|MultiZen)(<\/string>)/,
+  /(<key>CFBundleDisplayName<\/key>\s*<string>)Electron(<\/string>)/,
   `$1${APP_NAME}$2`,
 );
 patched = patched.replace(
-  /(<key>CFBundleIdentifier<\/key>\s*<string>)(?:com\.github\.Electron|com\.multizen\.dev)(<\/string>)/,
+  /(<key>CFBundleIdentifier<\/key>\s*<string>)com\.github\.Electron(<\/string>)/,
   `$1${APP_ID}$2`,
 );
 if (patched !== original) {

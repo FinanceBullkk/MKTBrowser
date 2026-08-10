@@ -34,7 +34,7 @@ export function ProxyTester({ proxy, profileId, onProbed }: Props): JSX.Element 
     setError(null);
     setResult(null);
     try {
-      const r = await window.multizen.proxy.detectGeo(proxy, profileId);
+      const r = await window.mktBrowser.proxy.detectGeo(proxy, profileId);
       if (r.ok) {
         setResult(r.geo);
         onProbed?.();

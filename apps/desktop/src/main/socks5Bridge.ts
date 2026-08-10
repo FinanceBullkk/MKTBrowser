@@ -1,7 +1,7 @@
 import { createServer, type Socket, type AddressInfo } from "node:net";
 import { connect as netConnect } from "node:net";
 import { SocksClient } from "socks";
-import type { ProfileId, ProxyConfig } from "@multizen/types";
+import type { ProfileId, ProxyConfig } from "@mktbrowser/types";
 
 /**
  * Local SOCKS5 → upstream-proxy bridge, per profile.
@@ -76,11 +76,7 @@ async function startBridge(upstream: ProxyConfig): Promise<BridgeHandle> {
     });
     handleSocksClient(sock, upstream).catch((e: unknown) => {
       const msg = (e as Error).message;
-      if (
-        /socket closed|ECONNRESET|EPIPE|This socket is closed|read ECONNRESET/i.test(
-          msg,
-        )
-      ) {
+      if (/socket closed|ECONNRESET|EPIPE|This socket is closed|read ECONNRESET/i.test(msg)) {
         sock.destroy();
         return;
       }
@@ -223,10 +219,9 @@ async function connectViaHttpConnect(
     `Host: ${targetHost}:${targetPort}`,
   ];
   if (upstream.username) {
-    const token = Buffer.from(
-      `${upstream.username}:${upstream.password ?? ""}`,
-      "utf8",
-    ).toString("base64");
+    const token = Buffer.from(`${upstream.username}:${upstream.password ?? ""}`, "utf8").toString(
+      "base64",
+    );
     lines.push(`Proxy-Authorization: Basic ${token}`);
   }
   lines.push("Proxy-Connection: keep-alive", "", "");
@@ -295,9 +290,8 @@ function openTcp(host: string, port: number): Promise<Socket> {
  */
 class BufferedReader {
   private buf = Buffer.alloc(0);
-  private pending:
-    | { n: number; resolve: (b: Buffer) => void; reject: (e: Error) => void }
-    | null = null;
+  private pending: { n: number; resolve: (b: Buffer) => void; reject: (e: Error) => void } | null =
+    null;
   private closed = false;
   private err: Error | null = null;
   private detached = false;

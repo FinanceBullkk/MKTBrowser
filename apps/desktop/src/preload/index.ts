@@ -7,15 +7,10 @@ import type {
   UpdateProfileInput,
   LaunchedProfile,
   FingerprintConfig,
-} from "@multizen/types";
-import type { ActivityEvent } from "@multizen/mcp-server";
-import type { AppSettings } from "@multizen/settings-store";
-import type {
-  ChromiumStatus,
-  DeviceFamily,
-  ExtensionConfig,
-  ProxyConfig,
-} from "@multizen/types";
+} from "@mktbrowser/types";
+import type { ActivityEvent } from "@mktbrowser/mcp-server";
+import type { AppSettings } from "@mktbrowser/settings-store";
+import type { ChromiumStatus, DeviceFamily, ExtensionConfig, ProxyConfig } from "@mktbrowser/types";
 
 /** Payload for the `extensions:installed` push (companion "Add to MKT Browser"). */
 export type ExtensionInstalledEvent =
@@ -30,7 +25,7 @@ export interface ProxyGeoResult {
   ip: string;
 }
 
-/** Mirror of the catalog types from @multizen/profile-manager. */
+/** Mirror of the catalog types from @mktbrowser/profile-manager. */
 export interface DeviceCatalogEntry {
   family: DeviceFamily;
   label: string;
@@ -71,8 +66,7 @@ const api = {
     update: (id: ProfileId, patch: UpdateProfileInput): Promise<Profile> =>
       ipcRenderer.invoke("profiles:update", id, patch),
     delete: (id: ProfileId): Promise<void> => ipcRenderer.invoke("profiles:delete", id),
-    launch: (id: ProfileId): Promise<LaunchedProfile> =>
-      ipcRenderer.invoke("profiles:launch", id),
+    launch: (id: ProfileId): Promise<LaunchedProfile> => ipcRenderer.invoke("profiles:launch", id),
     close: (id: ProfileId): Promise<void> => ipcRenderer.invoke("profiles:close", id),
     exportArchive: (
       id: ProfileId,
@@ -91,10 +85,7 @@ const api = {
     onProxyCountryUpdated: (
       cb: (update: { id: string; country: string }) => void,
     ): (() => void) => {
-      const listener = (
-        _: unknown,
-        update: { id: string; country: string },
-      ): void => cb(update);
+      const listener = (_: unknown, update: { id: string; country: string }): void => cb(update);
       ipcRenderer.on("profiles:proxy-country-updated", listener);
       return () => ipcRenderer.off("profiles:proxy-country-updated", listener);
     },
@@ -138,8 +129,7 @@ const api = {
     toggle: (profileId: string, extId: string, enabled: boolean): Promise<ExtensionConfig[]> =>
       ipcRenderer.invoke("extensions:toggle", profileId, extId, enabled),
     // Staging (create sheet, no profile id yet).
-    storeEntries: (): Promise<ExtensionConfig[]> =>
-      ipcRenderer.invoke("extensions:storeEntries"),
+    storeEntries: (): Promise<ExtensionConfig[]> => ipcRenderer.invoke("extensions:storeEntries"),
     prepareFromWebStore: (urlOrId: string): Promise<ExtensionConfig> =>
       ipcRenderer.invoke("extensions:prepareFromWebStore", urlOrId),
     prepareFromFile: (): Promise<ExtensionConfig | null> =>
@@ -156,8 +146,7 @@ const api = {
     },
   },
   fingerprint: {
-    generate: (): Promise<FingerprintConfig> =>
-      ipcRenderer.invoke("fingerprint:generate"),
+    generate: (): Promise<FingerprintConfig> => ipcRenderer.invoke("fingerprint:generate"),
     devices: (): Promise<ReadonlyArray<DeviceCatalogEntry>> =>
       ipcRenderer.invoke("fingerprint:devices"),
     locales: (): Promise<ReadonlyArray<LocaleCatalogEntry>> =>
@@ -165,8 +154,7 @@ const api = {
     reconcile: (
       current: FingerprintConfig,
       patch: FingerprintReconcilePatch,
-    ): Promise<FingerprintConfig> =>
-      ipcRenderer.invoke("fingerprint:reconcile", current, patch),
+    ): Promise<FingerprintConfig> => ipcRenderer.invoke("fingerprint:reconcile", current, patch),
     localeForCountry: (cc: string): Promise<string | null> =>
       ipcRenderer.invoke("fingerprint:localeForCountry", cc),
   },
@@ -179,6 +167,6 @@ const api = {
   },
 };
 
-contextBridge.exposeInMainWorld("multizen", api);
+contextBridge.exposeInMainWorld("mktBrowser", api);
 
-export type MultizenApi = typeof api;
+export type MktBrowserApi = typeof api;

@@ -1019,6 +1019,96 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@mktbrowser/cdp-driver@workspace:*, @mktbrowser/cdp-driver@workspace:packages/cdp-driver":
+  version: 0.0.0-use.local
+  resolution: "@mktbrowser/cdp-driver@workspace:packages/cdp-driver"
+  dependencies:
+    "@mktbrowser/types": "workspace:*"
+    "@types/chrome-remote-interface": "npm:^0.31.14"
+    "@types/ws": "npm:^8.5.13"
+    chrome-remote-interface: "npm:^0.33.3"
+    ws: "npm:^8.18.0"
+  languageName: unknown
+  linkType: soft
+
+"@mktbrowser/desktop@workspace:apps/desktop":
+  version: 0.0.0-use.local
+  resolution: "@mktbrowser/desktop@workspace:apps/desktop"
+  dependencies:
+    "@emoji-mart/data": "npm:^1.2.1"
+    "@emoji-mart/react": "npm:^1.1.1"
+    "@mktbrowser/cdp-driver": "workspace:*"
+    "@mktbrowser/mcp-server": "workspace:*"
+    "@mktbrowser/profile-manager": "workspace:*"
+    "@mktbrowser/settings-store": "workspace:*"
+    "@mktbrowser/types": "workspace:*"
+    "@modelcontextprotocol/sdk": "npm:^1.0.4"
+    "@tailwindcss/vite": "npm:^4.0.0"
+    "@types/react": "npm:^19.0.0"
+    "@types/react-dom": "npm:^19.0.0"
+    "@vitejs/plugin-react": "npm:^4.3.4"
+    better-sqlite3: "npm:^11.7.0"
+    chrome-remote-interface: "npm:^0.33.3"
+    electron: "npm:^33.2.0"
+    electron-builder: "npm:^25.1.8"
+    electron-vite: "npm:^2.3.0"
+    emoji-mart: "npm:^5.6.0"
+    extract-zip: "npm:^2.0.1"
+    framer-motion: "npm:^12.0.0"
+    https-proxy-agent: "npm:^9.0.0"
+    lucide-react: "npm:^0.469.0"
+    proxy-chain: "npm:^2.7.1"
+    rcedit: "npm:5.0.2"
+    react: "npm:^19.0.0"
+    react-dom: "npm:^19.0.0"
+    socks: "npm:^2.8.3"
+    socks-proxy-agent: "npm:^10.0.0"
+    tailwindcss: "npm:^4.0.0"
+    uuid: "npm:^11.0.5"
+    vite: "npm:^6.0.3"
+  languageName: unknown
+  linkType: soft
+
+"@mktbrowser/mcp-server@workspace:*, @mktbrowser/mcp-server@workspace:packages/mcp-server":
+  version: 0.0.0-use.local
+  resolution: "@mktbrowser/mcp-server@workspace:packages/mcp-server"
+  dependencies:
+    "@mktbrowser/profile-manager": "workspace:*"
+    "@mktbrowser/types": "workspace:*"
+    "@modelcontextprotocol/sdk": "npm:^1.0.4"
+    tsx: "npm:^4.19.2"
+    zod: "npm:^3.23.8"
+  bin:
+    mkt-browser-mcp: ./bin/mkt-browser-mcp.js
+  languageName: unknown
+  linkType: soft
+
+"@mktbrowser/profile-manager@workspace:*, @mktbrowser/profile-manager@workspace:packages/profile-manager":
+  version: 0.0.0-use.local
+  resolution: "@mktbrowser/profile-manager@workspace:packages/profile-manager"
+  dependencies:
+    "@mktbrowser/types": "workspace:*"
+    "@types/better-sqlite3": "npm:^7.6.12"
+    "@types/uuid": "npm:^10.0.0"
+    better-sqlite3: "npm:^11.7.0"
+    uuid: "npm:^11.0.5"
+  languageName: unknown
+  linkType: soft
+
+"@mktbrowser/settings-store@workspace:*, @mktbrowser/settings-store@workspace:packages/settings-store":
+  version: 0.0.0-use.local
+  resolution: "@mktbrowser/settings-store@workspace:packages/settings-store"
+  dependencies:
+    "@types/node": "npm:^22.10.0"
+  languageName: unknown
+  linkType: soft
+
+"@mktbrowser/types@workspace:*, @mktbrowser/types@workspace:packages/types":
+  version: 0.0.0-use.local
+  resolution: "@mktbrowser/types@workspace:packages/types"
+  languageName: unknown
+  linkType: soft
+
 "@modelcontextprotocol/sdk@npm:^1.0.4":
   version: 1.29.0
   resolution: "@modelcontextprotocol/sdk@npm:1.29.0"
@@ -1051,96 +1141,6 @@ __metadata:
   checksum: 10c0/7c4bc339205b1652330cd4e6b121cc859079655f2b9c0506bbb15563ba0d07924bda3d949705530532db7f4d2cb86d633dc8f92bc32803d97c7bece2ac63e29f
   languageName: node
   linkType: hard
-
-"@multizen/cdp-driver@workspace:*, @multizen/cdp-driver@workspace:packages/cdp-driver":
-  version: 0.0.0-use.local
-  resolution: "@multizen/cdp-driver@workspace:packages/cdp-driver"
-  dependencies:
-    "@multizen/types": "workspace:*"
-    "@types/chrome-remote-interface": "npm:^0.31.14"
-    "@types/ws": "npm:^8.5.13"
-    chrome-remote-interface: "npm:^0.33.3"
-    ws: "npm:^8.18.0"
-  languageName: unknown
-  linkType: soft
-
-"@multizen/desktop@workspace:apps/desktop":
-  version: 0.0.0-use.local
-  resolution: "@multizen/desktop@workspace:apps/desktop"
-  dependencies:
-    "@emoji-mart/data": "npm:^1.2.1"
-    "@emoji-mart/react": "npm:^1.1.1"
-    "@modelcontextprotocol/sdk": "npm:^1.0.4"
-    "@multizen/cdp-driver": "workspace:*"
-    "@multizen/mcp-server": "workspace:*"
-    "@multizen/profile-manager": "workspace:*"
-    "@multizen/settings-store": "workspace:*"
-    "@multizen/types": "workspace:*"
-    "@tailwindcss/vite": "npm:^4.0.0"
-    "@types/react": "npm:^19.0.0"
-    "@types/react-dom": "npm:^19.0.0"
-    "@vitejs/plugin-react": "npm:^4.3.4"
-    better-sqlite3: "npm:^11.7.0"
-    chrome-remote-interface: "npm:^0.33.3"
-    electron: "npm:^33.2.0"
-    electron-builder: "npm:^25.1.8"
-    electron-vite: "npm:^2.3.0"
-    emoji-mart: "npm:^5.6.0"
-    extract-zip: "npm:^2.0.1"
-    framer-motion: "npm:^12.0.0"
-    https-proxy-agent: "npm:^9.0.0"
-    lucide-react: "npm:^0.469.0"
-    proxy-chain: "npm:^2.7.1"
-    rcedit: "npm:5.0.2"
-    react: "npm:^19.0.0"
-    react-dom: "npm:^19.0.0"
-    socks: "npm:^2.8.3"
-    socks-proxy-agent: "npm:^10.0.0"
-    tailwindcss: "npm:^4.0.0"
-    uuid: "npm:^11.0.5"
-    vite: "npm:^6.0.3"
-  languageName: unknown
-  linkType: soft
-
-"@multizen/mcp-server@workspace:*, @multizen/mcp-server@workspace:packages/mcp-server":
-  version: 0.0.0-use.local
-  resolution: "@multizen/mcp-server@workspace:packages/mcp-server"
-  dependencies:
-    "@modelcontextprotocol/sdk": "npm:^1.0.4"
-    "@multizen/profile-manager": "workspace:*"
-    "@multizen/types": "workspace:*"
-    tsx: "npm:^4.19.2"
-    zod: "npm:^3.23.8"
-  bin:
-    multizen-mcp: ./bin/multizen-mcp.js
-  languageName: unknown
-  linkType: soft
-
-"@multizen/profile-manager@workspace:*, @multizen/profile-manager@workspace:packages/profile-manager":
-  version: 0.0.0-use.local
-  resolution: "@multizen/profile-manager@workspace:packages/profile-manager"
-  dependencies:
-    "@multizen/types": "workspace:*"
-    "@types/better-sqlite3": "npm:^7.6.12"
-    "@types/uuid": "npm:^10.0.0"
-    better-sqlite3: "npm:^11.7.0"
-    uuid: "npm:^11.0.5"
-  languageName: unknown
-  linkType: soft
-
-"@multizen/settings-store@workspace:*, @multizen/settings-store@workspace:packages/settings-store":
-  version: 0.0.0-use.local
-  resolution: "@multizen/settings-store@workspace:packages/settings-store"
-  dependencies:
-    "@types/node": "npm:^22.10.0"
-  languageName: unknown
-  linkType: soft
-
-"@multizen/types@workspace:*, @multizen/types@workspace:packages/types":
-  version: 0.0.0-use.local
-  resolution: "@multizen/types@workspace:packages/types"
-  languageName: unknown
-  linkType: soft
 
 "@napi-rs/wasm-runtime@npm:^1.1.1":
   version: 1.1.4

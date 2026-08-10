@@ -1,11 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type JSX,
-  type ReactNode,
-} from "react";
+import { useCallback, useEffect, useRef, useState, type JSX, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 /**
@@ -152,7 +145,7 @@ export function Modal({
         background: "rgba(5,6,10,0.55)",
         backdropFilter: "blur(14px)",
         WebkitBackdropFilter: "blur(14px)",
-        animation: closing ? undefined : "mz-fade-in 180ms ease-out",
+        animation: closing ? undefined : "mkt-browser-fade-in 180ms ease-out",
       }}
     >
       <div
@@ -170,7 +163,7 @@ export function Modal({
             "inset 0 0 0 1px rgba(255,255,255,0.08), 0 36px 96px -24px rgba(0,0,0,0.7), 0 0 0 1px rgba(168,85,247,0.06)",
           backdropFilter: "blur(24px)",
           WebkitBackdropFilter: "blur(24px)",
-          animation: "mz-modal-pop 220ms cubic-bezier(0.2,0.8,0.2,1)",
+          animation: "mkt-browser-modal-pop 220ms cubic-bezier(0.2,0.8,0.2,1)",
         }}
       >
         {!hideHeader && (
@@ -180,13 +173,9 @@ export function Modal({
           >
             <div className="flex-1 min-w-0">
               {title && (
-                <div className="text-[15px] font-bold text-slate-100 leading-tight">
-                  {title}
-                </div>
+                <div className="text-[15px] font-bold text-slate-100 leading-tight">{title}</div>
               )}
-              {subtitle && (
-                <div className="text-[12px] text-slate-500 mt-1">{subtitle}</div>
-              )}
+              {subtitle && <div className="text-[12px] text-slate-500 mt-1">{subtitle}</div>}
             </div>
             <button
               type="button"
@@ -194,7 +183,16 @@ export function Modal({
               aria-label="Close"
               className="w-7 h-7 flex items-center justify-center rounded-md text-slate-500 hover:text-slate-200 hover:bg-white/[0.06] transition-colors"
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
                 <path d="M18 6 6 18" />
                 <path d="m6 6 12 12" />
               </svg>
@@ -243,9 +241,7 @@ interface ConfirmHostState extends ConfirmOptions {
   resolve?: (value: boolean) => void;
 }
 
-let confirmHostSetter:
-  | ((next: ConfirmHostState) => void)
-  | null = null;
+let confirmHostSetter: ((next: ConfirmHostState) => void) | null = null;
 
 export function ConfirmHost(): JSX.Element | null {
   const [state, setState] = useState<ConfirmHostState>({
@@ -276,9 +272,7 @@ export function ConfirmHost(): JSX.Element | null {
       <div className="px-5 pt-5 pb-4">
         <div className="text-[15px] font-bold text-slate-100">{state.title}</div>
         {state.body && (
-          <div className="text-[13px] text-slate-400 mt-2 leading-relaxed">
-            {state.body}
-          </div>
+          <div className="text-[13px] text-slate-400 mt-2 leading-relaxed">{state.body}</div>
         )}
         <div className="flex items-center justify-end gap-2 mt-5">
           <button

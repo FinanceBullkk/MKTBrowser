@@ -17,9 +17,9 @@ export function ChromiumBootstrapModal(): JSX.Element | null {
   const [status, setStatus] = useState<ChromiumStatus | null>(null);
 
   useEffect(() => {
-    if (!window.multizen) return;
-    void window.multizen.chromium.status().then(setStatus);
-    return window.multizen.chromium.onStatus(setStatus);
+    if (!window.mktBrowser) return;
+    void window.mktBrowser.chromium.status().then(setStatus);
+    return window.mktBrowser.chromium.onStatus(setStatus);
   }, []);
 
   if (!status) return null;
@@ -183,7 +183,7 @@ function Body({ status }: { status: ChromiumStatus }): JSX.Element {
           variant="primary"
           fullWidth
           leftIcon={<Download size={14} strokeWidth={1.5} />}
-          onClick={() => void window.multizen.chromium.retry()}
+          onClick={() => void window.mktBrowser.chromium.retry()}
         >
           Retry download
         </Button>

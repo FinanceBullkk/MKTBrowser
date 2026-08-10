@@ -1,3 +1,29 @@
+export const MKT_BROWSER_MCP_SERVER_NAME = "mkt-browser";
+export const MKT_BROWSER_MCP_HEALTH_NAME = "mkt-browser-mcp";
+export const MKT_BROWSER_MCP_SERVER_VERSION = "0.3.1";
+export const MKT_BROWSER_DEFAULT_MCP_PORT = 47_822;
+export const MKT_BROWSER_MCP_PORT_ENV = "MKT_BROWSER_MCP_PORT";
+
+export function resolveMktBrowserMcpPort(raw: string | undefined): number {
+  const value = raw?.trim();
+  if (!value) return MKT_BROWSER_DEFAULT_MCP_PORT;
+
+  if (!/^\d+$/.test(value)) {
+    throw new Error(`${MKT_BROWSER_MCP_PORT_ENV} must be an integer between 1 and 65535.`);
+  }
+
+  const port = Number(value);
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+    throw new Error(`${MKT_BROWSER_MCP_PORT_ENV} must be an integer between 1 and 65535.`);
+  }
+
+  return port;
+}
+
+export function mktBrowserMcpBaseUrl(port: number = MKT_BROWSER_DEFAULT_MCP_PORT): string {
+  return `http://127.0.0.1:${port}`;
+}
+
 export type ProfileId = string;
 
 export interface ProxyConfig {
@@ -117,7 +143,7 @@ export interface FingerprintConfig {
  * `{profile.dataDir}/extensions/{id}/` and loaded via Chromium's
  * `--load-extension` at launch. `id` is the Chromium-derived extension ID
  * (deterministic from the absolute install path). The companion "Add to
- * MultiZen" helper extension is NOT represented here — it's app-managed and
+ * MKT Browser" helper extension is NOT represented here — it's app-managed and
  * invisible to the user.
  */
 export interface ExtensionConfig {
@@ -229,7 +255,13 @@ export interface LaunchedProfile {
 }
 
 export interface McpToolError {
-  code: "PROFILE_NOT_FOUND" | "PROFILE_ALREADY_RUNNING" | "PROFILE_NOT_RUNNING" | "LAUNCH_FAILED" | "INVALID_INPUT" | "INTERNAL_ERROR";
+  code:
+    | "PROFILE_NOT_FOUND"
+    | "PROFILE_ALREADY_RUNNING"
+    | "PROFILE_NOT_RUNNING"
+    | "LAUNCH_FAILED"
+    | "INVALID_INPUT"
+    | "INTERNAL_ERROR";
   message: string;
   details?: Record<string, unknown>;
 }

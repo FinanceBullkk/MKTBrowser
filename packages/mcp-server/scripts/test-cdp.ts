@@ -13,15 +13,15 @@ import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
-import { createMultizenMcpServer, type BrowserDriver } from "../src/server.ts";
+import { createMktBrowserMcpServer, type BrowserDriver } from "../src/server.ts";
 import { MockBrowserDriver } from "../src/MockBrowserDriver.ts";
-import type { ProfileManager } from "@multizen/profile-manager";
-import type { LaunchedProfile, ProfileId } from "@multizen/types";
+import type { ProfileManager } from "@mktbrowser/profile-manager";
+import type { LaunchedProfile, ProfileId } from "@mktbrowser/types";
 
-// Raw cdp_send is opt-in (MULTIZEN_MCP_ALLOW_RAW_CDP). Enable it for the bulk of
+// Raw cdp_send is opt-in (MKT_BROWSER_MCP_ALLOW_RAW_CDP). Enable it for the bulk of
 // the suite (which exercises cdp_send's gates); the default-OFF behaviour has its
 // own dedicated tests below that toggle it back off.
-process.env.MULTIZEN_MCP_ALLOW_RAW_CDP = "1";
+process.env.MKT_BROWSER_MCP_ALLOW_RAW_CDP = "1";
 
 /** The 11 Phase-2 tools. `cdp_send_no_safety` is intentionally NOT here. */
 const NEW_TOOLS = [
@@ -54,7 +54,12 @@ class SpyDriver implements BrowserDriver {
 
   async launch(profileId: ProfileId): Promise<LaunchedProfile> {
     this.running.add(profileId);
-    return { id: profileId, cdpEndpoint: "http://127.0.0.1:0", pid: 1, startedAt: new Date().toISOString() };
+    return {
+      id: profileId,
+      cdpEndpoint: "http://127.0.0.1:0",
+      pid: 1,
+      startedAt: new Date().toISOString(),
+    };
   }
   async close(profileId: ProfileId): Promise<void> {
     this.running.delete(profileId);
@@ -92,7 +97,7 @@ class SpyDriver implements BrowserDriver {
 
 async function connect(driver: BrowserDriver): Promise<Client> {
   const profileManager = {} as unknown as ProfileManager;
-  const { server } = createMultizenMcpServer({ profileManager, browserDriver: driver });
+  const { server } = createMktBrowserMcpServer({ profileManager, browserDriver: driver });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "test", version: "0.0.0" });
   await server.connect(serverTransport);
@@ -106,7 +111,11 @@ interface CallResult {
   parsed: any;
 }
 
-async function call(client: Client, name: string, args: Record<string, unknown>): Promise<CallResult> {
+async function call(
+  client: Client,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<CallResult> {
   const res = await client.callTool({ name, arguments: args });
   const content = res.content as Array<{ type: string; text: string }>;
   const text = content[0]?.text ?? "";
@@ -121,7 +130,10 @@ async function call(client: Client, name: string, args: Record<string, unknown>)
 
 function assertNoDomainEnable(spy: SpyDriver): void {
   for (const c of spy.calls) {
-    assert.ok(!/\.enable$/.test(c.method), `wrapper unexpectedly issued a domain enable: ${c.method}`);
+    assert.ok(
+      !/\.enable$/.test(c.method),
+      `wrapper unexpectedly issued a domain enable: ${c.method}`,
+    );
   }
 }
 
@@ -146,9 +158,9 @@ test("tools/list exposes the 11 Phase-2 tools with object input schemas", async 
   await client.close();
 });
 
-test("cdp_send is HIDDEN from tools/list when MULTIZEN_MCP_ALLOW_RAW_CDP is off (opt-in gate)", async () => {
-  const prev = process.env.MULTIZEN_MCP_ALLOW_RAW_CDP;
-  delete process.env.MULTIZEN_MCP_ALLOW_RAW_CDP;
+test("cdp_send is HIDDEN from tools/list when MKT_BROWSER_MCP_ALLOW_RAW_CDP is off (opt-in gate)", async () => {
+  const prev = process.env.MKT_BROWSER_MCP_ALLOW_RAW_CDP;
+  delete process.env.MKT_BROWSER_MCP_ALLOW_RAW_CDP;
   try {
     const client = await connect(new SpyDriver());
     const { tools } = await client.listTools();
@@ -160,14 +172,14 @@ test("cdp_send is HIDDEN from tools/list when MULTIZEN_MCP_ALLOW_RAW_CDP is off 
     }
     await client.close();
   } finally {
-    if (prev === undefined) delete process.env.MULTIZEN_MCP_ALLOW_RAW_CDP;
-    else process.env.MULTIZEN_MCP_ALLOW_RAW_CDP = prev;
+    if (prev === undefined) delete process.env.MKT_BROWSER_MCP_ALLOW_RAW_CDP;
+    else process.env.MKT_BROWSER_MCP_ALLOW_RAW_CDP = prev;
   }
 });
 
-test("cdp_send call is REJECTED when MULTIZEN_MCP_ALLOW_RAW_CDP is off (driver not called)", async () => {
-  const prev = process.env.MULTIZEN_MCP_ALLOW_RAW_CDP;
-  delete process.env.MULTIZEN_MCP_ALLOW_RAW_CDP;
+test("cdp_send call is REJECTED when MKT_BROWSER_MCP_ALLOW_RAW_CDP is off (driver not called)", async () => {
+  const prev = process.env.MKT_BROWSER_MCP_ALLOW_RAW_CDP;
+  delete process.env.MKT_BROWSER_MCP_ALLOW_RAW_CDP;
   try {
     const spy = new SpyDriver();
     spy.running.add("p1");
@@ -182,8 +194,8 @@ test("cdp_send call is REJECTED when MULTIZEN_MCP_ALLOW_RAW_CDP is off (driver n
     assert.equal(spy.calls.length, 0, "driver.cdpSend must not be called");
     await client.close();
   } finally {
-    if (prev === undefined) delete process.env.MULTIZEN_MCP_ALLOW_RAW_CDP;
-    else process.env.MULTIZEN_MCP_ALLOW_RAW_CDP = prev;
+    if (prev === undefined) delete process.env.MKT_BROWSER_MCP_ALLOW_RAW_CDP;
+    else process.env.MKT_BROWSER_MCP_ALLOW_RAW_CDP = prev;
   }
 });
 
@@ -242,9 +254,13 @@ test("evaluate_js composes Runtime.evaluate{returnByValue} (no domain enable)", 
 test("wait_for_selector polls Runtime.evaluate(querySelector) and reports found", async () => {
   const spy = new SpyDriver();
   spy.running.add("p1");
-  spy.respond = (method) => (method === "Runtime.evaluate" ? { result: { value: true } } : { ok: true });
+  spy.respond = (method) =>
+    method === "Runtime.evaluate" ? { result: { value: true } } : { ok: true };
   const client = await connect(spy);
-  const { parsed } = await call(client, "wait_for_selector", { profile_id: "p1", selector: "#login" });
+  const { parsed } = await call(client, "wait_for_selector", {
+    profile_id: "p1",
+    selector: "#login",
+  });
   assert.deepEqual(parsed, { found: true, selector: "#login" });
   const c = spy.calls.at(-1)!;
   assert.equal(c.method, "Runtime.evaluate");
@@ -362,7 +378,13 @@ for (const method of [
 
 // ── gate #4 / #2: URL-scheme scan (incl. GURL bypass vectors) ────────────────
 
-for (const url of ["file:///etc/passwd", "chrome://settings", "fi\tle:///x", "file:///x", "view-source:http://x"]) {
+for (const url of [
+  "file:///etc/passwd",
+  "chrome://settings",
+  "fi\tle:///x",
+  "file:///x",
+  "view-source:http://x",
+]) {
   test(`cdp_send{Page.navigate,url:${JSON.stringify(url)}} → FORBIDDEN, driver not called`, async () => {
     const spy = new SpyDriver();
     spy.running.add("p1");
@@ -454,7 +476,10 @@ test("wait_for_selector swallows transient navigation errors and resolves once t
     return { result: { value: true } };
   };
   const client = await connect(spy);
-  const { isError, parsed } = await call(client, "wait_for_selector", { profile_id: "p1", selector: "#login" });
+  const { isError, parsed } = await call(client, "wait_for_selector", {
+    profile_id: "p1",
+    selector: "#login",
+  });
   assert.equal(isError, false);
   assert.deepEqual(parsed, { found: true, selector: "#login" });
   assert.ok(attempts >= 3);
@@ -465,7 +490,8 @@ test("wait_for_selector rethrows a non-transient error immediately (no retry to 
   const spy = new SpyDriver();
   spy.running.add("p1");
   spy.respond = (method) => {
-    if (method === "Runtime.evaluate") throw new Error("SyntaxError: 'foo[' is not a valid selector");
+    if (method === "Runtime.evaluate")
+      throw new Error("SyntaxError: 'foo[' is not a valid selector");
     return { ok: true };
   };
   const client = await connect(spy);

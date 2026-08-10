@@ -3,6 +3,7 @@ import { Activity as ActivityIcon, ChevronUp, ChevronDown } from "lucide-react";
 import type { ActivityEvent, ProfileSummary } from "../../types";
 import { Pill, Kbd, Flag, ccFromTimezone } from "../atoms";
 import { formatTime } from "../../lib/relativeTime";
+import { MKT_BROWSER_MCP_SERVER_NAME } from "@mktbrowser/types";
 
 interface Props {
   open: boolean;
@@ -43,7 +44,9 @@ export function ActivityDrawer({ open, events, profiles, onToggle }: Props): JSX
         <ActivityIcon size={13} className="text-purple-400" />
         <span className="text-[12px] font-semibold text-slate-100">MCP activity</span>
         {liveCount > 0 ? (
-          <Pill kind="ai" dot>{liveCount} live</Pill>
+          <Pill kind="ai" dot>
+            {liveCount} live
+          </Pill>
         ) : (
           <Pill kind="idle">{events.length} calls</Pill>
         )}
@@ -85,7 +88,11 @@ export function ActivityDrawer({ open, events, profiles, onToggle }: Props): JSX
                 <div className="text-right">Status</div>
               </div>
               {recent.map((e) => (
-                <Row key={e.id} event={e} profile={e.profileId ? profilesById.get(e.profileId) : undefined} />
+                <Row
+                  key={e.id}
+                  event={e}
+                  profile={e.profileId ? profilesById.get(e.profileId) : undefined}
+                />
               ))}
             </>
           )}
@@ -96,7 +103,9 @@ export function ActivityDrawer({ open, events, profiles, onToggle }: Props): JSX
 }
 
 function Row({ event, profile }: { event: ActivityEvent; profile?: ProfileSummary }): JSX.Element {
-  const cc = profile ? ccFromTimezone((profile as ProfileSummary).tags.find((t) => t.startsWith("tz:"))?.slice(3)) : undefined;
+  const cc = profile
+    ? ccFromTimezone((profile as ProfileSummary).tags.find((t) => t.startsWith("tz:"))?.slice(3))
+    : undefined;
 
   const argsLine = useMemo(() => {
     const entries = Object.entries(event.args).filter(([k]) => k !== "profile_id");
@@ -120,11 +129,13 @@ function Row({ event, profile }: { event: ActivityEvent; profile?: ProfileSummar
     >
       <div className="mono text-[11px] text-slate-500">{formatTime(event.timestamp)}</div>
       <div className="mono text-[12px] text-slate-300 truncate">
-        <span className="text-purple-400">multizen.</span>
+        <span className="text-purple-400">{MKT_BROWSER_MCP_SERVER_NAME}.</span>
         {event.tool}
       </div>
       <div className="flex flex-col gap-[2px] min-w-0">
-        <div className="text-[12px] text-slate-300 truncate">{event.summary ?? argsLine ?? "—"}</div>
+        <div className="text-[12px] text-slate-300 truncate">
+          {event.summary ?? argsLine ?? "—"}
+        </div>
         {profile && (
           <div className="mono text-[10px] text-slate-500 flex items-center gap-1.5 truncate">
             <Flag cc={cc} />
@@ -137,7 +148,11 @@ function Row({ event, profile }: { event: ActivityEvent; profile?: ProfileSummar
       </div>
       <div className="text-right">
         {event.status === "ok" && <Pill kind="running">ok</Pill>}
-        {event.status === "pending" && <Pill kind="ai" dot>live</Pill>}
+        {event.status === "pending" && (
+          <Pill kind="ai" dot>
+            live
+          </Pill>
+        )}
         {event.status === "error" && <Pill kind="error">error</Pill>}
       </div>
     </div>

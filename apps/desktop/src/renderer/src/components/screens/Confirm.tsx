@@ -27,7 +27,11 @@ export function Confirm(props: ConfirmProps): JSX.Element | null {
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: "rgba(5,6,10,0.55)", backdropFilter: "blur(8px)", animation: "mz-fade-in 120ms ease-out" }}
+      style={{
+        background: "rgba(5,6,10,0.55)",
+        backdropFilter: "blur(8px)",
+        animation: "mkt-browser-fade-in 120ms ease-out",
+      }}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) props.onCancel();
       }}
@@ -39,7 +43,7 @@ export function Confirm(props: ConfirmProps): JSX.Element | null {
           background: "rgba(15,16,22,0.92)",
           boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.10), 0 30px 80px rgba(0,0,0,0.6)",
           padding: 22,
-          animation: "mz-slide-up 140ms cubic-bezier(0.2,0.8,0.2,1)",
+          animation: "mkt-browser-slide-up 140ms cubic-bezier(0.2,0.8,0.2,1)",
         }}
       >
         <div className="text-[15px] font-bold text-slate-100">{props.title}</div>
@@ -55,7 +59,11 @@ export function Confirm(props: ConfirmProps): JSX.Element | null {
           </button>
           <button
             type="button"
-            className={props.destructive ? "px-3 py-[7px] text-[12px] rounded-[9px] cursor-pointer text-red-300" : "btn-brand px-3 py-[7px] text-[12px] rounded-[9px]"}
+            className={
+              props.destructive
+                ? "px-3 py-[7px] text-[12px] rounded-[9px] cursor-pointer text-red-300"
+                : "btn-brand px-3 py-[7px] text-[12px] rounded-[9px]"
+            }
             style={
               props.destructive
                 ? {
@@ -110,7 +118,11 @@ export function Prompt(props: PromptProps): JSX.Element | null {
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: "rgba(5,6,10,0.55)", backdropFilter: "blur(8px)", animation: "mz-fade-in 120ms ease-out" }}
+      style={{
+        background: "rgba(5,6,10,0.55)",
+        backdropFilter: "blur(8px)",
+        animation: "mkt-browser-fade-in 120ms ease-out",
+      }}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) props.onCancel();
       }}
@@ -122,14 +134,18 @@ export function Prompt(props: PromptProps): JSX.Element | null {
           background: "rgba(15,16,22,0.92)",
           boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.10), 0 30px 80px rgba(0,0,0,0.6)",
           padding: 22,
-          animation: "mz-slide-up 140ms cubic-bezier(0.2,0.8,0.2,1)",
+          animation: "mkt-browser-slide-up 140ms cubic-bezier(0.2,0.8,0.2,1)",
         }}
       >
         <div className="text-[15px] font-bold text-slate-100">{props.title}</div>
         {props.description && (
-          <div className="text-[12.5px] text-slate-400 mt-2 leading-relaxed">{props.description}</div>
+          <div className="text-[12.5px] text-slate-400 mt-2 leading-relaxed">
+            {props.description}
+          </div>
         )}
-        {props.label && <div className="text-[11px] font-medium text-slate-500 mt-4 mb-1.5">{props.label}</div>}
+        {props.label && (
+          <div className="text-[11px] font-medium text-slate-500 mt-4 mb-1.5">{props.label}</div>
+        )}
         <input
           autoFocus
           type={props.inputType ?? "text"}
@@ -149,7 +165,11 @@ export function Prompt(props: PromptProps): JSX.Element | null {
           }}
         />
         <div className="flex items-center gap-2 mt-5 justify-end">
-          <button type="button" className="btn-ghost px-3 py-[7px] text-[12px] rounded-[9px]" onClick={props.onCancel}>
+          <button
+            type="button"
+            className="btn-ghost px-3 py-[7px] text-[12px] rounded-[9px]"
+            onClick={props.onCancel}
+          >
             Cancel
           </button>
           <button

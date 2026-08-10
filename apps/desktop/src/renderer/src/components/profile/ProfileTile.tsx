@@ -18,6 +18,7 @@ import { profileEmoji } from "../../lib/profileEmoji";
 import { emojiTint } from "../../lib/emojiTint";
 import { useProxyHealth } from "../../lib/proxyHealth";
 import type { ActivityEvent } from "../../types";
+import { MKT_BROWSER_MCP_SERVER_NAME } from "@mktbrowser/types";
 
 export type TileState = "idle" | "running" | "ai" | "error";
 
@@ -160,7 +161,7 @@ export function ProfileTile({
           {profile.tags.slice(0, 4).map((t) => (
             <span
               key={t}
-              className="mz-pill mono text-slate-400"
+              className="mkt-browser-pill mono text-slate-400"
               style={{
                 background: "rgba(255,255,255,0.04)",
                 boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.05)",
@@ -170,7 +171,7 @@ export function ProfileTile({
             </span>
           ))}
           {profile.tags.length > 4 && (
-            <span className="mz-pill mono text-slate-600">+{profile.tags.length - 4}</span>
+            <span className="mkt-browser-pill mono text-slate-600">+{profile.tags.length - 4}</span>
           )}
         </div>
       )}
@@ -284,8 +285,14 @@ function ProxyHealthRow({ profile }: { profile: TileData }): JSX.Element {
       className="flex items-center gap-2 px-2.5 py-2 rounded-[11px] w-full text-left border-0 cursor-pointer transition-colors"
       style={
         isError
-          ? { background: "rgba(239,68,68,0.06)", boxShadow: "inset 0 0 0 1px rgba(239,68,68,0.22)" }
-          : { background: "rgba(255,255,255,0.028)", boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.08)" }
+          ? {
+              background: "rgba(239,68,68,0.06)",
+              boxShadow: "inset 0 0 0 1px rgba(239,68,68,0.22)",
+            }
+          : {
+              background: "rgba(255,255,255,0.028)",
+              boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.08)",
+            }
       }
     >
       <span
@@ -305,12 +312,10 @@ function ProxyHealthRow({ profile }: { profile: TileData }): JSX.Element {
 
       {health.status === "ok" && (
         <span className="ml-auto inline-flex items-center gap-1.5">
-          {profile.proxy && (
-            <span className="mono text-[10px] text-slate-600">proxy</span>
-          )}
+          {profile.proxy && <span className="mono text-[10px] text-slate-600">proxy</span>}
           <span
             className="w-[7px] h-[7px] rounded-full bg-emerald-500"
-            style={{ animation: "mz-dotpulse 1.6s ease-in-out infinite" }}
+            style={{ animation: "mkt-browser-dotpulse 1.6s ease-in-out infinite" }}
           />
         </span>
       )}
@@ -334,8 +339,18 @@ function ProxyHealthRow({ profile }: { profile: TileData }): JSX.Element {
 }
 
 function PillForState({ state }: { state: TileState }): JSX.Element {
-  if (state === "ai") return <Pill kind="ai" dot glow>ai-driven</Pill>;
-  if (state === "running") return <Pill kind="running" dot glow>running</Pill>;
+  if (state === "ai")
+    return (
+      <Pill kind="ai" dot glow>
+        ai-driven
+      </Pill>
+    );
+  if (state === "running")
+    return (
+      <Pill kind="running" dot glow>
+        running
+      </Pill>
+    );
   if (state === "error") return <Pill kind="error">error</Pill>;
   return <Pill kind="idle">idle</Pill>;
 }
@@ -352,7 +367,7 @@ function ContextLine({ profile }: { profile: TileData }): JSX.Element | null {
       >
         <Zap size={12} className="text-purple-400" />
         <span className="mono text-[11px] text-purple-200 truncate flex-1">
-          <span className="text-purple-400">multizen.</span>
+          <span className="text-purple-400">{MKT_BROWSER_MCP_SERVER_NAME}.</span>
           {profile.lastTool ?? "…"}
         </span>
         {profile.lastDuration && (
@@ -421,32 +436,45 @@ function ActionMenu({
       >
         <MoreHorizontal size={14} strokeWidth={1.5} />
       </Button>
-      {open && coords &&
+      {open &&
+        coords &&
         createPortal(
           <>
-            <div
-              className="fixed inset-0 z-[60]"
-              onMouseDown={() => setOpen(false)}
-            />
+            <div className="fixed inset-0 z-[60]" onMouseDown={() => setOpen(false)} />
             <div
               className="fixed z-[61] w-44 py-1 rounded-md"
               style={{
                 top: coords.top,
                 right: coords.right,
                 background: "rgba(15,16,22,0.98)",
-                boxShadow:
-                  "inset 0 0 0 1px rgba(255,255,255,0.08), 0 20px 40px rgba(0,0,0,0.6)",
+                boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.08), 0 20px 40px rgba(0,0,0,0.6)",
                 backdropFilter: "blur(20px)",
               }}
             >
-              <MenuItem onClick={() => { setOpen(false); onEdit(); }}>
+              <MenuItem
+                onClick={() => {
+                  setOpen(false);
+                  onEdit();
+                }}
+              >
                 Edit profile
               </MenuItem>
-              <MenuItem onClick={() => { setOpen(false); onExport(); }}>
+              <MenuItem
+                onClick={() => {
+                  setOpen(false);
+                  onExport();
+                }}
+              >
                 Export archive…
               </MenuItem>
               <div style={{ height: 1, margin: "4px 0", background: "rgba(255,255,255,0.06)" }} />
-              <MenuItem onClick={() => { setOpen(false); onDelete(); }} tone="danger">
+              <MenuItem
+                onClick={() => {
+                  setOpen(false);
+                  onDelete();
+                }}
+                tone="danger"
+              >
                 Delete profile
               </MenuItem>
             </div>
@@ -493,10 +521,7 @@ export function deriveTileState(
 
   const lastError = recent.find((e) => e.status === "error");
   const lastDriveCall = recent.find(
-    (e) =>
-      e.tool !== "list_profiles" &&
-      e.tool !== "launch_profile" &&
-      e.tool !== "close_profile",
+    (e) => e.tool !== "list_profiles" && e.tool !== "launch_profile" && e.tool !== "close_profile",
   );
 
   if (lastError && Date.now() - new Date(lastError.timestamp).getTime() < 30_000) {

@@ -11,7 +11,7 @@ import {
   localeCatalog,
   hostPlatformFamily,
 } from "../src/fingerprint.js";
-import type { FingerprintConfig } from "@multizen/types";
+import type { FingerprintConfig } from "@mktbrowser/types";
 
 function coarseHash(fp: FingerprintConfig): string {
   return [
@@ -76,7 +76,10 @@ function reconcileHonor(): void {
   });
   assert(fp.locale === "en-PK", `locale=${fp.locale}`);
   assert(fp.timezone === "Asia/Karachi", `tz=${fp.timezone}`);
-  assert(fp.screen.width === 1920 && fp.screen.height === 1080, `screen=${JSON.stringify(fp.screen)}`);
+  assert(
+    fp.screen.width === 1920 && fp.screen.height === 1080,
+    `screen=${JSON.stringify(fp.screen)}`,
+  );
   assert(fp.hardwareConcurrency === 8, `hwc=${fp.hardwareConcurrency}`);
   assert(fp.deviceMemory === 8, `mem=${fp.deviceMemory}`);
   assert(!/iPhone|Android|Mobile/i.test(fp.userAgent), "mobile UA on desktop screen");
@@ -119,9 +122,7 @@ function seedStability(): void {
   const a1 = generateFingerprint("stable-seed-A");
   const a2 = generateFingerprint("stable-seed-A");
   assert(
-    a1.device === a2.device &&
-      a1.userAgent === a2.userAgent &&
-      webglKey(a1) === webglKey(a2),
+    a1.device === a2.device && a1.userAgent === a2.userAgent && webglKey(a1) === webglKey(a2),
     "same seed must be deterministic",
   );
 

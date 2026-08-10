@@ -4,7 +4,7 @@ import { cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import extract from "extract-zip";
-import type { ExtensionConfig } from "@multizen/types";
+import type { ExtensionConfig } from "@mktbrowser/types";
 import { storeEntryDir } from "./extensionStore.ts";
 
 const MAX_UNPACKED_BYTES = 150 * 1024 * 1024; // ~150 MB cap per extension
@@ -353,8 +353,7 @@ async function resolveName(
         { message?: string }
       >;
       const key = msg[1] ?? "";
-      const resolved =
-        messages[key]?.message ?? messages[key.toLowerCase()]?.message ?? undefined;
+      const resolved = messages[key]?.message ?? messages[key.toLowerCase()]?.message ?? undefined;
       if (resolved) return resolved;
     } catch {
       // fall through to a sensible fallback
@@ -384,5 +383,5 @@ async function dirSize(dir: string): Promise<number> {
 
 /** Exposed for callers that download a CRX to a temp file first. */
 export function tempCrxPath(): string {
-  return join(tmpdir(), `mz-ext-${randomUUID()}.crx`);
+  return join(tmpdir(), `mkt-browser-ext-${randomUUID()}.crx`);
 }

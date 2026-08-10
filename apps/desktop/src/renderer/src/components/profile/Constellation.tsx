@@ -68,7 +68,13 @@ export function Constellation({
   );
 
   const counts = useMemo(() => {
-    const c: Record<FilterChip["id"], number> = { all: tileData.length, running: 0, ai: 0, error: 0, idle: 0 };
+    const c: Record<FilterChip["id"], number> = {
+      all: tileData.length,
+      running: 0,
+      ai: 0,
+      error: 0,
+      idle: 0,
+    };
     for (const t of tileData) c[t.state] += 1;
     return c;
   }, [tileData]);
@@ -95,7 +101,7 @@ export function Constellation({
       <div className="flex items-center gap-3.5 px-6 pt-4 pb-3">
         <div className="text-lg font-bold tracking-tight text-slate-100">All profiles</div>
         <div className="mono text-[11px] text-slate-600">
-          ·  {profiles.length} total · {counts.running + counts.ai} running
+          · {profiles.length} total · {counts.running + counts.ai} running
           {aiCount > 0 && ` · ${aiCount} driven by Claude`}
         </div>
         <div className="flex-1" />
@@ -111,9 +117,7 @@ export function Constellation({
             onClick={() => setViewMode("grid")}
             className={cn(
               "w-7 h-6 rounded-md flex items-center justify-center transition-colors",
-              viewMode === "grid"
-                ? "text-slate-100"
-                : "text-slate-500 hover:text-slate-300",
+              viewMode === "grid" ? "text-slate-100" : "text-slate-500 hover:text-slate-300",
             )}
             style={{
               background: viewMode === "grid" ? "rgba(255,255,255,0.06)" : undefined,
@@ -127,9 +131,7 @@ export function Constellation({
             onClick={() => setViewMode("list")}
             className={cn(
               "w-7 h-6 rounded-md flex items-center justify-center transition-colors",
-              viewMode === "list"
-                ? "text-slate-100"
-                : "text-slate-500 hover:text-slate-300",
+              viewMode === "list" ? "text-slate-100" : "text-slate-500 hover:text-slate-300",
             )}
             style={{
               background: viewMode === "list" ? "rgba(255,255,255,0.06)" : undefined,
@@ -175,7 +177,9 @@ export function Constellation({
                 />
               )}
               {c.label}
-              <span className={cn("mono text-[10px]", isActive ? "text-slate-400" : "text-slate-600")}>
+              <span
+                className={cn("mono text-[10px]", isActive ? "text-slate-400" : "text-slate-600")}
+              >
                 {counts[c.id]}
               </span>
             </button>
@@ -193,7 +197,7 @@ export function Constellation({
                   type="button"
                   onClick={() => setActiveTag(isActive ? null : t)}
                   className={cn(
-                    "mz-pill mono cursor-pointer transition-colors",
+                    "mkt-browser-pill mono cursor-pointer transition-colors",
                     isActive ? "text-purple-300" : "text-slate-500 hover:text-slate-300",
                   )}
                   style={{

@@ -50,7 +50,11 @@ export function CommandPalette({ open, profiles, onClose, onAction }: Props): JS
       const launchRow: Row = {
         id: `launch:${p.id}`,
         icon: <Play size={14} strokeWidth={1.5} className="text-current" />,
-        title: <>{p.isRunning ? "Open" : "Launch"} · {p.name}</>,
+        title: (
+          <>
+            {p.isRunning ? "Open" : "Launch"} · {p.name}
+          </>
+        ),
         sub: `${p.id.slice(0, 12)} · ${p.tags.join(", ") || "no tags"}`,
         group: "Profiles",
         action: { kind: p.isRunning ? "open" : "launch", profileId: p.id },
@@ -62,7 +66,13 @@ export function CommandPalette({ open, profiles, onClose, onAction }: Props): JS
       {
         id: "create",
         icon: <Plus size={14} strokeWidth={1.5} />,
-        title: q ? <>Create new profile · "<span className="mono text-purple-300">{query}</span>"</> : "Create new profile",
+        title: q ? (
+          <>
+            Create new profile · "<span className="mono text-purple-300">{query}</span>"
+          </>
+        ) : (
+          "Create new profile"
+        ),
         kbd: <Kbd>⌘ N</Kbd>,
         group: "Actions",
         action: { kind: "create" },
@@ -101,7 +111,9 @@ export function CommandPalette({ open, profiles, onClose, onAction }: Props): JS
     ];
 
     if (q) {
-      const filteredActions = actionRows.filter((r) => String(r.title).toString().toLowerCase().includes(q) || r.id === "create");
+      const filteredActions = actionRows.filter(
+        (r) => String(r.title).toString().toLowerCase().includes(q) || r.id === "create",
+      );
       return [...profileRows, ...filteredActions];
     }
     return [...profileRows.slice(0, 6), ...actionRows];
@@ -153,7 +165,7 @@ export function CommandPalette({ open, profiles, onClose, onAction }: Props): JS
       style={{
         background: "rgba(5,6,10,0.55)",
         backdropFilter: "blur(8px)",
-        animation: "mz-fade-in 120ms ease-out",
+        animation: "mkt-browser-fade-in 120ms ease-out",
       }}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
@@ -167,7 +179,7 @@ export function CommandPalette({ open, profiles, onClose, onAction }: Props): JS
           boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.10), 0 30px 80px rgba(0,0,0,0.6)",
           backdropFilter: "blur(24px)",
           overflow: "hidden",
-          animation: "mz-slide-up 140ms cubic-bezier(0.2,0.8,0.2,1)",
+          animation: "mkt-browser-slide-up 140ms cubic-bezier(0.2,0.8,0.2,1)",
         }}
         onKeyDown={handleKey}
       >
@@ -232,7 +244,11 @@ export function CommandPalette({ open, profiles, onClose, onAction }: Props): JS
                       >
                         {row.title}
                       </div>
-                      {row.sub && <div className="mono text-[10px] text-slate-500 mt-[3px] truncate">{row.sub}</div>}
+                      {row.sub && (
+                        <div className="mono text-[10px] text-slate-500 mt-[3px] truncate">
+                          {row.sub}
+                        </div>
+                      )}
                     </div>
                     {row.kbd}
                   </button>

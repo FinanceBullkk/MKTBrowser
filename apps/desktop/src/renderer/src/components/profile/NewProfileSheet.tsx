@@ -7,13 +7,7 @@ import { EmojiField } from "./EmojiField";
 import { BrowserSection, DEFAULT_START_URL } from "./BrowserSection";
 import type { ExtensionConfig, FingerprintConfig, ProxyConfig } from "../../types";
 import { parseProxyString } from "../../lib/parseProxy";
-import {
-  Field,
-  Input,
-  SHEET_HEIGHT,
-  SectionRail,
-  type SectionId,
-} from "./profileSheetKit";
+import { Field, Input, SHEET_HEIGHT, SectionRail, type SectionId } from "./profileSheetKit";
 
 interface Props {
   onCancel: () => void;
@@ -64,13 +58,16 @@ export function NewProfileSheet({ onCancel, onCreated, onDirtyChange }: Props): 
   const [error, setError] = useState<string | null>(null);
 
   // Parsed tags, used both for the create call and to feed the emoji classifier.
-  const tagList = tagsRaw.split(",").map((s) => s.trim()).filter(Boolean);
+  const tagList = tagsRaw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 
   // Auto-generate a fingerprint preset on mount so the create call always
   // has one and the regen button has something to replace.
   useEffect(() => {
-    if (!window.multizen) return;
-    void window.multizen.fingerprint.generate().then(setFingerprint);
+    if (!window.mktBrowser) return;
+    void window.mktBrowser.fingerprint.generate().then(setFingerprint);
   }, []);
 
   // Track "dirty" — anything the user typed that's not the default. The
@@ -109,15 +106,16 @@ export function NewProfileSheet({ onCancel, onCreated, onDirtyChange }: Props): 
   }
 
   // Derive a ProxyConfig snapshot for the FingerprintForm so it can probe geo.
-  const proxyForForm: ProxyConfig | undefined = proxy.enabled && proxy.host
-    ? {
-        type: proxy.type,
-        host: proxy.host,
-        port: Number(proxy.port) || (proxy.type === "http" ? 8080 : 1080),
-        username: proxy.username || undefined,
-        password: proxy.password || undefined,
-      }
-    : undefined;
+  const proxyForForm: ProxyConfig | undefined =
+    proxy.enabled && proxy.host
+      ? {
+          type: proxy.type,
+          host: proxy.host,
+          port: Number(proxy.port) || (proxy.type === "http" ? 8080 : 1080),
+          username: proxy.username || undefined,
+          password: proxy.password || undefined,
+        }
+      : undefined;
 
   const canSubmit = name.trim() !== "" && !busy;
 
@@ -138,7 +136,7 @@ export function NewProfileSheet({ onCancel, onCreated, onDirtyChange }: Props): 
     setBusy(true);
     setError(null);
     try {
-      const created = await window.multizen.profiles.create({
+      const created = await window.mktBrowser.profiles.create({
         name: name.trim(),
         tags: tagList,
         icon,
@@ -218,9 +216,7 @@ export function NewProfileSheet({ onCancel, onCreated, onDirtyChange }: Props): 
             </div>
           )}
 
-          {section === "browser" && (
-            <BrowserSection startUrl={startUrl} onStartUrl={setStartUrl} />
-          )}
+          {section === "browser" && <BrowserSection startUrl={startUrl} onStartUrl={setStartUrl} />}
 
           {section === "proxy" && (
             <div>
@@ -332,9 +328,7 @@ export function NewProfileSheet({ onCancel, onCreated, onDirtyChange }: Props): 
         className="shrink-0 flex items-center gap-3 px-5 py-3"
         style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}
       >
-        <div className="flex-1 min-w-0 text-[11px] leading-snug text-red-400">
-          {error}
-        </div>
+        <div className="flex-1 min-w-0 text-[11px] leading-snug text-red-400">{error}</div>
         <button
           type="button"
           className="btn-ghost px-3 py-[7px] text-[12px] rounded-[9px]"

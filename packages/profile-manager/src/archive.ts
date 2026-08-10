@@ -10,7 +10,7 @@ import {
   createDecipheriv,
 } from "node:crypto";
 import { promisify } from "node:util";
-import type { Profile } from "@multizen/types";
+import type { Profile } from "@mktbrowser/types";
 
 const scrypt = promisify(scryptCb);
 

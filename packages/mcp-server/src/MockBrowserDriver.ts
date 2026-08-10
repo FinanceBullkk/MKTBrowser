@@ -1,5 +1,5 @@
 import type { BrowserDriver } from "./server.js";
-import type { LaunchedProfile, ProfileId } from "@multizen/types";
+import type { LaunchedProfile, ProfileId } from "@mktbrowser/types";
 
 /**
  * In-memory browser driver for development. Returns plausible mock data
@@ -50,11 +50,7 @@ export class MockBrowserDriver implements BrowserDriver {
     return { ok: true };
   }
 
-  async type(
-    _profileId: ProfileId,
-    _selector: string,
-    _text: string,
-  ): Promise<{ ok: true }> {
+  async type(_profileId: ProfileId, _selector: string, _text: string): Promise<{ ok: true }> {
     return { ok: true };
   }
 

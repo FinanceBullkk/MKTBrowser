@@ -3,11 +3,12 @@ import { Check, Copy, Plug, Sparkles, Terminal } from "lucide-react";
 import type { ActivityEvent, ProfileSummary } from "../../types";
 import { Pill, Flag, ccFromTimezone } from "../atoms";
 import { formatTime } from "../../lib/relativeTime";
+import { MKT_BROWSER_MCP_SERVER_NAME, mktBrowserMcpBaseUrl } from "@mktbrowser/types";
 
 interface Props {
   events: ActivityEvent[];
   profiles: ProfileSummary[];
-  /** MCP HTTP base URL (e.g. http://127.0.0.1:7777) or null when the server is off. */
+  /** MCP HTTP base URL or null when the server is off. */
   mcpUrl: string | null;
   /** Bearer token every MCP client must send; null when the server is off. */
   mcpToken: string | null;
@@ -27,12 +28,12 @@ export function McpPanel({ events, profiles, mcpUrl, mcpToken }: Props): JSX.Ele
       <div className="max-w-[960px] mx-auto">
         <div className="flex items-baseline gap-3 mb-1.5">
           <div className="text-lg font-bold tracking-tight text-slate-100">MCP</div>
-          <div className="mono text-[11px] text-slate-600">·  {events.length} calls</div>
+          <div className="mono text-[11px] text-slate-600">· {events.length} calls</div>
         </div>
         <div className="text-[13px] text-slate-500 mb-5 leading-relaxed max-w-[68ch]">
-          Drive your profiles from an AI agent. Point any MCP client (Claude Desktop, Cursor,
-          Cline, …) at MKT Browser, then launch a profile and let the agent open tabs, click, type,
-          and read pages through it — every tool call streams into the feed below.
+          Drive your profiles from an AI agent. Point any MCP client (Claude Desktop, Cursor, Cline,
+          …) at MKT Browser, then launch a profile and let the agent open tabs, click, type, and
+          read pages through it — every tool call streams into the feed below.
         </div>
 
         <ConnectCard baseUrl={mcpUrl} token={mcpToken} />
@@ -60,7 +61,7 @@ export function McpPanel({ events, profiles, mcpUrl, mcpToken }: Props): JSX.Ele
             </div>
           </div>
         ) : (
-          <div className="mz-card overflow-hidden">
+          <div className="mkt-browser-card overflow-hidden">
             {recent.map((e, i) => (
               <PageRow
                 key={e.id}
@@ -84,7 +85,7 @@ function ConnectCard({
   token: string | null;
 }): JSX.Element {
   const off = baseUrl === null;
-  const base = (baseUrl ?? "http://127.0.0.1:7777").replace(/\/$/, "");
+  const base = (baseUrl ?? mktBrowserMcpBaseUrl()).replace(/\/$/, "");
   const httpUrl = `${base}/mcp`; // Streamable HTTP — the current MCP transport
   const sseUrl = `${base}/sse`; // legacy HTTP+SSE, kept for older clients
   const bearer = token ?? "<token>"; // placeholder only if the server is off
@@ -97,7 +98,14 @@ function ConnectCard({
   const jsonConfig = useMemo(
     () =>
       JSON.stringify(
-        { mcpServers: { multizen: { url: httpUrl, headers: { Authorization: `Bearer ${bearer}` } } } },
+        {
+          mcpServers: {
+            [MKT_BROWSER_MCP_SERVER_NAME]: {
+              url: httpUrl,
+              headers: { Authorization: `Bearer ${bearer}` },
+            },
+          },
+        },
         null,
         2,
       ),
@@ -105,7 +113,7 @@ function ConnectCard({
   );
   const codexConfig = useMemo(
     () =>
-      `[mcp_servers.multizen]\nurl = "${httpUrl}"\nhttp_headers = { Authorization = "Bearer ${bearer}" }`,
+      `[mcp_servers."${MKT_BROWSER_MCP_SERVER_NAME}"]\nurl = "${httpUrl}"\nhttp_headers = { Authorization = "Bearer ${bearer}" }`,
     [httpUrl, bearer],
   );
   const stdioConfig = useMemo(
@@ -113,7 +121,7 @@ function ConnectCard({
       JSON.stringify(
         {
           mcpServers: {
-            multizen: {
+            [MKT_BROWSER_MCP_SERVER_NAME]: {
               command: "npx",
               args: ["mcp-remote", httpUrl, "--header", `Authorization: Bearer ${bearer}`],
             },
@@ -139,15 +147,15 @@ function ConnectCard({
         "",
         "Please connect this MCP server to my MCP client:",
         "1. Detect which MCP client I'm using and where its config file lives.",
-        '2. Add a server named "multizen" using the shape that matches my client, INCLUDING the Authorization header:',
-        `   - Codex CLI (~/.codex/config.toml):  [mcp_servers.multizen] with  url = "${httpUrl}"  and  http_headers = { Authorization = "Bearer ${bearer}" }`,
-        `   - JSON URL clients (Cursor, Cline, Continue, VS Code):  {"mcpServers":{"multizen":{"url":"${httpUrl}","headers":{"Authorization":"Bearer ${bearer}"}}}}`,
-        `   - Stdio-only clients (Claude Desktop, no url field) bridge via mcp-remote (needs Node.js):  {"mcpServers":{"multizen":{"command":"npx","args":["mcp-remote","${httpUrl}","--header","Authorization: Bearer ${bearer}"]}}}`,
+        `2. Add a server named "${MKT_BROWSER_MCP_SERVER_NAME}" using the shape that matches my client, INCLUDING the Authorization header:`,
+        `   - Codex CLI (~/.codex/config.toml):  [mcp_servers."${MKT_BROWSER_MCP_SERVER_NAME}"] with  url = "${httpUrl}"  and  http_headers = { Authorization = "Bearer ${bearer}" }`,
+        `   - JSON URL clients (Cursor, Cline, Continue, VS Code):  ${jsonConfig.replace(/\n\s*/g, "")}`,
+        `   - Stdio-only clients (Claude Desktop, no url field) bridge via mcp-remote (needs Node.js):  ${stdioConfig.replace(/\n\s*/g, "")}`,
         "3. Merge it into the existing config without overwriting other servers, then tell me to restart/reload the client.",
         "",
-        'For W01 compatibility, every MKT Browser tool keeps the "multizen." prefix — I\'ll launch a profile in MKT Browser and you can drive it.',
+        `MKT Browser owns this contract under the "${MKT_BROWSER_MCP_SERVER_NAME}" identity. I\'ll launch a profile in MKT Browser and you can drive it.`,
       ].join("\n"),
-    [httpUrl, sseUrl, bearer],
+    [httpUrl, sseUrl, bearer, jsonConfig, stdioConfig],
   );
 
   return (
@@ -179,7 +187,9 @@ function ConnectCard({
           {off ? (
             <Pill kind="idle">server off</Pill>
           ) : (
-            <Pill kind="running" dot>listening</Pill>
+            <Pill kind="running" dot>
+              listening
+            </Pill>
           )}
         </div>
       </div>
@@ -188,8 +198,7 @@ function ConnectCard({
         <div className="text-[12px] text-slate-400 leading-relaxed">
           The MCP server is disabled. Turn on{" "}
           <span className="text-slate-200 font-medium">Auto-start MCP HTTP transport</span> in{" "}
-          <span className="text-slate-200 font-medium">Settings</span> to get a connection
-          endpoint.
+          <span className="text-slate-200 font-medium">Settings</span> to get a connection endpoint.
         </div>
       ) : (
         <>
@@ -253,8 +262,9 @@ function ConnectCard({
                 <span>
                   Claude Desktop&apos;s config has no <code className="text-slate-400">url</code>{" "}
                   field, so it bridges the endpoint through{" "}
-                  <code className="text-slate-400">mcp-remote</code> (needs Node). Change the port
-                  in <span className="text-slate-400">Settings</span>.
+                  <code className="text-slate-400">mcp-remote</code> (needs Node). Set the
+                  <code className="text-slate-400"> MKT_BROWSER_MCP_PORT </code>
+                  environment variable before starting MKT Browser to override the default port.
                 </span>
               </div>
             </div>
@@ -423,7 +433,7 @@ function PageRow({
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline gap-2">
           <code className="mono text-[12px] font-semibold text-slate-100">
-            <span className="text-purple-400">multizen.</span>
+            <span className="text-purple-400">{MKT_BROWSER_MCP_SERVER_NAME}.</span>
             {event.tool}
           </code>
           <span className="ml-auto mono text-[10px] text-slate-500">
@@ -447,6 +457,11 @@ function PageRow({
 
 function StatusPill({ status }: { status: ActivityEvent["status"] }): JSX.Element {
   if (status === "ok") return <Pill kind="running">ok</Pill>;
-  if (status === "pending") return <Pill kind="ai" dot>live</Pill>;
+  if (status === "pending")
+    return (
+      <Pill kind="ai" dot>
+        live
+      </Pill>
+    );
   return <Pill kind="error">error</Pill>;
 }

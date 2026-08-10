@@ -21,7 +21,7 @@
   function signalHost(id) {
     try {
       document.documentElement.setAttribute(
-        "data-mz-add-ext",
+        "data-mkt-browser-add-ext",
         JSON.stringify({ id: id, n: Date.now() }),
       );
       return true;
@@ -40,7 +40,7 @@
 
   function makeButton() {
     const btn = document.createElement("button");
-    btn.id = "mz-add-to-multizen";
+    btn.id = "mkt-browser-add-extension";
     btn.type = "button";
     btn.textContent = "Add to MKT Browser";
     btn.style.cssText = [
@@ -92,7 +92,8 @@
   function isVisibleContainer(container) {
     if (!container) return false;
     if (container.style && container.style.display === "none") return false;
-    if (container.querySelector && container.querySelector("#mz-add-to-multizen")) return false;
+    if (container.querySelector && container.querySelector("#mkt-browser-add-extension"))
+      return false;
     const r = container.getBoundingClientRect();
     return r.width >= 1 && r.height >= 1; // collapsed → 0×0 for non-Chrome
   }
@@ -139,7 +140,7 @@
       if (!/Switch to Chrome to install extensions/i.test(t)) continue;
       const r = divs[i].getBoundingClientRect();
       if (r.width < 1 || r.height < 1) continue; // not the visible one
-      if (divs[i].querySelector("#mz-add-to-multizen")) continue;
+      if (divs[i].querySelector("#mkt-browser-add-extension")) continue;
       return divs[i];
     }
     return null;
@@ -150,11 +151,11 @@
     if (!extractId()) return;
     // SPA navigated to a different extension → drop our old button and re-place.
     if (placedPath && placedPath !== location.pathname) {
-      const old = document.getElementById("mz-add-to-multizen");
+      const old = document.getElementById("mkt-browser-add-extension");
       if (old) old.remove();
       placedPath = "";
     }
-    if (document.getElementById("mz-add-to-multizen")) return; // already placed here
+    if (document.getElementById("mkt-browser-add-extension")) return; // already placed here
 
     // Primary: a visible native "Add to Chrome" → sit in its place.
     const native = findVisibleNativeAdd();
@@ -177,7 +178,7 @@
       const btn = makeButton();
       banner.parentElement.insertBefore(btn, banner);
       banner.style.setProperty("display", "none", "important");
-      banner.setAttribute("data-mz-promo-hidden", "1");
+      banner.setAttribute("data-mkt-browser-promo-hidden", "1");
     }
   }
 
@@ -188,7 +189,7 @@
     const banner = findInstallBanner();
     if (banner) {
       banner.style.setProperty("display", "none", "important");
-      banner.setAttribute("data-mz-promo-hidden", "1");
+      banner.setAttribute("data-mkt-browser-promo-hidden", "1");
     }
   }
 
@@ -198,7 +199,7 @@
   // that ancestor was wiping our button + page content.
   function containsActionUi(node) {
     if (!node || node.nodeType !== 1) return false;
-    if (node.querySelector && node.querySelector("#mz-add-to-multizen")) return true;
+    if (node.querySelector && node.querySelector("#mkt-browser-add-extension")) return true;
     const spans = node.querySelectorAll ? node.querySelectorAll("span") : [];
     for (let i = 0; i < spans.length; i++) {
       if ((spans[i].textContent || "").trim() === "Add to Chrome") return true;
@@ -241,8 +242,8 @@
         node = p;
       }
       if (containsActionUi(node)) continue; // final safety: don't hide the action area
-      if (node.getAttribute("data-mz-promo-hidden")) continue; // already hidden
-      node.setAttribute("data-mz-promo-hidden", "1");
+      if (node.getAttribute("data-mkt-browser-promo-hidden")) continue; // already hidden
+      node.setAttribute("data-mkt-browser-promo-hidden", "1");
       node.style.setProperty("display", "none", "important");
     }
   }

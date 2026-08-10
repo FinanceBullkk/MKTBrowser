@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { readdir, readFile, rm, stat } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
-import type { ExtensionConfig } from "@multizen/types";
+import type { ExtensionConfig } from "@mktbrowser/types";
 
 /** Don't reclaim a staging dir younger than this — it may be a live install. */
 const STALE_STAGING_MS = 5 * 60 * 1000;
@@ -115,9 +115,7 @@ export async function gcEntry(
 ): Promise<void> {
   const key = `${id}\0${version || "0"}`;
   if (sharedRefKeys(allRefs).has(key)) return; // still referenced
-  await rm(storeEntryDir(storeRoot, id, version), { recursive: true, force: true }).catch(
-    () => {},
-  );
+  await rm(storeEntryDir(storeRoot, id, version), { recursive: true, force: true }).catch(() => {});
 }
 
 /**

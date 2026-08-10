@@ -1,6 +1,6 @@
-name: Windows W01 Build
+name: Windows W02 Build
 
-# W01 has no release or publishing channel. Run this workflow manually to
+# W02 has no release or publishing channel. Run this workflow manually to
 # validate the isolated Windows directory package without creating a release.
 on:
   workflow_dispatch:
@@ -30,10 +30,10 @@ jobs:
         run: yarn install --immutable
 
       - name: Product identity tests
-        run: yarn workspace @multizen/desktop test:w01
+        run: yarn workspace @mktbrowser/desktop test:w02
 
       - name: Typecheck
         run: yarn typecheck
 
       - name: Build Windows directory package
-        run: yarn workspace @multizen/desktop build
+        run: yarn workspace @mktbrowser/desktop build

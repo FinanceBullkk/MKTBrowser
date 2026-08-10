@@ -41,7 +41,7 @@ export function ExtIcon({
       return;
     }
     let cancelled = false;
-    void window.multizen.extensions.icon(ext, profileId ?? null).then((src) => {
+    void window.mktBrowser.extensions.icon(ext, profileId ?? null).then((src) => {
       manifestIconCache.set(key, src);
       if (!cancelled) setManifestSrc(src);
     });
