@@ -7,11 +7,16 @@ This runbook uses only a disposable application data directory, a disposable bro
 dedicated test proxy. Do not sign in to Reddit, Facebook, Google, or any other account. Do not point
 the test at an operational MultiZen/MKT Browser data directory.
 
+Sections 1-4 intentionally reproduce the frozen, unmodified upstream MKB-00 baseline. Their
+upstream application name, environment key, executable name, and port `7777` are historical test
+inputs rather than active MKT Browser contracts. Section 5 uses the current post-W02 MKTTool
+consumer names against that pinned baseline.
+
 ## Prerequisites
 
 - A real Apple Silicon Mac needed by the operator fleet.
 - Xcode Command Line Tools, Git, and an official Node.js release compatible with the pinned source.
-- The MKTTool checkout for testing its current `MultizenAdapter`.
+- The MKTTool checkout for testing its current `MktBrowserAdapter`.
 - A dedicated disposable HTTP or SOCKS5 proxy whose expected exit IP is known.
 - No production account credentials, profile archive, cookies, or TOTP secret.
 
@@ -211,7 +216,7 @@ for the negative input, exit-IP check, and cleanup, and redacts the password fro
 ```bash
 node --import tsx --input-type=module <<'NODE'
 import fs from "node:fs";
-import { MultizenAdapter } from "./src/lib/antidetect/multizen-adapter.ts";
+import { MktBrowserAdapter } from "./src/lib/antidetect/mkt-browser-adapter.ts";
 
 const baseUrl = "http://127.0.0.1:7777";
 const token = fs.readFileSync(`${process.env.MKB00_USER_DATA}/mcp-token`, "utf8").trim();
@@ -235,7 +240,7 @@ async function rawTool(id, name, args) {
   return payload.result;
 }
 
-const adapter = new MultizenAdapter(baseUrl, token);
+const adapter = new MktBrowserAdapter(baseUrl, token);
 let profileId;
 
 try {
@@ -313,7 +318,7 @@ NODE
 Then run the focused Relay/adapter fail-closed tests:
 
 ```bash
-npm test -- relay/src/handle-ticket.test.ts src/lib/antidetect/multizen-adapter.test.ts
+npm test -- relay/src/handle-ticket.test.ts src/lib/antidetect/mkt-browser-adapter.test.ts
 ```
 
 Acceptance:
@@ -359,5 +364,5 @@ Record only redacted facts:
 Pass MKB-00 only when every acceptance item above is green on a real Apple Silicon Mac and the
 Windows evidence remains green. If the app or engine runs through Rosetta, the checksum or license
 cannot be confirmed, proxy application fails, exit IP differs, or a failed update is followed by a
-launch, record MKB-00 as blocked. Do not expand the Windows-only W01 exception, claim MKB-01
-compatibility, or begin pilot distribution.
+launch, record MKB-00 as blocked. Do not expand the Windows-only implementation exception recorded
+through W02, claim MKB-01 compatibility, or begin pilot distribution.
