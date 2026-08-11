@@ -47,7 +47,7 @@ jobs:
       - name: MKB-01E security guards
         run: yarn workspace @mktbrowser/desktop test:mkb01e
 
-      - name: MKB-02 managed-create guards
+      - name: MKB-02 managed-mode guards
         run: yarn workspace @mktbrowser/desktop test:mkb02
 
       - name: Windows packaging guards

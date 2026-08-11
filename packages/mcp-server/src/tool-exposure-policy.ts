@@ -5,6 +5,7 @@ export const MCP_TOOL_EXPOSURE = {
   update_profile: "profile-write",
   delete_profile: "profile-write",
   list_fingerprint_options: "fingerprint-read",
+  launch_managed_profile: "profile-lifecycle",
   launch_profile: "profile-lifecycle",
   close_profile: "profile-lifecycle",
   navigate: "page-control",

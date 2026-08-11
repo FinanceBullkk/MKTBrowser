@@ -17,6 +17,7 @@ import { createMktBrowserMcpServer, type BrowserDriver } from "../src/server.ts"
 import { MockBrowserDriver } from "../src/MockBrowserDriver.ts";
 import type { ProfileManager } from "@mktbrowser/profile-manager";
 import type { LaunchedProfile, ProfileId } from "@mktbrowser/types";
+import type { RunningProfileState } from "../src/managed-profile-launch.ts";
 
 // Raw cdp_send is opt-in (MKT_BROWSER_MCP_ALLOW_RAW_CDP). Enable it for the bulk of
 // the suite (which exercises cdp_send's gates); the default-OFF behaviour has its
@@ -66,6 +67,9 @@ class SpyDriver implements BrowserDriver {
   }
   isRunning(profileId: ProfileId): boolean {
     return this.running.has(profileId);
+  }
+  getRunningProfileState(profileId: ProfileId): RunningProfileState | null {
+    return this.running.has(profileId) ? {} : null;
   }
   async navigate(_profileId: ProfileId, url: string): Promise<{ url: string }> {
     this.navigated.push(url);

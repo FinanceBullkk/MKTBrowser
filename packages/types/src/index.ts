@@ -37,7 +37,7 @@ export function mktBrowserMcpBaseUrl(port: number = MKT_BROWSER_DEFAULT_MCP_PORT
  * written against the previous number would now behave incorrectly. Adding an optional response
  * field is not a bump.
  */
-export const MKT_BROWSER_CONTRACT_VERSION = 1;
+export const MKT_BROWSER_CONTRACT_VERSION = 2;
 
 /** Bump when the on-disk profile record changes shape and needs a migration. */
 export const MKT_BROWSER_PROFILE_SCHEMA_VERSION = 2;
@@ -52,6 +52,7 @@ export const MKT_BROWSER_CAPABILITIES = [
   "profile-contract-v1",
   "runtime-info-v1",
   "idempotent-create-v1",
+  "atomic-launch-v1",
 ] as const;
 
 export type MktBrowserCapability = (typeof MKT_BROWSER_CAPABILITIES)[number];
@@ -69,6 +70,8 @@ export const MKT_BROWSER_ERROR_CODES = [
   "PROFILE_NOT_FOUND",
   /** A page action arrived for a profile that is not launched. */
   "PROFILE_NOT_RUNNING",
+  /** A running profile uses a different proxy than the managed launch request. */
+  "PROFILE_ALREADY_RUNNING",
   /** The profile exists but its proxy could not be stored or applied. */
   "PROXY_REJECTED",
   /** The Chromium engine is missing, still being prepared, or failed verification. */

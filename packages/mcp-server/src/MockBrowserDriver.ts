@@ -1,5 +1,7 @@
 import type { BrowserDriver } from "./server.js";
-import type { LaunchedProfile, ProfileId } from "@mktbrowser/types";
+import type { LaunchedProfile, ProfileId, ProxyConfig } from "@mktbrowser/types";
+import type { ProfileManager } from "@mktbrowser/profile-manager";
+import type { RunningProfileState } from "./managed-profile-launch.js";
 
 /**
  * In-memory browser driver for development. Returns plausible mock data
@@ -7,8 +9,13 @@ import type { LaunchedProfile, ProfileId } from "@mktbrowser/types";
  * is hooked up.
  */
 export class MockBrowserDriver implements BrowserDriver {
-  private readonly running = new Map<ProfileId, { url: string; pid: number; port: number }>();
+  private readonly running = new Map<
+    ProfileId,
+    { url: string; pid: number; port: number; proxy?: ProxyConfig }
+  >();
   private port = 9222;
+
+  constructor(private readonly profileManager?: Pick<ProfileManager, "get">) {}
 
   async launch(profileId: ProfileId): Promise<LaunchedProfile> {
     const existing = this.running.get(profileId);
@@ -22,7 +29,12 @@ export class MockBrowserDriver implements BrowserDriver {
     }
     this.port += 1;
     const pid = Math.floor(Math.random() * 100000) + 1000;
-    this.running.set(profileId, { url: "about:blank", pid, port: this.port });
+    this.running.set(profileId, {
+      url: "about:blank",
+      pid,
+      port: this.port,
+      proxy: this.profileManager?.get(profileId)?.proxy,
+    });
     return {
       id: profileId,
       cdpEndpoint: `ws://localhost:${this.port}/devtools/browser/mock-${profileId}`,
@@ -37,6 +49,11 @@ export class MockBrowserDriver implements BrowserDriver {
 
   isRunning(profileId: ProfileId): boolean {
     return this.running.has(profileId);
+  }
+
+  getRunningProfileState(profileId: ProfileId): RunningProfileState | null {
+    const running = this.running.get(profileId);
+    return running ? { proxy: running.proxy } : null;
   }
 
   async navigate(profileId: ProfileId, url: string): Promise<{ url: string }> {

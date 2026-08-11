@@ -5,6 +5,7 @@ export { HttpTransport } from "./HttpTransport.js";
 export type { ActivityEvent } from "./ActivityLog.js";
 export type { HttpTransportOptions } from "./HttpTransport.js";
 export type { MktBrowserMcpServerOptions, MktBrowserMcpServer, BrowserDriver } from "./server.js";
+export type { RunningProfileState } from "./managed-profile-launch.js";
 export {
   MCP_TOOL_EXPOSURE,
   assertMcpToolInventory,
@@ -15,6 +16,7 @@ export {
   MktBrowserToolError,
   engineUnavailable,
   profileNotFound,
+  profileAlreadyRunning,
   profileNotRunning,
   proxyRejected,
   toErrorCode,

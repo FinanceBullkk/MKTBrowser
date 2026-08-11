@@ -37,6 +37,10 @@ import {
   assertMcpToolInventory,
   isClassifiedMcpTool,
 } from "./tool-exposure-policy.js";
+import {
+  launchManagedProfile,
+  type RunningProfileState,
+} from "./managed-profile-launch.js";
 
 // ── Security gates (engine-independent, enforced in the MCP dispatch layer) ──
 
@@ -195,6 +199,7 @@ export interface BrowserDriver {
   launch(profileId: ProfileId): Promise<LaunchedProfile>;
   close(profileId: ProfileId): Promise<void>;
   isRunning(profileId: ProfileId): boolean;
+  getRunningProfileState(profileId: ProfileId): RunningProfileState | null;
   navigate(profileId: ProfileId, url: string): Promise<{ url: string }>;
   click(profileId: ProfileId, selector: string): Promise<{ ok: true }>;
   type(profileId: ProfileId, selector: string, text: string): Promise<{ ok: true }>;
@@ -376,6 +381,7 @@ const UpdateProfileSchema = ProfileIdSchema.extend({
   proxy: ProxySchema.nullable().optional(),
   fingerprint: FingerprintInputSchema.optional(),
 });
+const ManagedLaunchSchema = ProfileIdSchema.extend({ proxy: ProxySchema });
 
 /**
  * Server-level guidance surfaced to any connecting agent via the MCP
@@ -567,6 +573,10 @@ async function dispatch(
     }
     case "list_fingerprint_options": {
       return { devices: deviceCatalog(), locales: localeCatalog() };
+    }
+    case "launch_managed_profile": {
+      const { profile_id, proxy } = ManagedLaunchSchema.parse(args);
+      return await launchManagedProfile(profile_id, proxy, { profileManager, browserDriver });
     }
     case "launch_profile": {
       const { profile_id } = ProfileIdSchema.parse(args);
@@ -820,6 +830,19 @@ const TOOL_DEFINITIONS = [
           type: "string",
           description: "Retry-stable request identifier. Requires external_ref and seed.",
         },
+      },
+    },
+  },
+  {
+    name: "launch_managed_profile",
+    description:
+      "Atomically persist and verify the requested proxy before launch. If the profile is already running, returns it only when the active proxy matches; otherwise rejects without changing the running session.",
+    inputSchema: {
+      type: "object",
+      required: ["profile_id", "proxy"],
+      properties: {
+        profile_id: { type: "string" },
+        proxy: PROXY_JSON_SCHEMA,
       },
     },
   },

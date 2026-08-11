@@ -16,7 +16,7 @@
     "test:w02": "node --test ../../scripts/verify-node-version.test.cjs && node --experimental-strip-types --test src/main/productIdentity.test.ts src/main/mkt-browser-contract.test.ts",
     "test:mkb01": "yarn workspace @mktbrowser/profile-manager test:legacy && node --experimental-strip-types --test src/main/runtime-contract.test.ts",
     "test:mkb01e": "node --experimental-strip-types --test src/main/security-contract.test.ts",
-    "test:mkb02": "yarn workspace @mktbrowser/profile-manager test:managed && node --experimental-strip-types --test src/main/managed-mode-contract.test.ts",
+    "test:mkb02": "yarn workspace @mktbrowser/profile-manager test:managed && yarn workspace @mktbrowser/mcp-server test:managed && node --experimental-strip-types --test src/main/managed-mode-contract.test.ts src/main/browser-process-discovery.test.ts",
     "test:packaging": "node --test scripts/edit-windows-executable.test.cjs",
     "package:windows-directory": "node ./scripts/package-windows-directory.cjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",

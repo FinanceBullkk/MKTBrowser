@@ -12,19 +12,20 @@ import { describeEngineStatus } from "./engine-runtime-info.ts";
 const REPO_ROOT = new URL("../../../../", import.meta.url);
 
 test("publishes a versioned runtime contract", () => {
-  assert.equal(MKT_BROWSER_CONTRACT_VERSION, 1);
+  assert.equal(MKT_BROWSER_CONTRACT_VERSION, 2);
   assert.equal(MKT_BROWSER_PROFILE_SCHEMA_VERSION, 2);
   assert.deepEqual([...MKT_BROWSER_CAPABILITIES], [
     "profile-contract-v1",
     "runtime-info-v1",
     "idempotent-create-v1",
+    "atomic-launch-v1",
   ]);
 });
 
 test("never advertises a capability this build has not implemented", () => {
   // Managed mode is MKB-02. Advertising it early would make the Relay choose a call path that
   // does not exist, and the failure would surface as a launch error on a real account.
-  for (const unimplemented of ["managed-profile-v1", "atomic-launch-v1"]) {
+  for (const unimplemented of ["managed-profile-v1"]) {
     assert.equal(
       (MKT_BROWSER_CAPABILITIES as readonly string[]).includes(unimplemented),
       false,
@@ -39,6 +40,7 @@ test("keeps every failing layer separately addressable", () => {
     "FORBIDDEN",
     "PROFILE_NOT_FOUND",
     "PROFILE_NOT_RUNNING",
+    "PROFILE_ALREADY_RUNNING",
     "PROXY_REJECTED",
     "ENGINE_UNAVAILABLE",
     "UNKNOWN_TOOL",

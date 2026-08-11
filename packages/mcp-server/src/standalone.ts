@@ -27,7 +27,7 @@ async function main(): Promise<void> {
     profilesRoot: join(dataRoot, "profiles"),
   });
 
-  const browserDriver = new MockBrowserDriver();
+  const browserDriver = new MockBrowserDriver(profileManager);
   const { server, activityLog } = createMktBrowserMcpServer({ profileManager, browserDriver });
 
   // Pipe activity events to stderr in standalone mode (stdout is reserved for MCP transport)

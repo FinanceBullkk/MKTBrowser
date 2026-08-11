@@ -14,7 +14,7 @@ const {
 } = require("./system-chrome-engine-fixture.cjs");
 
 const EXPECTED_PROVIDER = "mkt-browser";
-const EXPECTED_CONTRACT_VERSION = 1;
+const EXPECTED_CONTRACT_VERSION = 2;
 
 async function main() {
   if (process.platform !== "win32") {
@@ -105,6 +105,7 @@ async function main() {
     assert.equal(runtime.provider, EXPECTED_PROVIDER);
     assert.equal(runtime.contractVersion, EXPECTED_CONTRACT_VERSION);
     assert.ok(runtime.capabilities.includes("runtime-info-v1"));
+    assert.ok(runtime.capabilities.includes("atomic-launch-v1"));
 
     const beforeCreate = await callTool(baseUrl, token, "list_profiles", {});
     const createRequest = {

@@ -18,7 +18,14 @@ import {
 } from "@mktbrowser/mcp-server";
 import type { ProfileManager } from "@mktbrowser/profile-manager";
 import { reconcileDeviceFamilyToHost } from "@mktbrowser/profile-manager";
-import type { ClientHints, FingerprintConfig, LaunchedProfile, ProfileId } from "@mktbrowser/types";
+import type {
+  ClientHints,
+  FingerprintConfig,
+  LaunchedProfile,
+  ProfileId,
+  ProxyConfig,
+} from "@mktbrowser/types";
+import type { RunningProfileState } from "@mktbrowser/mcp-server";
 import { waitForCdpSessionReady } from "./cdpReadiness";
 import type { BrowserEngine } from "@mktbrowser/settings-store";
 import { CdpSession } from "@mktbrowser/cdp-driver";
@@ -28,6 +35,10 @@ import { probeProxyGeo } from "./proxyGeo";
 import { companionDir } from "./extensions/companion";
 import { resolveLoadDir } from "./extensions/extensionStore.ts";
 import { sanitizeStartUrl } from "./startPage";
+import {
+  findBrowserProcessesUsingDataDir,
+  selectPrimaryBrowserPid,
+} from "./browser-process-discovery";
 
 interface RunningProcess {
   child: ChildProcess;
@@ -41,6 +52,8 @@ interface RunningProcess {
   browserDataDir: string;
   /** Polls /json/list and kills the child when no page targets remain. */
   windowWatcher: NodeJS.Timeout;
+  /** Snapshot of the proxy actually used for this process, including auth for exact comparison. */
+  proxy?: ProxyConfig;
 }
 
 export interface ChromiumBrowserDriverOptions {
@@ -513,6 +526,10 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     // launch() resolves, so an MCP navigate/extract right after launch can't
     // race a not-yet-ready CDP endpoint.
     await waitForCdpSessionReady(port, session, 15000);
+    const trackedPid = selectPrimaryBrowserPid(
+      await findBrowserProcessesUsingDataDir(browserDataDir),
+      child.pid,
+    );
 
     // Apply per-target emulation: timezone, locale, Sec-CH-UA via
     // userAgentMetadata (works on stock Chromium — no patches needed!),
@@ -738,38 +755,45 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       // we're terminating so the card stops showing "Stop" while it winds down.
       this.emit("running-changed", { kind: "closing", profileId });
       // Graceful CDP shutdown — preserves session-restore on CFT too.
-      void gracefulShutdown(r);
+      void (async () => {
+        await gracefulShutdown(r);
+        await killBrowsersUsingDataDir(r.browserDataDir);
+        this.finishExternalClose(profileId, r);
+      })();
     });
 
     const record: RunningProcess = {
       child,
       cdpEndpoint,
       port,
-      pid: child.pid,
+      pid: trackedPid,
       startedAt,
       session,
       browserDataDir,
       windowWatcher,
+      proxy: profile.proxy ? { ...profile.proxy } : undefined,
     };
     const r = record;
     this.running.set(profileId, record);
 
     child.on("exit", () => {
-      const wasTracked = this.running.has(profileId);
-      clearInterval(record.windowWatcher);
-      void session.close().catch(() => {});
-      void stopBridgeForProfile(profileId).catch(() => {});
-      this.running.delete(profileId);
-      if (wasTracked) {
-        // close() removes from the map first so wasTracked is false there;
-        // this path covers (a) user quit Chrome directly with ⌘Q, and (b)
-        // our own kill() from the windowWatcher when the last window closed.
-        this.emit("running-changed", { kind: "closed", profileId, reason: "external-exit" });
-      }
+      // Windows Chrome can hand off from a short-lived launcher to the real browser process.
+      // Ignore that launcher exit while the tracked browser PID is still alive.
+      if (record.pid !== child.pid && isPidAlive(record.pid)) return;
+      this.finishExternalClose(profileId, record);
     });
 
     this.emit("running-changed", { kind: "launched", profileId });
-    return { id: profileId, cdpEndpoint, pid: child.pid, startedAt };
+    return { id: profileId, cdpEndpoint, pid: trackedPid, startedAt };
+  }
+
+  private finishExternalClose(profileId: ProfileId, record: RunningProcess): void {
+    if (this.running.get(profileId) !== record) return;
+    clearInterval(record.windowWatcher);
+    void record.session.close().catch(() => {});
+    void stopBridgeForProfile(profileId).catch(() => {});
+    this.running.delete(profileId);
+    this.emit("running-changed", { kind: "closed", profileId, reason: "external-exit" });
   }
 
   async close(profileId: ProfileId): Promise<void> {
@@ -809,6 +833,11 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
 
   isRunning(profileId: ProfileId): boolean {
     return this.running.has(profileId);
+  }
+
+  getRunningProfileState(profileId: ProfileId): RunningProfileState | null {
+    const running = this.running.get(profileId);
+    return running ? { proxy: running.proxy ? { ...running.proxy } : undefined } : null;
   }
 
   async navigate(profileId: ProfileId, url: string): Promise<{ url: string }> {
@@ -1205,30 +1234,10 @@ async function gracefulShutdown(r: RunningProcess): Promise<void> {
   await waitForPidDeath(pid, 2000);
 }
 
-/** All PIDs whose command line holds `--user-data-dir=<dataDir>` (main browser
- *  + helpers). Exact substring match — no regex pitfalls with path chars. */
-async function pidsUsingDataDir(dataDir: string): Promise<number[]> {
-  const needle = `--user-data-dir=${dataDir}`;
-  try {
-    const { stdout } = await execFileP("ps", ["-Ao", "pid=,command="]);
-    const pids: number[] = [];
-    for (const line of stdout.split("\n")) {
-      // Require a boundary after the dir (a following arg, or end of line) so
-      // this profile's dir can't prefix-match a longer sibling's data-dir.
-      if (!line.includes(`${needle} `) && !line.endsWith(needle)) continue;
-      const pid = Number.parseInt(line.trimStart(), 10);
-      if (Number.isFinite(pid) && pid > 0 && pid !== process.pid) pids.push(pid);
-    }
-    return pids;
-  } catch {
-    return [];
-  }
-}
-
 /** SIGKILL every process still holding `dataDir`. Final safety net so a Stop
  *  can never leave a Chromium window behind. */
 async function killBrowsersUsingDataDir(dataDir: string): Promise<void> {
-  const pids = await pidsUsingDataDir(dataDir);
+  const pids = (await findBrowserProcessesUsingDataDir(dataDir)).map((process) => process.pid);
   if (pids.length === 0) return;
   console.log(
     `[mkt-browser] sweep: SIGKILL ${pids.length} lingering proc(s) for ${dataDir}: ${pids.join(", ")}`,
@@ -1277,6 +1286,7 @@ function createWindowWatcher(
   onZeroWindows: () => void,
 ): NodeJS.Timeout {
   let zeroSinceMs: number | null = null;
+  let unreachableSinceMs: number | null = null;
   return setInterval(async () => {
     // Don't start counting "zero windows" until Chromium has had a chance
     // to open its initial window (some 1-2s after spawn).
@@ -1284,7 +1294,8 @@ function createWindowWatcher(
     if (ageMs < 2000) return;
     try {
       const res = await fetch(`http://127.0.0.1:${port}/json/list`);
-      if (!res.ok) return;
+      if (!res.ok) throw new Error(`CDP returned ${res.status}`);
+      unreachableSinceMs = null;
       const targets = (await res.json()) as Array<{ type?: string }>;
       const pages = targets.filter((t) => t.type === "page").length;
       if (pages === 0) {
@@ -1298,8 +1309,10 @@ function createWindowWatcher(
         zeroSinceMs = null;
       }
     } catch {
-      // CDP unreachable — process likely already dying. exit handler will
-      // clean up.
+      // A Windows launcher handoff means the tracked process may not be the ChildProcess that
+      // emitted exit. Confirm CDP is unavailable before finalizing the externally closed profile.
+      if (unreachableSinceMs === null) unreachableSinceMs = Date.now();
+      else if (Date.now() - unreachableSinceMs > 1500) onZeroWindows();
     }
   }, 1000);
 }

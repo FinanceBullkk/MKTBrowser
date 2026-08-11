@@ -46,6 +46,13 @@ export function profileNotRunning(profileId: string): MktBrowserToolError {
   );
 }
 
+export function profileAlreadyRunning(profileId: string): MktBrowserToolError {
+  return new MktBrowserToolError(
+    "PROFILE_ALREADY_RUNNING",
+    `Profile ${profileId} is already running with a different proxy. Close it before retrying.`,
+  );
+}
+
 export function unknownTool(name: string): MktBrowserToolError {
   return new MktBrowserToolError("UNKNOWN_TOOL", `Unknown tool: ${name}`);
 }
