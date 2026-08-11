@@ -29,19 +29,20 @@ profiles on the operator device.
   application runs Electron `42.8.1` with modules ABI `146` and `better-sqlite3` `12.11.1`; the
   renderer is sandboxed with a restrictive CSP, IPC and MCP exposure inventories fail closed, and
   the fixed-seed fingerprint measurement remained identical before and after the upgrade.
-- MKB-02 is in progress with four verified slices through 12 August 2026: deterministic/idempotent
-  managed profile creation, Relay endpoint inventory, automatic Windows MCP-token discovery, and
-  atomic proxy persistence plus launch. Contract version `2` advertises `idempotent-create-v1` and
-  `atomic-launch-v1`; full `managed-profile-v1` control locking remains unimplemented.
+- MKB-02 managed mode was completed on 12 August 2026. Contract version `3` advertises idempotent
+  create, atomic launch, managed-profile locking, and correlated operation diagnostics. The Relay
+  token is profile-management only; page, cookie, and raw-CDP tools are unavailable and no
+  page-control token is issued by this build.
 - This build may be used for an owner-led technical demo with disposable profiles. It is not
   approved for real accounts, pilot distribution, or team rollout.
 - The Windows directory package was regenerated on 12 August 2026 with SHA-256
-  `4253401aa1a59995f30d2d49a5875a5b705453c751c008b1e5437ce19d99e37b`; Node guard 2/2,
-  W02 guards 8/8, MKB-01 tests 9/9, MKB-01E tests 6/6, MKB-02 tests 12/12, Windows packaging guards
-  3/3, typecheck, lint, build, packaged runtime and profile-lifecycle contracts, fingerprint
-  comparison, and five visual-baseline reviews passed. The packaged verifier covers persisted proxy
-  read-back, invalid-proxy rejection, atomic managed launch, Windows Chrome launcher-PID handoff,
-  process-confirmed close, deletion, and clean process exit. It remains unsigned.
+  `238d5d6fd5e373b052c484ceab90698f6dc295205a59be6573f9928b01db4f42`; Node guard 2/2,
+  W02 guards 8/8, MKB-01 tests 8/8, MKB-01E tests 7/7, MKB-02 tests 18/18, Windows packaging guards
+  3/3, typecheck, build, and packaged runtime/profile-lifecycle verification passed. The repository's
+  lint command remains a no-op because workspaces define no lint tasks. The packaged verifier covers
+  the restricted tool inventory, deterministic managed create/retry, correlated diagnostics,
+  direct-launch/delete denial, endpoint-free proxy summaries, atomic managed launch, Windows Chrome
+  launcher-PID handoff, process-confirmed close, and clean process exit. It remains unsigned.
 
 ## Owned product and local contract
 
@@ -74,6 +75,12 @@ profile directory is missing.
 The upstream application updater, manual update IPC, GitHub publish configuration, and usage
 heartbeat are absent from the runtime. Application updates are intentionally disabled until an
 approved internal release channel and rollback process exist.
+
+The HTTP bearer token stored in this data root grants profile management only. It can inspect runtime
+and profile state and call authorized lifecycle tools, but it cannot navigate, click, type, read
+pages, access cookies, or send raw CDP. `tools/list` is authoritative. Managed profiles can be opened
+only through the MKTTool → Relay → `launch_managed_profile` path; ordinary direct launch, delete,
+export, and proxy/fingerprint edits are locked.
 
 W02 deliberately removed the retained first-party MultiZen package, preload, MCP client/server,
 adapter, and configuration identities. There is no dual-name compatibility fallback. Existing MCP
