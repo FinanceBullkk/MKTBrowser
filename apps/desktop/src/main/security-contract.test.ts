@@ -7,7 +7,11 @@ import {
   IPC_EVENT_EXPOSURE,
   IPC_INVOKE_EXPOSURE,
 } from "../shared/ipc-exposure-policy.ts";
-import { MCP_TOOL_EXPOSURE } from "../../../../packages/mcp-server/src/tool-exposure-policy.ts";
+import {
+  MCP_TOOL_EXPOSURE,
+  PROFILE_MANAGEMENT_ACCESS_POLICY,
+  isMcpToolAllowed,
+} from "../../../../packages/mcp-server/src/tool-exposure-policy.ts";
 
 const REPO_ROOT = new URL("../../../../", import.meta.url);
 
@@ -76,6 +80,17 @@ test("classifies every exposed MCP definition and dispatch case", () => {
   assert.deepEqual(dispatchCases.sort(), classified);
   assert.match(server, /assertMcpToolInventory/);
   assert.match(server, /isClassifiedMcpTool/);
+});
+
+test("binds the discovered Relay token to profile management only", () => {
+  const main = source("apps/desktop/src/main/index.ts");
+  const server = source("packages/mcp-server/src/server.ts");
+  assert.match(main, /PROFILE_MANAGEMENT_ACCESS_POLICY/);
+  assert.match(server, /isMcpToolAllowed\(tool\.name, accessPolicy\)/);
+  assert.match(server, /!isMcpToolAllowed\(name, accessPolicy\)/);
+  for (const tool of ["navigate", "extract", "get_cookies", "set_cookies", "cdp_send"]) {
+    assert.equal(isMcpToolAllowed(tool, PROFILE_MANAGEMENT_ACCESS_POLICY), false, tool);
+  }
 });
 
 test("packaged verification exercises the profile lifecycle", () => {

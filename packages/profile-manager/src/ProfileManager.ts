@@ -58,6 +58,13 @@ export class IdempotentProfileCreateConflictError extends Error {
   }
 }
 
+export class ManagedProfileLockedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ManagedProfileLockedError";
+  }
+}
+
 export class ProfileManager {
   private readonly db: Database.Database;
   private readonly profilesRoot: string;
@@ -124,12 +131,20 @@ export class ProfileManager {
   list(): ProfileSummary[] {
     const rows = this.db
       .prepare(
-        `SELECT id, name, tags, last_opened_at, proxy, fingerprint, proxy_country, icon
+        `SELECT id, name, tags, last_opened_at, proxy, fingerprint, proxy_country, icon, external_ref
          FROM profiles ORDER BY updated_at DESC`,
       )
       .all() as Pick<
       ProfileRow,
-      "id" | "name" | "tags" | "last_opened_at" | "proxy" | "fingerprint" | "proxy_country" | "icon"
+      | "id"
+      | "name"
+      | "tags"
+      | "last_opened_at"
+      | "proxy"
+      | "fingerprint"
+      | "proxy_country"
+      | "icon"
+      | "external_ref"
     >[];
     return rows.map((r) => {
       const fingerprint = JSON.parse(r.fingerprint) as FingerprintConfig;
@@ -144,6 +159,7 @@ export class ProfileManager {
         timezone: fingerprint.timezone,
         proxyCountry: r.proxy_country ?? undefined,
         device: fingerprint.device,
+        managed: r.external_ref !== null,
       };
     });
   }
@@ -203,6 +219,7 @@ export class ProfileManager {
       dataDir,
       createdAt: now,
       updatedAt: now,
+      managed: metadata !== undefined,
     };
 
     this.db
@@ -300,6 +317,11 @@ export class ProfileManager {
   update(id: ProfileId, patch: UpdateProfileInput): Profile {
     const existing = this.get(id);
     if (!existing) throw new Error(`Profile ${id} not found`);
+    if (existing.managed && (patch.proxy !== undefined || patch.fingerprint !== undefined)) {
+      throw new ManagedProfileLockedError(
+        `Managed profile ${id} keeps its proxy and fingerprint under MKTTool control.`,
+      );
+    }
 
     const now = new Date().toISOString();
     const proxyChanged =
@@ -353,6 +375,23 @@ export class ProfileManager {
     return merged;
   }
 
+  /** The managed launch path is the only caller allowed to replace a managed profile's proxy. */
+  updateManagedProxy(id: ProfileId, proxy: ProxyConfig): Profile {
+    const existing = this.get(id);
+    if (!existing) throw new Error(`Profile ${id} not found`);
+    if (!existing.managed) {
+      throw new ManagedProfileLockedError(
+        `Profile ${id} is not managed by MKTTool and cannot use the managed launch path.`,
+      );
+    }
+
+    const updatedAt = new Date().toISOString();
+    this.db
+      .prepare(`UPDATE profiles SET proxy = ?, updated_at = ?, proxy_country = NULL WHERE id = ?`)
+      .run(JSON.stringify(proxy), updatedAt, id);
+    return { ...existing, proxy, updatedAt, proxyCountry: undefined };
+  }
+
   /** Persist the country code resolved from the proxy's egress IP. */
   setProxyCountry(id: ProfileId, country: string | null): void {
     this.db.prepare(`UPDATE profiles SET proxy_country = ? WHERE id = ?`).run(country, id);
@@ -364,6 +403,11 @@ export class ProfileManager {
     // doesn't orphan its data. Best-effort — a locked dir shouldn't block the
     // DB delete.
     const existing = this.get(id);
+    if (existing?.managed) {
+      throw new ManagedProfileLockedError(
+        `Managed profile ${id} cannot be deleted through ordinary desktop controls.`,
+      );
+    }
     this.db.prepare(`DELETE FROM profiles WHERE id = ?`).run(id);
     if (existing) {
       try {
@@ -418,6 +462,7 @@ export class ProfileManager {
       updatedAt: row.updated_at,
       lastOpenedAt: row.last_opened_at ?? undefined,
       proxyCountry: row.proxy_country ?? undefined,
+      managed: row.external_ref !== null,
     };
   }
 }

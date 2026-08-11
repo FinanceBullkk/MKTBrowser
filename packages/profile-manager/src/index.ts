@@ -1,6 +1,7 @@
 export {
   ProfileManager,
   IdempotentProfileCreateConflictError,
+  ManagedProfileLockedError,
   type IdempotentProfileCreateMetadata,
   type IdempotentProfileCreateResult,
 } from "./ProfileManager.js";

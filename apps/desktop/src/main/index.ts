@@ -24,6 +24,7 @@ import {
 } from "@mktbrowser/profile-manager";
 import {
   HttpTransport,
+  PROFILE_MANAGEMENT_ACCESS_POLICY,
   createMktBrowserMcpServer,
   type ActivityEvent,
   type ActivityLog,
@@ -382,16 +383,18 @@ app
         httpTransport = new HttpTransport({
           port: mcpHttpPort,
           authToken: mcpAuthToken,
+          accessPolicy: PROFILE_MANAGEMENT_ACCESS_POLICY,
         });
         // Streamable HTTP builds a fresh MCP server per request; give it a factory
         // that reuses the same profileManager/browserDriver AND the shared
         // activityLog, so every transport's tool calls land in the one live feed.
         await httpTransport.start(
-          () =>
+          (accessPolicy) =>
             createMktBrowserMcpServer({
               profileManager,
               browserDriver,
               activityLog,
+              accessPolicy,
               engineInfo: () =>
                 describeEngineStatus(chromiumBootstrap.getEngine(), chromiumBootstrap.getStatus()),
             }).server,
@@ -417,6 +420,10 @@ app
         profileManager.update(id, patch),
     );
     handleIpc(IPC.PROFILES_DELETE, (_e, id: string) => {
+      const profile = profileManager.get(id);
+      if (profile?.managed) {
+        throw new Error(`Managed profile ${id} can be deleted only through MKTTool recovery.`);
+      }
       void browserDriver.close(id).catch(() => {});
       profileManager.delete(id);
       // Reclaim shared store entries this profile referenced that no other profile
@@ -426,7 +433,13 @@ app
         profileManager.allExtensionRefs().map((r) => r.ext),
       ).catch(() => {});
     });
-    handleIpc(IPC.PROFILES_LAUNCH, (_e, id: string) => browserDriver.launch(id));
+    handleIpc(IPC.PROFILES_LAUNCH, (_e, id: string) => {
+      const profile = profileManager.get(id);
+      if (profile?.managed) {
+        throw new Error(`Managed profile ${id} can be launched only through MKTTool.`);
+      }
+      return browserDriver.launch(id);
+    });
     handleIpc(IPC.PROFILES_CLOSE, (_e, id: string) => browserDriver.close(id));
 
     // Settings IPC
@@ -479,13 +492,10 @@ app
       await extensionsService.remove(profileId, extId);
       return extensionsService.list(profileId);
     });
-    handleIpc(
-      IPC.EXTENSIONS_TOGGLE,
-      (_e, profileId: string, extId: string, enabled: boolean) => {
-        extensionsService.setEnabled(profileId, extId, enabled);
-        return extensionsService.list(profileId);
-      },
-    );
+    handleIpc(IPC.EXTENSIONS_TOGGLE, (_e, profileId: string, extId: string, enabled: boolean) => {
+      extensionsService.setEnabled(profileId, extId, enabled);
+      return extensionsService.list(profileId);
+    });
 
     // Staging IPC (no profile id yet) — used by the create sheet to attach or
     // install extensions before the profile exists. `prepare*` unpack into the
@@ -557,9 +567,7 @@ app
     handleIpc(IPC.FINGERPRINT_GENERATE, () => generateFingerprint());
     handleIpc(IPC.FINGERPRINT_DEVICES, () => deviceCatalog());
     handleIpc(IPC.FINGERPRINT_LOCALES, () => localeCatalog());
-    handleIpc(IPC.FINGERPRINT_LOCALE_FOR_COUNTRY, (_e, cc: string) =>
-      findLocaleIdByCountry(cc),
-    );
+    handleIpc(IPC.FINGERPRINT_LOCALE_FOR_COUNTRY, (_e, cc: string) => findLocaleIdByCountry(cc));
     handleIpc(
       IPC.FINGERPRINT_RECONCILE,
       (
@@ -621,6 +629,12 @@ app
       ): Promise<{ ok: true; path: string } | { ok: false; reason: string }> => {
         const profile = profileManager.get(id);
         if (!profile) return { ok: false, reason: "not_found" };
+        if (profile.managed) {
+          return {
+            ok: false,
+            reason: "Managed profiles can be transferred only through the MKTTool recovery flow.",
+          };
+        }
         const result = await dialog.showSaveDialog(mainWindow ?? undefined!, {
           title: "Export profile",
           defaultPath: `${profile.name.replace(/[^a-z0-9-_]+/gi, "_")}.mzar`,

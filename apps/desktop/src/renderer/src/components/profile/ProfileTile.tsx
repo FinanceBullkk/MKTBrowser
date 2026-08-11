@@ -144,8 +144,11 @@ export function ProfileTile({
             </span>
           </div>
           <div className="min-w-0">
-            <div className="font-semibold text-[13px] leading-tight text-slate-100 truncate hover:text-white transition-colors">
-              {profile.name}
+            <div className="flex items-center gap-1.5 min-w-0">
+              <div className="font-semibold text-[13px] leading-tight text-slate-100 truncate hover:text-white transition-colors">
+                {profile.name}
+              </div>
+              {profile.managed && <ManagedBadge />}
             </div>
             <div className="mono text-[10px] text-slate-600 mt-[3px] truncate">
               {profile.id.slice(0, 12)}
@@ -211,7 +214,7 @@ export function ProfileTile({
           >
             Terminating…
           </Button>
-        ) : !isRunning ? (
+        ) : !isRunning && !profile.managed ? (
           <Button
             variant="accent"
             size="md"
@@ -222,7 +225,7 @@ export function ProfileTile({
           >
             {pending ? "Launching…" : "Launch"}
           </Button>
-        ) : (
+        ) : isRunning ? (
           <Button
             variant="secondary"
             size="md"
@@ -233,8 +236,17 @@ export function ProfileTile({
           >
             {pending ? "Stopping…" : "Stop"}
           </Button>
+        ) : (
+          <Button variant="secondary" size="md" fullWidth disabled>
+            Managed by MKTTool
+          </Button>
         )}
-        <ActionMenu onEdit={onOpen} onExport={onExport} onDelete={onDelete} />
+        <ActionMenu
+          onEdit={onOpen}
+          onExport={onExport}
+          onDelete={onDelete}
+          managed={profile.managed}
+        />
       </div>
     </div>
   );
@@ -395,10 +407,12 @@ function ActionMenu({
   onEdit,
   onExport,
   onDelete,
+  managed,
 }: {
   onEdit: () => void;
   onExport: () => void;
   onDelete: () => void;
+  managed: boolean;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -459,29 +473,45 @@ function ActionMenu({
               >
                 Edit profile
               </MenuItem>
-              <MenuItem
-                onClick={() => {
-                  setOpen(false);
-                  onExport();
-                }}
-              >
-                Export archive…
-              </MenuItem>
-              <div style={{ height: 1, margin: "4px 0", background: "rgba(255,255,255,0.06)" }} />
-              <MenuItem
-                onClick={() => {
-                  setOpen(false);
-                  onDelete();
-                }}
-                tone="danger"
-              >
-                Delete profile
-              </MenuItem>
+              {!managed && (
+                <MenuItem
+                  onClick={() => {
+                    setOpen(false);
+                    onExport();
+                  }}
+                >
+                  Export archive…
+                </MenuItem>
+              )}
+              {!managed && (
+                <>
+                  <div
+                    style={{ height: 1, margin: "4px 0", background: "rgba(255,255,255,0.06)" }}
+                  />
+                  <MenuItem
+                    onClick={() => {
+                      setOpen(false);
+                      onDelete();
+                    }}
+                    tone="danger"
+                  >
+                    Delete profile
+                  </MenuItem>
+                </>
+              )}
             </div>
           </>,
           document.body,
         )}
     </>
+  );
+}
+
+function ManagedBadge(): JSX.Element {
+  return (
+    <span className="shrink-0 rounded-md bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-300 ring-1 ring-inset ring-sky-400/20">
+      Managed
+    </span>
   );
 }
 

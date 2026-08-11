@@ -15,7 +15,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx watch src/standalone.ts",
-    "test:managed": "tsx --test src/managed-profile-launch.test.ts",
+    "test:managed": "tsx --test src/managed-profile-launch.test.ts src/tool-exposure-policy.test.ts src/activity-log-redaction.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

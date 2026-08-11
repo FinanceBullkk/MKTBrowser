@@ -18,6 +18,7 @@ import {
   type LaunchedProfile,
   type MktBrowserEngineInfo,
   type MktBrowserRuntimeInfo,
+  type MktBrowserOperationDiagnostic,
   type ProfileId,
   type CreateProfileInput,
   type UpdateProfileInput,
@@ -27,6 +28,7 @@ import {
 import { ActivityLog } from "./ActivityLog.js";
 import {
   CdpPolicyError,
+  managedProfileLocked,
   profileNotFound,
   profileNotRunning,
   toErrorCode,
@@ -35,12 +37,12 @@ import {
 } from "./mkt-browser-tool-errors.js";
 import {
   assertMcpToolInventory,
+  FULL_LOCAL_ACCESS_POLICY,
   isClassifiedMcpTool,
+  isMcpToolAllowed,
+  type McpToolAccessPolicy,
 } from "./tool-exposure-policy.js";
-import {
-  launchManagedProfile,
-  type RunningProfileState,
-} from "./managed-profile-launch.js";
+import { launchManagedProfile, type RunningProfileState } from "./managed-profile-launch.js";
 
 // ── Security gates (engine-independent, enforced in the MCP dispatch layer) ──
 
@@ -230,6 +232,8 @@ export interface MktBrowserMcpServerOptions {
    * a version this process cannot actually observe.
    */
   engineInfo?: () => MktBrowserEngineInfo;
+  /** Capability filter resolved from the authenticated transport token. */
+  accessPolicy?: McpToolAccessPolicy;
 }
 
 export interface MktBrowserMcpServer {
@@ -355,6 +359,7 @@ const CreateProfileSchema = z
     seed: z.string().min(1).optional(),
     external_ref: z.string().trim().min(1).max(200).optional(),
     request_id: z.string().trim().min(1).max(128).optional(),
+    operation_id: z.string().trim().min(1).max(128).optional(),
   })
   .superRefine((input, context) => {
     const hasExternalRef = input.external_ref !== undefined;
@@ -381,7 +386,10 @@ const UpdateProfileSchema = ProfileIdSchema.extend({
   proxy: ProxySchema.nullable().optional(),
   fingerprint: FingerprintInputSchema.optional(),
 });
-const ManagedLaunchSchema = ProfileIdSchema.extend({ proxy: ProxySchema });
+const ManagedLaunchSchema = ProfileIdSchema.extend({
+  proxy: ProxySchema,
+  operation_id: z.string().trim().min(1).max(128).optional(),
+});
 
 /**
  * Server-level guidance surfaced to any connecting agent via the MCP
@@ -389,8 +397,22 @@ const ManagedLaunchSchema = ProfileIdSchema.extend({ proxy: ProxySchema });
  * and the non-obvious constraints (profiles are real windows, headful only,
  * a human may step in) that an agent can't infer from tool signatures alone.
  */
-const MKT_BROWSER_MCP_INSTRUCTIONS = [
+const BASE_MCP_INSTRUCTIONS = [
   "MKT Browser drives real, persistent Chromium profiles — each has its own cookies, login state, fingerprint, and proxy, kept on disk between sessions.",
+  "Only tools granted to this authenticated connection are available. Treat tools/list as authoritative and never attempt to bypass an absent capability.",
+  "Profiles always open as visible desktop windows. There is no headless mode; do not expect one.",
+  "Do not create or launch profiles in bulk to farm accounts; this is a human-in-the-loop tool for authorized workflows.",
+];
+
+const PROFILE_MANAGEMENT_MCP_INSTRUCTIONS = [
+  ...BASE_MCP_INSTRUCTIONS,
+  "",
+  "This connection is profile-management only. It cannot navigate, click, type, read pages, access cookies, or send raw CDP.",
+  "Use the advertised runtime, profile, fingerprint, and lifecycle tools only. MKTTool-managed profiles must remain under the managed workflow and cannot be launched directly.",
+];
+
+const FULL_LOCAL_MCP_INSTRUCTIONS = [
+  ...BASE_MCP_INSTRUCTIONS,
   "",
   "Workflow:",
   "1. Call list_profiles to see available profiles and which are already running.",
@@ -398,15 +420,22 @@ const MKT_BROWSER_MCP_INSTRUCTIONS = [
   "3. Use extract to read the page (URL, title, trimmed accessibility tree) and derive precise CSS selectors from it BEFORE calling click or type.",
   "4. Leave the profile running for follow-up actions; close_profile only when done. State persists either way.",
   "",
-  "Constraints:",
-  "- Profiles always open as visible desktop windows. There is no headless mode; do not expect one.",
   "- A human operator shares the same window. If you hit a CAPTCHA, 2FA, or login wall, pause and let the user solve it, then continue — the session carries over.",
-  "- Do not create or launch profiles in bulk to farm accounts; this is a human-in-the-loop tool for authorized workflows.",
-].join("\n");
+];
+
+export function buildMcpInstructions(accessPolicy: McpToolAccessPolicy): string {
+  const hasPageAccess = accessPolicy.capabilities.some((capability) =>
+    ["page-control", "page-read", "cookie-read", "cookie-write", "raw-cdp"].includes(capability),
+  );
+  return (hasPageAccess ? FULL_LOCAL_MCP_INSTRUCTIONS : PROFILE_MANAGEMENT_MCP_INSTRUCTIONS).join(
+    "\n",
+  );
+}
 
 export function createMktBrowserMcpServer(opts: MktBrowserMcpServerOptions): MktBrowserMcpServer {
   const { profileManager, browserDriver, engineInfo } = opts;
   const activityLog = opts.activityLog ?? new ActivityLog();
+  const accessPolicy = opts.accessPolicy ?? FULL_LOCAL_ACCESS_POLICY;
   assertMcpToolInventory(TOOL_DEFINITIONS.map((tool) => tool.name));
 
   const server = new Server(
@@ -417,16 +446,17 @@ export function createMktBrowserMcpServer(opts: MktBrowserMcpServerOptions): Mkt
       },
       // Returned in the `initialize` result so a connecting agent learns the
       // overall workflow up front, not just per-tool descriptions.
-      instructions: MKT_BROWSER_MCP_INSTRUCTIONS,
+      instructions: buildMcpInstructions(accessPolicy),
     },
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     // Hide raw cdp_send from the advertised surface unless it's explicitly
     // enabled — the default agent surface is the curated wrappers only.
-    tools: rawCdpEnabled()
-      ? TOOL_DEFINITIONS
-      : TOOL_DEFINITIONS.filter((t) => t.name !== "cdp_send"),
+    tools: TOOL_DEFINITIONS.filter(
+      (tool) =>
+        isMcpToolAllowed(tool.name, accessPolicy) && (tool.name !== "cdp_send" || rawCdpEnabled()),
+    ),
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
@@ -436,15 +466,22 @@ export function createMktBrowserMcpServer(opts: MktBrowserMcpServerOptions): Mkt
     const startedAt = Date.now();
 
     try {
-      if (!isClassifiedMcpTool(name)) throw unknownTool(name);
+      if (!isClassifiedMcpTool(name) || !isMcpToolAllowed(name, accessPolicy)) {
+        throw unknownTool(name);
+      }
       const result = await dispatch(name, args, { profileManager, browserDriver, engineInfo });
       activityLog.finish(event, "ok", summarize(result), startedAt);
-      return ok(result);
+      return ok(withOperationDiagnostic(result, args, "complete", startedAt, engineInfo));
     } catch (e) {
       // The code is the contract; the message is for the local activity log only.
       const message = toErrorMessage(e);
+      const code = toErrorCode(e);
       activityLog.finish(event, "error", message, startedAt);
-      return err(toErrorCode(e), message);
+      return err(
+        code,
+        message,
+        operationDiagnostic(args, failureStage(name, code), startedAt, engineInfo, code),
+      );
     }
   });
 
@@ -496,8 +533,8 @@ async function dispatch(
     case "list_profiles": {
       const profiles = profileManager.list().map((p) => ({
         ...p,
-        // Never echo proxy credentials to the agent — redact the summary's proxy.
-        proxy: redactedProxy(p.proxy),
+        // Never echo proxy endpoints or credentials to the agent.
+        proxy: sanitizedProxySummary(p.proxy),
         isRunning: browserDriver.isRunning(p.id),
       }));
       return { profiles };
@@ -530,8 +567,9 @@ async function dispatch(
         id: created.id,
         name: created.name,
         created: result.created,
-        proxy: redactedProxy(created.proxy),
+        proxy: sanitizedProxySummary(created.proxy),
         fingerprint: fingerprintSummary(created.fingerprint),
+        managed: created.managed,
       };
     }
     case "update_profile": {
@@ -554,7 +592,7 @@ async function dispatch(
         id: updated.id,
         name: updated.name,
         tags: updated.tags,
-        proxy: redactedProxy(updated.proxy),
+        proxy: sanitizedProxySummary(updated.proxy),
         fingerprint: fingerprintSummary(updated.fingerprint),
         // Surface the caveat: a live browser keeps the old proxy/fingerprint.
         appliesOnNextLaunch: browserDriver.isRunning(input.profile_id),
@@ -562,7 +600,8 @@ async function dispatch(
     }
     case "delete_profile": {
       const { profile_id } = ProfileIdSchema.parse(args);
-      assertProfileExists(profileManager, profile_id);
+      const existing = assertProfileExists(profileManager, profile_id);
+      if (existing.managed) throw managedProfileLocked(profile_id);
       // Close first so Chromium releases the data dir before we remove it
       // (on Windows a live handle would otherwise block the rmSync).
       if (browserDriver.isRunning(profile_id)) {
@@ -576,11 +615,14 @@ async function dispatch(
     }
     case "launch_managed_profile": {
       const { profile_id, proxy } = ManagedLaunchSchema.parse(args);
+      const existing = assertProfileExists(profileManager, profile_id);
+      if (!existing.managed) throw managedProfileLocked(profile_id);
       return await launchManagedProfile(profile_id, proxy, { profileManager, browserDriver });
     }
     case "launch_profile": {
       const { profile_id } = ProfileIdSchema.parse(args);
-      assertProfileExists(profileManager, profile_id);
+      const existing = assertProfileExists(profileManager, profile_id);
+      if (existing.managed) throw managedProfileLocked(profile_id);
       // ChromiumBrowserDriver.launch() handles markOpened internally so
       // every entry-point (UI, MCP, palette) gets the same timestamp.
       const launched = await browserDriver.launch(profile_id);
@@ -830,6 +872,10 @@ const TOOL_DEFINITIONS = [
           type: "string",
           description: "Retry-stable request identifier. Requires external_ref and seed.",
         },
+        operation_id: {
+          type: "string",
+          description: "Ticket jti used only for sanitized operation correlation.",
+        },
       },
     },
   },
@@ -843,6 +889,10 @@ const TOOL_DEFINITIONS = [
       properties: {
         profile_id: { type: "string" },
         proxy: PROXY_JSON_SCHEMA,
+        operation_id: {
+          type: "string",
+          description: "Ticket jti used only for sanitized operation correlation.",
+        },
       },
     },
   },
@@ -1148,7 +1198,12 @@ const TOOL_DEFINITIONS = [
 ];
 
 function managedCreateRequestHash(input: z.infer<typeof CreateProfileSchema>): string {
-  const { external_ref: _externalRef, request_id: _requestId, ...profileRequest } = input;
+  const {
+    external_ref: _externalRef,
+    request_id: _requestId,
+    operation_id: _operationId,
+    ...profileRequest
+  } = input;
   return createHash("sha256").update(JSON.stringify(profileRequest)).digest("hex");
 }
 
@@ -1170,19 +1225,17 @@ function fingerprintSummary(fp: FingerprintConfig): {
 }
 
 /**
- * Proxy view safe to return to an MCP caller: NEVER echo username/password.
+ * Proxy view safe to return to an MCP caller: never echo endpoint or credentials.
  * Redacting the response also defeats the `update_profile {name}`-only
- * password read-back (a caller must never learn a stored proxy's secret it
- * didn't itself just set).
+ * proxy read-back (a caller must never learn stored connection details).
  */
-function redactedProxy(
+export function sanitizedProxySummary(
   proxy: ProxyConfig | null | undefined,
-): { type: string; host: string; port: number; hasAuth: boolean } | null {
+): { type: string; configured: true; hasAuth: boolean } | null {
   if (!proxy) return null;
   return {
     type: proxy.type,
-    host: proxy.host,
-    port: proxy.port,
+    configured: true,
     hasAuth: Boolean(proxy.username || proxy.password),
   };
 }
@@ -1202,21 +1255,77 @@ function ok(data: unknown) {
   };
 }
 
-function err(code: string, message: string) {
+function err(code: string, message: string, diagnostic?: MktBrowserOperationDiagnostic) {
   return {
     isError: true,
     content: [
       {
         type: "text" as const,
-        text: JSON.stringify({ error: { code, message } }),
+        text: JSON.stringify({ error: { code, message }, ...(diagnostic ? { diagnostic } : {}) }),
       },
     ],
   };
 }
 
-function assertProfileExists(pm: ProfileManager, id: string): void {
+function assertProfileExists(pm: ProfileManager, id: string) {
   const p = pm.get(id);
   if (!p) throw profileNotFound(id);
+  return p;
+}
+
+function withOperationDiagnostic(
+  result: unknown,
+  args: Record<string, unknown>,
+  stage: string,
+  startedAt: number,
+  engineInfo?: () => MktBrowserEngineInfo,
+): unknown {
+  const diagnostic = operationDiagnostic(args, stage, startedAt, engineInfo);
+  if (!diagnostic) return result;
+  if (result && typeof result === "object" && !Array.isArray(result)) {
+    return { ...(result as Record<string, unknown>), diagnostic };
+  }
+  return { result, diagnostic };
+}
+
+function operationDiagnostic(
+  args: Record<string, unknown>,
+  stage: string,
+  startedAt: number,
+  engineInfo?: () => MktBrowserEngineInfo,
+  code?: MktBrowserOperationDiagnostic["code"],
+): MktBrowserOperationDiagnostic | undefined {
+  const operationId = args.operation_id;
+  if (typeof operationId !== "string" || operationId === "") return undefined;
+
+  const runtime = buildRuntimeInfo(engineInfo);
+  const requestId = args.request_id;
+  return {
+    operationId,
+    ...(typeof requestId === "string" && requestId !== "" ? { requestId } : {}),
+    stage,
+    ...(code ? { code } : {}),
+    durationMs: Date.now() - startedAt,
+    runtime: {
+      appVersion: runtime.appVersion,
+      contractVersion: runtime.contractVersion,
+      profileSchemaVersion: runtime.profileSchemaVersion,
+      engine: runtime.engine,
+    },
+  };
+}
+
+function failureStage(name: string, code: MktBrowserOperationDiagnostic["code"]): string {
+  if (code === "INVALID_INPUT") return "validate-input";
+  if (name === "create_profile") return "create-profile";
+  if (name === "launch_managed_profile") {
+    if (code === "PROFILE_NOT_FOUND" || code === "PROFILE_ALREADY_RUNNING") {
+      return "inspect-profile";
+    }
+    if (code === "PROXY_REJECTED") return "apply-or-verify-proxy";
+    return "launch-profile";
+  }
+  return "dispatch";
 }
 
 function assertProfileRunning(driver: BrowserDriver, id: string): void {

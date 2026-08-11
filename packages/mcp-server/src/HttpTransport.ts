@@ -9,12 +9,15 @@ import type { Server as McpServer } from "@modelcontextprotocol/sdk/server/index
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { MKT_BROWSER_MCP_HEALTH_NAME } from "@mktbrowser/types";
+import type { McpToolAccessPolicy } from "./tool-exposure-policy.js";
 
 export interface HttpTransportOptions {
   port: number;
   host?: string;
   /** Optional bearer token; if set, requests must send Authorization: Bearer <token> */
   authToken?: string;
+  /** Tool capabilities granted to the authenticated token. */
+  accessPolicy: McpToolAccessPolicy;
 }
 
 /** Cap on a single Streamable-HTTP request body (JSON-RPC messages are tiny). */
@@ -54,7 +57,7 @@ export class HttpTransport {
   /** Host:port values accepted in the Host header (DNS-rebinding defence). */
   private readonly allowedHosts: string[];
   private sseTransport: SSEServerTransport | null = null;
-  private createMcp: (() => McpServer) | null = null;
+  private createMcp: ((accessPolicy: McpToolAccessPolicy) => McpServer) | null = null;
   private sseServer: McpServer | null = null;
 
   constructor(opts: HttpTransportOptions) {
@@ -74,7 +77,7 @@ export class HttpTransport {
     });
   }
 
-  async start(createMcp: () => McpServer): Promise<void> {
+  async start(createMcp: (accessPolicy: McpToolAccessPolicy) => McpServer): Promise<void> {
     // Guardrail: this server exposes browser-control tools on loopback. It must
     // never come up unauthenticated. Auth is wired today; warn loudly if a
     // future change ever starts it without a token rather than failing silently
@@ -88,7 +91,7 @@ export class HttpTransport {
     this.createMcp = createMcp;
     // One long-lived server instance backs the SSE path (behaviour unchanged
     // from when start() took a pre-built server). /mcp builds its own per call.
-    this.sseServer = createMcp();
+    this.sseServer = createMcp(this.opts.accessPolicy);
     await new Promise<void>((resolve, reject) => {
       const onError = (err: Error): void => {
         this.server.off("listening", onListening);
@@ -210,7 +213,7 @@ export class HttpTransport {
       res.writeHead(503).end("mcp not started");
       return;
     }
-    const server = this.createMcp();
+    const server = this.createMcp(this.opts.accessPolicy);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined, // stateless — no session to persist
       enableJsonResponse: true, // reply with a single JSON body, simplest for clients

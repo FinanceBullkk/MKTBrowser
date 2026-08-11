@@ -59,13 +59,13 @@ function toForm(p: Profile): FormState {
 }
 
 /** null → cannot save (with reason); otherwise the field is fine. */
-function validate(f: FormState): string | null {
+function validate(f: FormState, managed: boolean): string | null {
   if (!f.name.trim()) return "Name is required";
-  if (f.proxyEnabled && !f.proxyHost.trim()) return "Proxy host is required";
+  if (!managed && f.proxyEnabled && !f.proxyHost.trim()) return "Proxy host is required";
   return null;
 }
 
-function toPatch(f: FormState): UpdateProfileInput {
+function toPatch(f: FormState, managed: boolean): UpdateProfileInput {
   const proxy: ProxyConfig | null = f.proxyEnabled
     ? {
         type: f.proxyType,
@@ -75,7 +75,7 @@ function toPatch(f: FormState): UpdateProfileInput {
         password: f.proxyPassword || undefined,
       }
     : null;
-  return {
+  const patch: UpdateProfileInput = {
     name: f.name.trim(),
     notes: f.notes || undefined,
     tags: f.tagsRaw
@@ -84,9 +84,12 @@ function toPatch(f: FormState): UpdateProfileInput {
       .filter(Boolean),
     icon: f.icon ?? null, // null clears a custom icon (revert to derived default)
     startUrl: f.startUrl.trim() || null, // null → app default start page
-    proxy,
-    fingerprint: f.fingerprint,
   };
+  if (!managed) {
+    patch.proxy = proxy;
+    patch.fingerprint = f.fingerprint;
+  }
+  return patch;
 }
 
 type SaveStatus = { kind: "saved" } | { kind: "saving" } | { kind: "error"; message: string };
@@ -125,7 +128,7 @@ export function ProfileEditSheet({ profile, onSaved }: Props): JSX.Element {
   async function persist(f: FormState): Promise<void> {
     setStatus({ kind: "saving" });
     try {
-      await window.mktBrowser.profiles.update(profile.id, toPatch(f));
+      await window.mktBrowser.profiles.update(profile.id, toPatch(f, profile.managed));
       savedRef.current = JSON.stringify(f);
       setStatus({ kind: "saved" });
       onSavedRef.current?.();
@@ -138,7 +141,7 @@ export function ProfileEditSheet({ profile, onSaved }: Props): JSX.Element {
   // form actually changed and is valid.
   useEffect(() => {
     if (JSON.stringify(form) === savedRef.current) return; // nothing new
-    const invalid = validate(form);
+    const invalid = validate(form, profile.managed);
     if (invalid) {
       setStatus({ kind: "error", message: invalid });
       return;
@@ -158,9 +161,9 @@ export function ProfileEditSheet({ profile, onSaved }: Props): JSX.Element {
   useEffect(() => {
     return () => {
       const { form: f, id } = latestRef.current;
-      if (JSON.stringify(f) !== savedRef.current && !validate(f)) {
+      if (JSON.stringify(f) !== savedRef.current && !validate(f, profile.managed)) {
         void window.mktBrowser.profiles
-          .update(id, toPatch(f))
+          .update(id, toPatch(f, profile.managed))
           .then(() => onSavedRef.current?.())
           .catch(() => {
             // Component is gone; nothing to surface. Swallow to avoid an
@@ -234,94 +237,109 @@ export function ProfileEditSheet({ profile, onSaved }: Props): JSX.Element {
           <BrowserSection startUrl={form.startUrl} onStartUrl={(v) => update("startUrl", v)} />
         )}
 
-        {section === "proxy" && (
-          <div>
-            <label className="flex items-center gap-2 text-[12px] text-slate-300 cursor-pointer mb-2.5">
-              <input
-                type="checkbox"
-                checked={form.proxyEnabled}
-                onChange={(e) => update("proxyEnabled", e.target.checked)}
-                className="w-3.5 h-3.5 rounded accent-purple-500"
-              />
-              Use proxy
-            </label>
-            {form.proxyEnabled && (
-              <div className="space-y-2.5">
-                <div className="grid grid-cols-[110px_1fr_90px] gap-2.5">
-                  <Field label="Type">
-                    <select
-                      value={form.proxyType}
-                      onChange={(e) => update("proxyType", e.target.value as "http" | "socks5")}
-                      className="w-full px-2.5 h-9 rounded-lg bg-white/[0.03] text-[12px] text-slate-200 outline-none"
-                      style={{ boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.08)" }}
-                    >
-                      <option value="http">HTTP</option>
-                      <option value="socks5">SOCKS5</option>
-                    </select>
-                  </Field>
-                  <Field label="Host">
-                    <Input
-                      value={form.proxyHost}
-                      onChange={(v) => update("proxyHost", v)}
-                      onPaste={(text) => {
-                        const parsed = parseProxyString(text);
-                        if (!parsed) return false;
-                        setForm((f) => ({
-                          ...f,
-                          proxyType: parsed.type ?? f.proxyType,
-                          proxyHost: parsed.host,
-                          proxyPort: String(parsed.port),
-                          proxyUsername: parsed.username ?? "",
-                          proxyPassword: parsed.password ?? "",
-                        }));
-                        return true;
-                      }}
-                      placeholder="host or host:port:user:pass"
-                      mono
-                    />
-                  </Field>
-                  <Field label="Port">
-                    <Input
-                      value={form.proxyPort}
-                      onChange={(v) => update("proxyPort", v)}
-                      placeholder="8080"
-                      mono
-                    />
-                  </Field>
+        {section === "proxy" &&
+          (profile.managed ? (
+            <ManagedLockNotice subject="proxy" />
+          ) : (
+            <div>
+              <label className="flex items-center gap-2 text-[12px] text-slate-300 cursor-pointer mb-2.5">
+                <input
+                  type="checkbox"
+                  checked={form.proxyEnabled}
+                  onChange={(e) => update("proxyEnabled", e.target.checked)}
+                  className="w-3.5 h-3.5 rounded accent-purple-500"
+                />
+                Use proxy
+              </label>
+              {form.proxyEnabled && (
+                <div className="space-y-2.5">
+                  <div className="grid grid-cols-[110px_1fr_90px] gap-2.5">
+                    <Field label="Type">
+                      <select
+                        value={form.proxyType}
+                        onChange={(e) => update("proxyType", e.target.value as "http" | "socks5")}
+                        className="w-full px-2.5 h-9 rounded-lg bg-white/[0.03] text-[12px] text-slate-200 outline-none"
+                        style={{ boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.08)" }}
+                      >
+                        <option value="http">HTTP</option>
+                        <option value="socks5">SOCKS5</option>
+                      </select>
+                    </Field>
+                    <Field label="Host">
+                      <Input
+                        value={form.proxyHost}
+                        onChange={(v) => update("proxyHost", v)}
+                        onPaste={(text) => {
+                          const parsed = parseProxyString(text);
+                          if (!parsed) return false;
+                          setForm((f) => ({
+                            ...f,
+                            proxyType: parsed.type ?? f.proxyType,
+                            proxyHost: parsed.host,
+                            proxyPort: String(parsed.port),
+                            proxyUsername: parsed.username ?? "",
+                            proxyPassword: parsed.password ?? "",
+                          }));
+                          return true;
+                        }}
+                        placeholder="host or host:port:user:pass"
+                        mono
+                      />
+                    </Field>
+                    <Field label="Port">
+                      <Input
+                        value={form.proxyPort}
+                        onChange={(v) => update("proxyPort", v)}
+                        placeholder="8080"
+                        mono
+                      />
+                    </Field>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <Field label="Username">
+                      <Input
+                        value={form.proxyUsername}
+                        onChange={(v) => update("proxyUsername", v)}
+                        mono
+                      />
+                    </Field>
+                    <Field label="Password">
+                      <Input
+                        type="password"
+                        value={form.proxyPassword}
+                        onChange={(v) => update("proxyPassword", v)}
+                        mono
+                      />
+                    </Field>
+                  </div>
+                  <ProxyTester proxy={proxyForForm} profileId={profile.id} />
                 </div>
-                <div className="grid grid-cols-2 gap-2.5">
-                  <Field label="Username">
-                    <Input
-                      value={form.proxyUsername}
-                      onChange={(v) => update("proxyUsername", v)}
-                      mono
-                    />
-                  </Field>
-                  <Field label="Password">
-                    <Input
-                      type="password"
-                      value={form.proxyPassword}
-                      onChange={(v) => update("proxyPassword", v)}
-                      mono
-                    />
-                  </Field>
-                </div>
-                <ProxyTester proxy={proxyForForm} profileId={profile.id} />
-              </div>
-            )}
-          </div>
-        )}
+              )}
+            </div>
+          ))}
 
         {section === "extensions" && <ExtensionsSection profileId={profile.id} />}
 
-        {section === "fingerprint" && (
-          <FingerprintForm
-            fingerprint={form.fingerprint}
-            onChange={(fp) => update("fingerprint", fp)}
-            proxy={proxyForForm}
-          />
-        )}
+        {section === "fingerprint" &&
+          (profile.managed ? (
+            <ManagedLockNotice subject="fingerprint" />
+          ) : (
+            <FingerprintForm
+              fingerprint={form.fingerprint}
+              onChange={(fp) => update("fingerprint", fp)}
+              proxy={proxyForForm}
+            />
+          ))}
       </div>
+    </div>
+  );
+}
+
+function ManagedLockNotice({ subject }: { subject: "proxy" | "fingerprint" }): JSX.Element {
+  return (
+    <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.06] p-4 text-[12px] leading-relaxed text-amber-100/80">
+      This profile is managed by MKTTool. Its {subject} is locked here so the account cannot open
+      with a different identity. Change the account assignment in MKTTool instead.
     </div>
   );
 }

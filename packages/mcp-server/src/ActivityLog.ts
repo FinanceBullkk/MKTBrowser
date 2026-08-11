@@ -75,8 +75,10 @@ export class ActivityLog extends EventEmitter {
 function sanitize(args: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(args)) {
-    if (k === "text" && typeof v === "string" && v.length > 80) {
-      out[k] = `${v.slice(0, 60)}…[${v.length} chars]`;
+    if (["text", "url", "expression", "notes", "seed", "external_ref", "params"].includes(k)) {
+      out[k] = `[redacted ${k}]`;
+    } else if (k === "fingerprint") {
+      out[k] = "[redacted fingerprint]";
     } else if (k === "proxy" && v && typeof v === "object") {
       // create_profile / update_profile args carry proxy username/password in
       // cleartext. NEVER log them — the activity feed is rendered in the desktop
@@ -88,13 +90,9 @@ function sanitize(args: Record<string, unknown>): Record<string, unknown> {
         username?: unknown;
         password?: unknown;
       };
-      out[k] = { type: p.type, host: p.host, port: p.port, hasAuth: Boolean(p.username || p.password) };
+      out[k] = { type: p.type, hasAuth: Boolean(p.username || p.password) };
     } else if (k === "cookies" && Array.isArray(v)) {
-      // set_cookies args carry cookie values (session tokens) in cleartext.
-      // Redact each value in the audit trail; keep name/domain/etc. for context.
-      out[k] = v.map((c) =>
-        c && typeof c === "object" ? { ...(c as Record<string, unknown>), value: "***" } : c,
-      );
+      out[k] = `[redacted cookies: ${v.length}]`;
     } else {
       out[k] = v;
     }

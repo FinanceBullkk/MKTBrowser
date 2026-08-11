@@ -1,6 +1,10 @@
 import type { ProfileManager } from "@mktbrowser/profile-manager";
 import type { LaunchedProfile, ProfileId, ProxyConfig } from "@mktbrowser/types";
-import { profileAlreadyRunning, profileNotFound, proxyRejected } from "./mkt-browser-tool-errors.js";
+import {
+  profileAlreadyRunning,
+  profileNotFound,
+  proxyRejected,
+} from "./mkt-browser-tool-errors.js";
 
 export interface RunningProfileState {
   proxy?: ProxyConfig;
@@ -12,7 +16,7 @@ export interface ManagedLaunchBrowserDriver {
 }
 
 interface ManagedProfileLaunchDeps {
-  profileManager: Pick<ProfileManager, "get" | "update">;
+  profileManager: Pick<ProfileManager, "get" | "updateManagedProxy">;
   browserDriver: ManagedLaunchBrowserDriver;
 }
 
@@ -23,7 +27,9 @@ export async function launchManagedProfile(
   proxy: ProxyConfig,
   deps: ManagedProfileLaunchDeps,
 ): Promise<LaunchedProfile> {
-  return withProfileLaunchLock(profileId, () => launchManagedProfileUnlocked(profileId, proxy, deps));
+  return withProfileLaunchLock(profileId, () =>
+    launchManagedProfileUnlocked(profileId, proxy, deps),
+  );
 }
 
 async function launchManagedProfileUnlocked(
@@ -41,7 +47,7 @@ async function launchManagedProfileUnlocked(
 
   if (!proxyConfigsEqual(existing.proxy, proxy)) {
     try {
-      deps.profileManager.update(profileId, { proxy });
+      deps.profileManager.updateManagedProxy(profileId, proxy);
     } catch (cause) {
       throw proxyRejected(
         `The proxy configuration for profile ${profileId} could not be stored; the profile was not launched.`,
@@ -60,7 +66,10 @@ async function launchManagedProfileUnlocked(
   return deps.browserDriver.launch(profileId);
 }
 
-async function withProfileLaunchLock<T>(profileId: ProfileId, operation: () => Promise<T>): Promise<T> {
+async function withProfileLaunchLock<T>(
+  profileId: ProfileId,
+  operation: () => Promise<T>,
+): Promise<T> {
   const previous = profileLaunchLocks.get(profileId) ?? Promise.resolve();
   let release!: () => void;
   const current = new Promise<void>((resolve) => {

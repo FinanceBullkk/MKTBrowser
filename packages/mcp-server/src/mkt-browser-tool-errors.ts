@@ -10,6 +10,7 @@ import { z } from "zod";
 import {
   FingerprintReconcileError,
   IdempotentProfileCreateConflictError,
+  ManagedProfileLockedError,
 } from "@mktbrowser/profile-manager";
 import type { MktBrowserErrorCode } from "@mktbrowser/types";
 
@@ -43,6 +44,13 @@ export function profileNotRunning(profileId: string): MktBrowserToolError {
   return new MktBrowserToolError(
     "PROFILE_NOT_RUNNING",
     `Profile ${profileId} is not running. Call launch_profile first.`,
+  );
+}
+
+export function managedProfileLocked(profileId: string): MktBrowserToolError {
+  return new MktBrowserToolError(
+    "MANAGED_PROFILE_LOCKED",
+    `Managed profile ${profileId} can be controlled only through MKTTool.`,
   );
 }
 
@@ -81,6 +89,7 @@ export function toErrorCode(error: unknown): MktBrowserErrorCode {
   ) {
     return "INVALID_INPUT";
   }
+  if (error instanceof ManagedProfileLockedError) return "MANAGED_PROFILE_LOCKED";
   return "INTERNAL_ERROR";
 }
 

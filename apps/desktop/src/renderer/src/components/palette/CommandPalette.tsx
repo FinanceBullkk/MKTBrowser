@@ -52,12 +52,12 @@ export function CommandPalette({ open, profiles, onClose, onAction }: Props): JS
         icon: <Play size={14} strokeWidth={1.5} className="text-current" />,
         title: (
           <>
-            {p.isRunning ? "Open" : "Launch"} · {p.name}
+            {p.isRunning || p.managed ? "Open" : "Launch"} · {p.name}
           </>
         ),
         sub: `${p.id.slice(0, 12)} · ${p.tags.join(", ") || "no tags"}`,
         group: "Profiles",
-        action: { kind: p.isRunning ? "open" : "launch", profileId: p.id },
+        action: { kind: p.isRunning || p.managed ? "open" : "launch", profileId: p.id },
       };
       return [launchRow];
     });

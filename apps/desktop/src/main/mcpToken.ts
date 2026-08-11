@@ -5,10 +5,11 @@ import { join } from "node:path";
 /**
  * Bearer token for the local MCP HTTP server.
  *
- * The MCP server exposes powerful browser-control tools (launch/navigate/extract
- * and, later, CDP + profile CRUD) on a loopback port. Binding to 127.0.0.1 keeps
- * it off the network, but any *local* process — or a web page reaching the port
- * via DNS rebinding — could still drive it. Requiring a secret bearer token that
+ * The discovered HTTP token exposes profile-management tools on a loopback
+ * port. Page, cookie, and raw-CDP capabilities require a separate policy/token
+ * and are not issued by this build. Binding to 127.0.0.1 keeps the server off the
+ * network, but any *local* process — or a web page reaching the port via DNS
+ * rebinding — could still manage profiles. Requiring a secret bearer token that
  * a cross-origin page cannot read closes both holes.
  *
  * The token is generated once (256-bit, hex) and persisted with 0600 perms in

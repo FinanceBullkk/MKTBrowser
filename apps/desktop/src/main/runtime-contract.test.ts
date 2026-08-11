@@ -12,26 +12,19 @@ import { describeEngineStatus } from "./engine-runtime-info.ts";
 const REPO_ROOT = new URL("../../../../", import.meta.url);
 
 test("publishes a versioned runtime contract", () => {
-  assert.equal(MKT_BROWSER_CONTRACT_VERSION, 2);
+  assert.equal(MKT_BROWSER_CONTRACT_VERSION, 3);
   assert.equal(MKT_BROWSER_PROFILE_SCHEMA_VERSION, 2);
-  assert.deepEqual([...MKT_BROWSER_CAPABILITIES], [
-    "profile-contract-v1",
-    "runtime-info-v1",
-    "idempotent-create-v1",
-    "atomic-launch-v1",
-  ]);
-});
-
-test("never advertises a capability this build has not implemented", () => {
-  // Managed mode is MKB-02. Advertising it early would make the Relay choose a call path that
-  // does not exist, and the failure would surface as a launch error on a real account.
-  for (const unimplemented of ["managed-profile-v1"]) {
-    assert.equal(
-      (MKT_BROWSER_CAPABILITIES as readonly string[]).includes(unimplemented),
-      false,
-      `${unimplemented} is advertised but not implemented`,
-    );
-  }
+  assert.deepEqual(
+    [...MKT_BROWSER_CAPABILITIES],
+    [
+      "profile-contract-v1",
+      "runtime-info-v1",
+      "idempotent-create-v1",
+      "atomic-launch-v1",
+      "managed-profile-v1",
+      "operation-diagnostics-v1",
+    ],
+  );
 });
 
 test("keeps every failing layer separately addressable", () => {
@@ -44,6 +37,7 @@ test("keeps every failing layer separately addressable", () => {
     "PROXY_REJECTED",
     "ENGINE_UNAVAILABLE",
     "UNKNOWN_TOOL",
+    "MANAGED_PROFILE_LOCKED",
     "INTERNAL_ERROR",
   ]) {
     assert.equal((MKT_BROWSER_ERROR_CODES as readonly string[]).includes(code), true, code);
@@ -90,8 +84,9 @@ test("exposes get_runtime_info and classifies failures by code, not by message",
   assert.match(server, /case "get_runtime_info"/);
   // The dispatch catch must derive the code from the taxonomy; a hand-written ternary chain is how
   // an unclassified failure silently becomes INTERNAL_ERROR again.
-  assert.match(server, /return err\(toErrorCode\(e\), message\)/);
-  assert.equal(server.includes('throw new Error(`Profile'), false);
+  assert.match(server, /const code = toErrorCode\(e\)/);
+  assert.match(server, /return err\(/);
+  assert.equal(server.includes("throw new Error(`Profile"), false);
   assert.equal(server.includes("throw new Error(`Unknown tool"), false);
 
   const driver = source("apps/desktop/src/main/ChromiumBrowserDriver.ts");

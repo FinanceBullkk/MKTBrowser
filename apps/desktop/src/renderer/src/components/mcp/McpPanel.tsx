@@ -14,11 +14,7 @@ interface Props {
   mcpToken: string | null;
 }
 
-/**
- * MCP panel: the one place to connect an AI agent to MKT Browser and watch what it
- * does. Top half = a "Connect an agent" card (endpoint + copy-paste client
- * config); bottom half = the live feed of MCP tool calls.
- */
+/** MCP connection details and the live feed of authorized profile-management calls. */
 export function McpPanel({ events, profiles, mcpUrl, mcpToken }: Props): JSX.Element {
   const profilesById = useMemo(() => new Map(profiles.map((p) => [p.id, p])), [profiles]);
   const recent = useMemo(() => events.slice().reverse(), [events]);
@@ -31,9 +27,9 @@ export function McpPanel({ events, profiles, mcpUrl, mcpToken }: Props): JSX.Ele
           <div className="mono text-[11px] text-slate-600">· {events.length} calls</div>
         </div>
         <div className="text-[13px] text-slate-500 mb-5 leading-relaxed max-w-[68ch]">
-          Drive your profiles from an AI agent. Point any MCP client (Claude Desktop, Cursor, Cline,
-          …) at MKT Browser, then launch a profile and let the agent open tabs, click, type, and
-          read pages through it — every tool call streams into the feed below.
+          Connect an MCP client to inspect runtime state and manage profile lifecycle. The token
+          shown here cannot navigate, click, type, read pages, access cookies, or send raw CDP. This
+          build does not issue a page-control token.
         </div>
 
         <ConnectCard baseUrl={mcpUrl} token={mcpToken} />
@@ -56,8 +52,8 @@ export function McpPanel({ events, profiles, mcpUrl, mcpToken }: Props): JSX.Ele
           >
             <div className="text-[13px] font-semibold text-slate-100">No agent calls yet</div>
             <div className="text-[12px] text-slate-500 mt-1.5 leading-relaxed max-w-[46ch] mx-auto">
-              Connect a client above, launch a profile, and every MCP tool call the agent makes
-              shows up here — with sanitized arguments, outcome, and duration.
+              Connect a client above and authorized profile-management calls will show up here with
+              sanitized arguments, outcome, and duration.
             </div>
           </div>
         ) : (
@@ -133,12 +129,13 @@ function ConnectCard({
     [httpUrl, bearer],
   );
 
-  // A self-contained instruction the user can paste into any coding agent
-  // (Claude Code, Cursor, …) so it wires up the connection for them.
+  // A self-contained instruction the user can paste into a coding agent so it
+  // wires up the profile-management connection without assuming page access.
   const llmPrompt = useMemo(
     () =>
       [
-        "I'm using MKT Browser, which runs a local MCP server so an AI agent can drive its browser profiles (open tabs, click, type, read pages).",
+        "I'm using MKT Browser, which runs a local MCP server for profile management.",
+        "The token below can inspect runtime/profile state and use authorized profile lifecycle tools. It cannot navigate, click, type, read pages, access cookies, or send raw CDP. No page-control token is issued by this build.",
         "",
         `It exposes a Streamable HTTP MCP endpoint at: ${httpUrl}`,
         `(A legacy HTTP+SSE endpoint is also available at ${sseUrl} for older clients.)`,
@@ -153,7 +150,7 @@ function ConnectCard({
         `   - Stdio-only clients (Claude Desktop, no url field) bridge via mcp-remote (needs Node.js):  ${stdioConfig.replace(/\n\s*/g, "")}`,
         "3. Merge it into the existing config without overwriting other servers, then tell me to restart/reload the client.",
         "",
-        `MKT Browser owns this contract under the "${MKT_BROWSER_MCP_SERVER_NAME}" identity. I\'ll launch a profile in MKT Browser and you can drive it.`,
+        `MKT Browser owns this contract under the "${MKT_BROWSER_MCP_SERVER_NAME}" identity. Treat tools/list as authoritative and do not attempt to bypass missing capabilities.`,
       ].join("\n"),
     [httpUrl, sseUrl, bearer, jsonConfig, stdioConfig],
   );
@@ -219,15 +216,15 @@ function ConnectCard({
           <CopyRow value={bearer} mono />
           <div className="mt-1.5 text-[11px] text-slate-500 leading-relaxed">
             Sent as <code className="mono text-slate-400">Authorization: Bearer …</code> — the
-            configs below already include it. Keep it secret; anyone with it can drive your
-            profiles.
+            configs below already include it. Keep it secret; anyone with it can manage your
+            profiles. Page control remains unavailable.
           </div>
 
           {/* Steps */}
           <ol className="mt-4 space-y-2">
             <Step n={1}>Copy the config for your client below into its MCP config.</Step>
             <Step n={2}>Reload / restart the client so it connects.</Step>
-            <Step n={3}>Launch a profile here, and let the agent drive it.</Step>
+            <Step n={3}>Use only the profile-management tools advertised by the connection.</Step>
           </ol>
 
           {/* Config snippets — three shapes by client type */}

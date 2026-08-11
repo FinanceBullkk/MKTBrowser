@@ -69,7 +69,7 @@ export function Settings({ onImport }: Props): JSX.Element {
         <Row
           icon={<Zap size={16} strokeWidth={1.5} />}
           title="MCP server"
-          desc="Local HTTP transport that Cursor / Claude Desktop / Cline / any MCP client connects to. Requires the auth token below. The MCP tab has ready-to-paste client configs."
+          desc="Local HTTP transport for profile management. The current token cannot control or read browser pages, cookies, or raw CDP, and this build does not issue a page-control token. The MCP tab has ready-to-paste client configs."
         >
           <div className="flex gap-2 items-center flex-wrap">
             <Pill kind={info?.mcpHttpUrl ? "running" : "idle"} dot={!!info?.mcpHttpUrl}>
@@ -104,9 +104,9 @@ export function Settings({ onImport }: Props): JSX.Element {
           {info?.mcpAuthToken && (
             <div className="mt-2">
               <div className="text-[11px] text-slate-500 mb-1">
-                Auth token — required. Send as{" "}
+                Profile-management token — required. Send as{" "}
                 <span className="mono text-slate-400">Authorization: Bearer &lt;token&gt;</span>.
-                Keep it secret.
+                Keep it secret; it can manage local profiles but cannot inspect or drive pages.
               </div>
               <div
                 className="flex items-center gap-2"

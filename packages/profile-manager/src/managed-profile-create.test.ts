@@ -6,6 +6,7 @@ import test from "node:test";
 import Database from "better-sqlite3";
 import {
   IdempotentProfileCreateConflictError,
+  ManagedProfileLockedError,
   ProfileManager,
 } from "./ProfileManager.ts";
 
@@ -49,6 +50,40 @@ test("migrates existing profile databases to managed-create schema v2", async ()
   assert.ok(indexes.includes("idx_profiles_external_ref"));
   assert.ok(indexes.includes("idx_profiles_create_request_id"));
   await rm(root, { recursive: true, force: true });
+});
+
+test("locks managed proxy, fingerprint, and deletion while preserving metadata edits", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mkt-browser-managed-lock-"));
+  const manager = new ProfileManager({
+    dbPath: path.join(root, "profiles.db"),
+    profilesRoot: path.join(root, "profiles"),
+  });
+
+  try {
+    const { profile } = manager.createIdempotent(
+      { name: "Managed" },
+      { externalRef: "account-1", requestId: "request-1", requestHash: "hash-1" },
+    );
+    assert.equal(profile.managed, true);
+    assert.equal(manager.list()[0]?.managed, true);
+
+    assert.throws(
+      () => manager.update(profile.id, { proxy: { type: "http", host: "proxy", port: 8080 } }),
+      ManagedProfileLockedError,
+    );
+    assert.throws(() => manager.update(profile.id, { fingerprint: {} }), ManagedProfileLockedError);
+    assert.throws(() => manager.delete(profile.id), ManagedProfileLockedError);
+
+    assert.equal(manager.update(profile.id, { name: "Managed metadata" }).name, "Managed metadata");
+    assert.equal(
+      manager.updateManagedProxy(profile.id, { type: "http", host: "proxy", port: 8080 }).proxy
+        ?.host,
+      "proxy",
+    );
+  } finally {
+    manager.close();
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("reconciles exact managed-create retries without creating duplicate profiles", async () => {

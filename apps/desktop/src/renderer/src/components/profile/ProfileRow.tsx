@@ -103,6 +103,11 @@ export function ProfileRow({
             <div className="text-[13px] font-semibold text-slate-100 truncate group-hover:text-white">
               {profile.name}
             </div>
+            {profile.managed && (
+              <span className="shrink-0 rounded-md bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-300 ring-1 ring-inset ring-sky-400/20">
+                Managed
+              </span>
+            )}
             <ChevronRight
               size={12}
               className="text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
@@ -175,7 +180,7 @@ export function ProfileRow({
           >
             Ending
           </Button>
-        ) : !isRunning ? (
+        ) : !isRunning && !profile.managed ? (
           <Button
             variant="accent"
             size="sm"
@@ -185,7 +190,7 @@ export function ProfileRow({
           >
             {pending ? "…" : "Launch"}
           </Button>
-        ) : (
+        ) : isRunning ? (
           <Button
             variant="secondary"
             size="sm"
@@ -195,8 +200,17 @@ export function ProfileRow({
           >
             {pending ? "…" : "Stop"}
           </Button>
+        ) : (
+          <Button variant="secondary" size="sm" disabled>
+            Managed
+          </Button>
         )}
-        <RowMenu onEdit={onOpen} onExport={onExport} onDelete={onDelete} />
+        <RowMenu
+          onEdit={onOpen}
+          onExport={onExport}
+          onDelete={onDelete}
+          managed={profile.managed}
+        />
       </div>
     </div>
   );
@@ -303,10 +317,12 @@ function RowMenu({
   onEdit,
   onExport,
   onDelete,
+  managed,
 }: {
   onEdit: () => void;
   onExport: () => void;
   onDelete: () => void;
+  managed: boolean;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -369,24 +385,32 @@ function RowMenu({
               >
                 Edit profile
               </MenuItem>
-              <MenuItem
-                onClick={() => {
-                  setOpen(false);
-                  onExport();
-                }}
-              >
-                Export archive…
-              </MenuItem>
-              <div style={{ height: 1, margin: "4px 0", background: "rgba(255,255,255,0.06)" }} />
-              <MenuItem
-                onClick={() => {
-                  setOpen(false);
-                  onDelete();
-                }}
-                tone="danger"
-              >
-                Delete profile
-              </MenuItem>
+              {!managed && (
+                <MenuItem
+                  onClick={() => {
+                    setOpen(false);
+                    onExport();
+                  }}
+                >
+                  Export archive…
+                </MenuItem>
+              )}
+              {!managed && (
+                <>
+                  <div
+                    style={{ height: 1, margin: "4px 0", background: "rgba(255,255,255,0.06)" }}
+                  />
+                  <MenuItem
+                    onClick={() => {
+                      setOpen(false);
+                      onDelete();
+                    }}
+                    tone="danger"
+                  >
+                    Delete profile
+                  </MenuItem>
+                </>
+              )}
             </div>
           </>,
           document.body,

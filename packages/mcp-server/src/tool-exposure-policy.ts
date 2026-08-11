@@ -27,9 +27,37 @@ export const MCP_TOOL_EXPOSURE = {
 } as const;
 
 export type McpToolName = keyof typeof MCP_TOOL_EXPOSURE;
+export type McpToolCapability = (typeof MCP_TOOL_EXPOSURE)[McpToolName];
+
+export interface McpToolAccessPolicy {
+  readonly name: string;
+  readonly capabilities: readonly McpToolCapability[];
+}
+
+/** The token discovered by MKTTool Relay can manage profiles but cannot inspect or drive pages. */
+export const PROFILE_MANAGEMENT_ACCESS_POLICY: McpToolAccessPolicy = {
+  name: "profile-management",
+  capabilities: [
+    "runtime-read",
+    "profile-read",
+    "profile-write",
+    "fingerprint-read",
+    "profile-lifecycle",
+  ],
+};
+
+/** Explicit local clients may opt into the complete surface; HTTP tokens never receive this by default. */
+export const FULL_LOCAL_ACCESS_POLICY: McpToolAccessPolicy = {
+  name: "full-local",
+  capabilities: [...new Set(Object.values(MCP_TOOL_EXPOSURE))],
+};
 
 export function isClassifiedMcpTool(name: string): name is McpToolName {
   return Object.hasOwn(MCP_TOOL_EXPOSURE, name);
+}
+
+export function isMcpToolAllowed(name: string, policy: McpToolAccessPolicy): boolean {
+  return isClassifiedMcpTool(name) && policy.capabilities.includes(MCP_TOOL_EXPOSURE[name]);
 }
 
 export function assertMcpToolInventory(definitionNames: readonly string[]): void {

@@ -14,7 +14,7 @@ const {
 } = require("./system-chrome-engine-fixture.cjs");
 
 const EXPECTED_PROVIDER = "mkt-browser";
-const EXPECTED_CONTRACT_VERSION = 2;
+const EXPECTED_CONTRACT_VERSION = 3;
 
 async function main() {
   if (process.platform !== "win32") {
@@ -22,8 +22,7 @@ async function main() {
   }
 
   const executable = path.resolve(
-    process.env.MKT_BROWSER_EXECUTABLE ??
-      "apps/desktop/release/win-unpacked/MKTBrowser.exe",
+    process.env.MKT_BROWSER_EXECUTABLE ?? "apps/desktop/release/win-unpacked/MKTBrowser.exe",
   );
   assert.ok(existsSync(executable), "Build the Windows directory package before verification.");
 
@@ -78,16 +77,21 @@ async function main() {
     assert.ok(token, "The packaged app created an empty MCP token.");
 
     baseUrl = `http://127.0.0.1:${port}`;
-    await waitFor(async () => {
-      try {
-        const response = await fetch(`${baseUrl}/healthz`, {
-          headers: { authorization: `Bearer ${token}` },
-        });
-        return response.ok;
-      } catch {
-        return false;
-      }
-    }, 30_000, "packaged MCP health endpoint", child);
+    await waitFor(
+      async () => {
+        try {
+          const response = await fetch(`${baseUrl}/healthz`, {
+            headers: { authorization: `Bearer ${token}` },
+          });
+          return response.ok;
+        } catch {
+          return false;
+        }
+      },
+      30_000,
+      "packaged MCP health endpoint",
+      child,
+    );
 
     const initialize = await rpc(baseUrl, token, {
       jsonrpc: "2.0",
@@ -101,11 +105,33 @@ async function main() {
     });
     assert.equal(initialize.result?.serverInfo?.name, EXPECTED_PROVIDER);
 
+    const tools = await listTools(baseUrl, token);
+    const toolNames = tools.map((tool) => tool.name);
+    for (const required of [
+      "get_runtime_info",
+      "list_profiles",
+      "create_profile",
+      "update_profile",
+      "launch_managed_profile",
+      "close_profile",
+      "delete_profile",
+    ]) {
+      assert.ok(toolNames.includes(required), `Missing profile-management tool: ${required}`);
+    }
+    for (const forbidden of ["navigate", "click", "type", "extract", "get_cookies", "cdp_send"]) {
+      assert.ok(
+        !toolNames.includes(forbidden),
+        `Profile token exposed forbidden tool: ${forbidden}`,
+      );
+    }
+
     const runtime = await callTool(baseUrl, token, "get_runtime_info", {});
     assert.equal(runtime.provider, EXPECTED_PROVIDER);
     assert.equal(runtime.contractVersion, EXPECTED_CONTRACT_VERSION);
     assert.ok(runtime.capabilities.includes("runtime-info-v1"));
     assert.ok(runtime.capabilities.includes("atomic-launch-v1"));
+    assert.ok(runtime.capabilities.includes("managed-profile-v1"));
+    assert.ok(runtime.capabilities.includes("operation-diagnostics-v1"));
 
     const beforeCreate = await callTool(baseUrl, token, "list_profiles", {});
     const createRequest = {
@@ -114,15 +140,25 @@ async function main() {
       external_ref: "packaged-contract-verifier",
       request_id: "packaged-contract-verifier-v1",
     };
-    const created = await callTool(baseUrl, token, "create_profile", createRequest);
+    const created = await callTool(baseUrl, token, "create_profile", {
+      ...createRequest,
+      operation_id: "packaged-create-1",
+    });
     assert.equal(typeof created.id, "string");
     assert.ok(created.id);
     assert.equal(created.created, true);
+    assert.equal(created.managed, true);
+    assert.equal(created.diagnostic?.operationId, "packaged-create-1");
+    assert.equal(created.diagnostic?.requestId, createRequest.request_id);
     createdProfileId = created.id;
 
-    const retried = await callTool(baseUrl, token, "create_profile", createRequest);
+    const retried = await callTool(baseUrl, token, "create_profile", {
+      ...createRequest,
+      operation_id: "packaged-create-2",
+    });
     assert.equal(retried.id, created.id);
     assert.equal(retried.created, false);
+    assert.equal(retried.diagnostic?.operationId, "packaged-create-2");
 
     const conflictingCreate = await callToolResult(baseUrl, token, "create_profile", {
       ...createRequest,
@@ -157,11 +193,27 @@ async function main() {
     assert.deepEqual(persisted?.tags, ["packaged-contract", "lifecycle"]);
     assert.equal(persisted?.proxy, null);
 
-    const launch = await callTool(baseUrl, token, "launch_profile", {
+    const directLaunch = await callToolResult(baseUrl, token, "launch_profile", {
       profile_id: created.id,
+    });
+    assert.equal(directLaunch.isError, true);
+    assert.equal(directLaunch.body.error?.code, "MANAGED_PROFILE_LOCKED");
+
+    const pageControl = await callToolResult(baseUrl, token, "navigate", {
+      profile_id: created.id,
+      url: "https://example.com",
+    });
+    assert.equal(pageControl.isError, true);
+    assert.equal(pageControl.body.error?.code, "UNKNOWN_TOOL");
+
+    const launch = await callTool(baseUrl, token, "launch_managed_profile", {
+      profile_id: created.id,
+      proxy: { type: "http", host: "127.0.0.1", port: 9 },
+      operation_id: "packaged-launch-1",
     });
     assert.equal(launch.id, created.id);
     assert.equal(Number.isInteger(launch.pid), true);
+    assert.equal(launch.diagnostic?.operationId, "packaged-launch-1");
     launchedPid = launch.pid;
     assert.equal(isProcessRunning(launch.pid), true, "Launched Chrome process is not running.");
 
@@ -173,12 +225,15 @@ async function main() {
       `Chrome process ${launch.pid} to exit after close_profile`,
       child,
     );
-    const deleted = await callTool(baseUrl, token, "delete_profile", { profile_id: created.id });
-    assert.equal(deleted.deleted, created.id);
+    const deleted = await callToolResult(baseUrl, token, "delete_profile", {
+      profile_id: created.id,
+    });
+    assert.equal(deleted.isError, true);
+    assert.equal(deleted.body.error?.code, "MANAGED_PROFILE_LOCKED");
 
     const afterDelete = await callTool(baseUrl, token, "list_profiles", {});
-    assert.equal(afterDelete.profiles.length, beforeCreate.profiles.length);
-    assert.ok(!afterDelete.profiles.some((profile) => profile.id === created.id));
+    assert.equal(afterDelete.profiles.length, beforeCreate.profiles.length + 1);
+    assert.ok(afterDelete.profiles.some((profile) => profile.id === created.id));
 
     process.stdout.write("Packaged MKT Browser runtime and profile lifecycle contracts passed.\n");
   } catch (error) {
@@ -234,6 +289,17 @@ async function callTool(baseUrl, token, name, toolArgs) {
   return result.body;
 }
 
+async function listTools(baseUrl, token) {
+  const response = await rpc(baseUrl, token, {
+    jsonrpc: "2.0",
+    id: Date.now(),
+    method: "tools/list",
+    params: {},
+  });
+  assert.ok(Array.isArray(response.result?.tools), "tools/list returned no tool inventory.");
+  return response.result.tools;
+}
+
 async function callToolResult(baseUrl, token, name, toolArgs) {
   const response = await rpc(baseUrl, token, {
     jsonrpc: "2.0",
@@ -275,7 +341,8 @@ async function waitFor(check, timeoutMs, label, child) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (child.exitCode !== null || child.signalCode !== null) {
-      const outcome = child.exitCode !== null ? `code ${child.exitCode}` : `signal ${child.signalCode}`;
+      const outcome =
+        child.exitCode !== null ? `code ${child.exitCode}` : `signal ${child.signalCode}`;
       throw new Error(`Packaged app exited with ${outcome} while waiting for ${label}.`);
     }
     if (await check()) return;

@@ -2,10 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { Profile, ProxyConfig } from "@mktbrowser/types";
 import { MktBrowserToolError } from "./mkt-browser-tool-errors.js";
-import {
-  launchManagedProfile,
-  type RunningProfileState,
-} from "./managed-profile-launch.js";
+import { launchManagedProfile, type RunningProfileState } from "./managed-profile-launch.js";
 
 const PROFILE_ID = "profile-1";
 const EXPECTED_PROXY: ProxyConfig = {
@@ -81,8 +78,8 @@ test("serializes concurrent launches so another proxy cannot replace the verifie
   const deps = {
     profileManager: {
       get: () => profile,
-      update: (_profileId: string, patch: { proxy?: ProxyConfig | null }) => {
-        profile = { ...profile, proxy: patch.proxy ?? undefined };
+      updateManagedProxy: (_profileId: string, proxy: ProxyConfig) => {
+        profile = { ...profile, proxy };
         return profile;
       },
     },
@@ -125,11 +122,13 @@ test("serializes concurrent launches so another proxy cannot replace the verifie
   assert.equal(launchCalls, 1);
 });
 
-function createFixture(options: {
-  storedProxy?: ProxyConfig;
-  runningProxy?: ProxyConfig;
-  discardUpdate?: boolean;
-} = {}) {
+function createFixture(
+  options: {
+    storedProxy?: ProxyConfig;
+    runningProxy?: ProxyConfig;
+    discardUpdate?: boolean;
+  } = {},
+) {
   let profile = makeProfile(options.storedProxy);
   let updateCalls = 0;
   let launchCalls = 0;
@@ -147,10 +146,10 @@ function createFixture(options: {
     deps: {
       profileManager: {
         get: () => profile,
-        update: (_profileId: string, patch: { proxy?: ProxyConfig | null }) => {
+        updateManagedProxy: (_profileId: string, proxy: ProxyConfig) => {
           updateCalls += 1;
           if (!options.discardUpdate) {
-            profile = { ...profile, proxy: patch.proxy ?? undefined };
+            profile = { ...profile, proxy };
           }
           return profile;
         },
@@ -182,5 +181,6 @@ function makeProfile(proxy?: ProxyConfig): Profile {
     dataDir: "C:/profiles/profile-1",
     createdAt: "2026-08-12T00:00:00.000Z",
     updatedAt: "2026-08-12T00:00:00.000Z",
+    managed: true,
   };
 }

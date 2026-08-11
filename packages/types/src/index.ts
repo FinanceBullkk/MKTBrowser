@@ -37,7 +37,7 @@ export function mktBrowserMcpBaseUrl(port: number = MKT_BROWSER_DEFAULT_MCP_PORT
  * written against the previous number would now behave incorrectly. Adding an optional response
  * field is not a bump.
  */
-export const MKT_BROWSER_CONTRACT_VERSION = 2;
+export const MKT_BROWSER_CONTRACT_VERSION = 3;
 
 /** Bump when the on-disk profile record changes shape and needs a migration. */
 export const MKT_BROWSER_PROFILE_SCHEMA_VERSION = 2;
@@ -53,6 +53,8 @@ export const MKT_BROWSER_CAPABILITIES = [
   "runtime-info-v1",
   "idempotent-create-v1",
   "atomic-launch-v1",
+  "managed-profile-v1",
+  "operation-diagnostics-v1",
 ] as const;
 
 export type MktBrowserCapability = (typeof MKT_BROWSER_CAPABILITIES)[number];
@@ -78,6 +80,8 @@ export const MKT_BROWSER_ERROR_CODES = [
   "ENGINE_UNAVAILABLE",
   /** This build does not expose the requested tool. */
   "UNKNOWN_TOOL",
+  /** A generic desktop or MCP control tried to mutate, delete, or directly launch a managed profile. */
+  "MANAGED_PROFILE_LOCKED",
   /** Not yet classified. Treat a rise in this code as a contract gap, not as noise. */
   "INTERNAL_ERROR",
 ] as const;
@@ -109,9 +113,24 @@ export interface MktBrowserRuntimeInfo {
   capabilities: MktBrowserCapability[];
 }
 
+export interface MktBrowserOperationDiagnostic {
+  operationId: string;
+  requestId?: string;
+  stage: string;
+  code?: MktBrowserErrorCode;
+  durationMs: number;
+  runtime: {
+    appVersion: string;
+    contractVersion: number;
+    profileSchemaVersion: number;
+    engine: MktBrowserEngineInfo;
+  };
+}
+
 /** Body carried inside an `isError` tool result. */
 export interface MktBrowserToolErrorBody {
   error: { code: MktBrowserErrorCode; message: string };
+  diagnostic?: MktBrowserOperationDiagnostic;
 }
 
 export type ProfileId = string;
@@ -291,6 +310,8 @@ export interface Profile {
    *  Used by the GUI to render the country flag — proxy egress trumps the
    *  fingerprint's timezone-derived country, since that's what websites see. */
   proxyCountry?: string;
+  /** True when MKTTool owns the profile lifecycle through its stable external reference. */
+  managed: boolean;
 }
 
 export interface ProfileSummary {
@@ -311,6 +332,8 @@ export interface ProfileSummary {
   /** Device family from the fingerprint — drives the platform icon
    *  (windows-laptop-intel → 🪟, macbook-pro-14-m3 → ). */
   device?: DeviceFamily;
+  /** Managed profiles can be opened only through the MKTTool Relay path. */
+  managed: boolean;
 }
 
 export interface CreateProfileInput {
