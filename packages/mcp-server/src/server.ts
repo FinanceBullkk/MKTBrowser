@@ -5,14 +5,18 @@ import type { ProfileManager } from "@mktbrowser/profile-manager";
 import {
   generateFingerprint,
   reconcileFingerprint,
-  FingerprintReconcileError,
   deviceCatalog,
   localeCatalog,
 } from "@mktbrowser/profile-manager";
 import {
+  MKT_BROWSER_CAPABILITIES,
+  MKT_BROWSER_CONTRACT_VERSION,
   MKT_BROWSER_MCP_SERVER_NAME,
   MKT_BROWSER_MCP_SERVER_VERSION,
+  MKT_BROWSER_PROFILE_SCHEMA_VERSION,
   type LaunchedProfile,
+  type MktBrowserEngineInfo,
+  type MktBrowserRuntimeInfo,
   type ProfileId,
   type CreateProfileInput,
   type UpdateProfileInput,
@@ -20,20 +24,16 @@ import {
   type ProxyConfig,
 } from "@mktbrowser/types";
 import { ActivityLog } from "./ActivityLog.js";
+import {
+  CdpPolicyError,
+  profileNotFound,
+  profileNotRunning,
+  toErrorCode,
+  toErrorMessage,
+  unknownTool,
+} from "./mkt-browser-tool-errors.js";
 
 // ── Security gates (engine-independent, enforced in the MCP dispatch layer) ──
-
-/**
- * Raised when a CDP call / URL is refused by a security gate (denylisted
- * method, privileged URL scheme). Mapped to the "FORBIDDEN" audit code in the
- * dispatch catch — distinct from INVALID_INPUT (bad shape) and INTERNAL_ERROR.
- */
-class CdpPolicyError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "CdpPolicyError";
-  }
-}
 
 /**
  * URL schemes an MCP-driven navigation must never reach: local files and
@@ -214,6 +214,12 @@ export interface MktBrowserMcpServerOptions {
   browserDriver: BrowserDriver;
   /** Optional activity log; if not provided, a fresh one is created */
   activityLog?: ActivityLog;
+  /**
+   * Live engine facts for `get_runtime_info`. The desktop app supplies this from its Chromium
+   * bootstrap. When it is absent — standalone/mock runs — the engine reports `unknown` rather than
+   * a version this process cannot actually observe.
+   */
+  engineInfo?: () => MktBrowserEngineInfo;
 }
 
 export interface MktBrowserMcpServer {
@@ -369,7 +375,7 @@ const MKT_BROWSER_MCP_INSTRUCTIONS = [
 ].join("\n");
 
 export function createMktBrowserMcpServer(opts: MktBrowserMcpServerOptions): MktBrowserMcpServer {
-  const { profileManager, browserDriver } = opts;
+  const { profileManager, browserDriver, engineInfo } = opts;
   const activityLog = opts.activityLog ?? new ActivityLog();
 
   const server = new Server(
@@ -399,20 +405,14 @@ export function createMktBrowserMcpServer(opts: MktBrowserMcpServerOptions): Mkt
     const startedAt = Date.now();
 
     try {
-      const result = await dispatch(name, args, { profileManager, browserDriver });
+      const result = await dispatch(name, args, { profileManager, browserDriver, engineInfo });
       activityLog.finish(event, "ok", summarize(result), startedAt);
       return ok(result);
     } catch (e) {
-      const message =
-        e instanceof z.ZodError ? e.message : e instanceof Error ? e.message : String(e);
-      const code =
-        e instanceof CdpPolicyError
-          ? "FORBIDDEN"
-          : e instanceof z.ZodError || e instanceof FingerprintReconcileError
-            ? "INVALID_INPUT"
-            : "INTERNAL_ERROR";
+      // The code is the contract; the message is for the local activity log only.
+      const message = toErrorMessage(e);
       activityLog.finish(event, "error", message, startedAt);
-      return err(code, message);
+      return err(toErrorCode(e), message);
     }
   });
 
@@ -422,6 +422,33 @@ export function createMktBrowserMcpServer(opts: MktBrowserMcpServerOptions): Mkt
 interface DispatchDeps {
   profileManager: ProfileManager;
   browserDriver: BrowserDriver;
+  engineInfo?: () => MktBrowserEngineInfo;
+}
+
+const UNKNOWN_ENGINE: MktBrowserEngineInfo = { kind: "unknown", version: null, status: "unknown" };
+
+/**
+ * Describe this build to MKTTool. Every value is observed here and now: a caller must be able to
+ * tell a healthy device from one whose engine is still downloading, and must never infer a
+ * capability from the version number alone.
+ */
+function buildRuntimeInfo(engineInfo?: () => MktBrowserEngineInfo): MktBrowserRuntimeInfo {
+  let engine = UNKNOWN_ENGINE;
+  try {
+    engine = engineInfo?.() ?? UNKNOWN_ENGINE;
+  } catch {
+    // A bootstrap that cannot answer is itself the report: keep `unknown` instead of failing the
+    // one call a caller makes to find out why the device is unhealthy.
+  }
+
+  return {
+    provider: MKT_BROWSER_MCP_SERVER_NAME,
+    appVersion: MKT_BROWSER_MCP_SERVER_VERSION,
+    contractVersion: MKT_BROWSER_CONTRACT_VERSION,
+    profileSchemaVersion: MKT_BROWSER_PROFILE_SCHEMA_VERSION,
+    engine,
+    capabilities: [...MKT_BROWSER_CAPABILITIES],
+  };
 }
 
 async function dispatch(
@@ -431,6 +458,9 @@ async function dispatch(
 ): Promise<unknown> {
   const { profileManager, browserDriver } = deps;
   switch (name) {
+    case "get_runtime_info": {
+      return buildRuntimeInfo(deps.engineInfo);
+    }
     case "list_profiles": {
       const profiles = profileManager.list().map((p) => ({
         ...p,
@@ -467,7 +497,7 @@ async function dispatch(
     case "update_profile": {
       const input = UpdateProfileSchema.parse(args);
       const existing = profileManager.get(input.profile_id);
-      if (!existing) throw new Error(`Profile ${input.profile_id} not found`);
+      if (!existing) throw profileNotFound(input.profile_id);
 
       const patch: UpdateProfileInput = {};
       if (input.name !== undefined) patch.name = input.name;
@@ -670,7 +700,7 @@ async function dispatch(
       );
     }
     default:
-      throw new Error(`Unknown tool: ${name}`);
+      throw unknownTool(name);
   }
 }
 
@@ -719,6 +749,12 @@ const FINGERPRINT_JSON_SCHEMA = {
 } as const;
 
 const TOOL_DEFINITIONS = [
+  {
+    name: "get_runtime_info",
+    description:
+      "Report this build's provider, app version, contract version, profile schema version, browser-engine state, and implemented capabilities. Call it before deciding which other tools to use; do not infer capabilities from the version number.",
+    inputSchema: { type: "object", properties: {} },
+  },
   {
     name: "list_profiles",
     description:
@@ -1110,13 +1146,11 @@ function err(code: string, message: string) {
 
 function assertProfileExists(pm: ProfileManager, id: string): void {
   const p = pm.get(id);
-  if (!p) throw new Error(`Profile ${id} not found`);
+  if (!p) throw profileNotFound(id);
 }
 
 function assertProfileRunning(driver: BrowserDriver, id: string): void {
-  if (!driver.isRunning(id)) {
-    throw new Error(`Profile ${id} is not running. Call launch_profile first.`);
-  }
+  if (!driver.isRunning(id)) throw profileNotRunning(id);
 }
 
 function sleep(ms: number): Promise<void> {

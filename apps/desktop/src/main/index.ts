@@ -30,6 +30,7 @@ import {
 } from "@mktbrowser/types";
 import { ChromiumBrowserDriver } from "./ChromiumBrowserDriver.ts";
 import { ChromiumBootstrap } from "./ChromiumBootstrap.ts";
+import { describeEngineStatus } from "./engine-runtime-info.ts";
 import { loadOrCreateMcpToken } from "./mcpToken.ts";
 import { PRODUCT_APP_ID, PRODUCT_NAME, resolveProductUserDataPath } from "./productIdentity.ts";
 import { ExtensionsService } from "./extensions/ExtensionsService.ts";
@@ -256,7 +257,14 @@ app
       },
     });
 
-    const mcp = createMktBrowserMcpServer({ profileManager, browserDriver });
+    const mcp = createMktBrowserMcpServer({
+      profileManager,
+      browserDriver,
+      // Read live on every call. A cached value would let `get_runtime_info` claim an engine that
+      // has since been removed, which is exactly the answer the caller is trying to verify.
+      engineInfo: () =>
+        describeEngineStatus(chromiumBootstrap.getEngine(), chromiumBootstrap.getStatus()),
+    });
     activityLog = mcp.activityLog;
 
     // Forward activity events to renderer

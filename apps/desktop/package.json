@@ -14,6 +14,7 @@
     "build:linux": "electron-vite build && node ./scripts/strip-workspace-symlinks.cjs && electron-builder --linux",
     "test:w01": "node --experimental-strip-types --test src/main/productIdentity.test.ts",
     "test:w02": "node --experimental-strip-types --test src/main/productIdentity.test.ts src/main/mkt-browser-contract.test.ts",
+    "test:mkb01": "node --experimental-strip-types --test src/main/runtime-contract.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "preview": "electron-vite preview"
   },

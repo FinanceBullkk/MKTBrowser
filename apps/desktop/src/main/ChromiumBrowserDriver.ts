@@ -10,6 +10,12 @@ import { promisify } from "node:util";
 
 const execFileP = promisify(execFile);
 import type { BrowserDriver } from "@mktbrowser/mcp-server";
+import {
+  engineUnavailable,
+  profileNotFound,
+  profileNotRunning,
+  proxyRejected,
+} from "@mktbrowser/mcp-server";
 import type { ProfileManager } from "@mktbrowser/profile-manager";
 import { reconcileDeviceFamilyToHost } from "@mktbrowser/profile-manager";
 import type { ClientHints, FingerprintConfig, LaunchedProfile, ProfileId } from "@mktbrowser/types";
@@ -111,7 +117,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     }
 
     const profile = this.profileManager.get(profileId);
-    if (!profile) throw new Error(`Profile ${profileId} not found`);
+    if (!profile) throw profileNotFound(profileId);
 
     // Update `last_opened_at` for every launch, regardless of trigger
     // (UI button, MCP tool, command palette). Done early so even a
@@ -119,7 +125,17 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     this.profileManager.markOpened(profileId);
 
     const port = this.allocatePort();
-    const chromiumPath = this.bootstrap.resolveBinaryPath();
+    // A missing or half-prepared engine is its own failure class. Without this the caller sees
+    // INTERNAL_ERROR and cannot tell "still downloading" from "this build is broken".
+    let chromiumPath: string;
+    try {
+      chromiumPath = this.bootstrap.resolveBinaryPath();
+    } catch (cause) {
+      throw engineUnavailable(
+        `The browser engine is not ready (${this.bootstrap.getStatus().kind}).`,
+        { cause },
+      );
+    }
     const engine: BrowserEngine = this.bootstrap.getEngine();
     const browserDataDir = browserDataDirForEngine(profile.dataDir, engine);
     // Read the actual Chromium binary's version and reconcile the
@@ -318,7 +334,18 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       // chained). Chromium with --proxy-server=socks5://… does *remote*
       // DNS by spec, so the egress IP becomes the only resolver test
       // sites observe.
-      const localProxyUrl = await startBridgeForProfile(profileId, profile.proxy);
+      // Fail closed: a profile whose proxy could not be applied must never reach a launched
+      // window, or the account would egress from the operator's own IP. The message names no
+      // endpoint or credential — the caller already knows which profile it asked for.
+      let localProxyUrl: string;
+      try {
+        localProxyUrl = await startBridgeForProfile(profileId, profile.proxy);
+      } catch (cause) {
+        throw proxyRejected(
+          `The local proxy bridge for profile ${profileId} could not be started; the profile was not launched.`,
+          { cause },
+        );
+      }
       args.push(`--proxy-server=${localProxyUrl}`);
       // WebRTC leaks the *real* public IP via STUN even when HTTP traffic
       // is proxied — STUN uses UDP and bypasses HTTP proxies by default.
@@ -821,7 +848,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
 
   private requireSession(profileId: ProfileId): CdpSession {
     const r = this.running.get(profileId);
-    if (!r) throw new Error(`Profile ${profileId} is not running`);
+    if (!r) throw profileNotRunning(profileId);
     return r.session;
   }
 

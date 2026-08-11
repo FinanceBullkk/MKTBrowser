@@ -24,6 +24,89 @@ export function mktBrowserMcpBaseUrl(port: number = MKT_BROWSER_DEFAULT_MCP_PORT
   return `http://127.0.0.1:${port}`;
 }
 
+// ── The versioned promise MKT Browser makes to its MKTTool consumer ──
+//
+// MKTTool must decide compatibility from these values and branch on the error codes below. It must
+// never match a human-readable message: those are free to change without a version bump. This block
+// lives in the barrel rather than its own module because the Windows guard tests load this file
+// through Node's type stripper, where a relative re-export would have to resolve under three
+// different module-resolution modes at once.
+
+/**
+ * Bump when a tool is added or removed, when a response field changes meaning, or when a caller
+ * written against the previous number would now behave incorrectly. Adding an optional response
+ * field is not a bump.
+ */
+export const MKT_BROWSER_CONTRACT_VERSION = 1;
+
+/** Bump when the on-disk profile record changes shape and needs a migration. */
+export const MKT_BROWSER_PROFILE_SCHEMA_VERSION = 1;
+
+/**
+ * What this build can actually do. A capability is listed only once it is implemented and tested,
+ * because the Relay picks its call path from this list rather than from a version comparison.
+ * Managed mode (`managed-profile-v1`, `idempotent-create-v1`, `atomic-launch-v1`) belongs to MKB-02
+ * and must not be advertised before it exists.
+ */
+export const MKT_BROWSER_CAPABILITIES = ["profile-contract-v1", "runtime-info-v1"] as const;
+
+export type MktBrowserCapability = (typeof MKT_BROWSER_CAPABILITIES)[number];
+
+/**
+ * Stable machine-readable failure codes. Each names the layer that refused, so the Relay can tell
+ * an operator which thing to fix instead of forwarding an internal sentence.
+ */
+export const MKT_BROWSER_ERROR_CODES = [
+  /** The arguments did not match the tool schema. */
+  "INVALID_INPUT",
+  /** A security gate refused the call: blocked URL scheme or denylisted CDP method. */
+  "FORBIDDEN",
+  /** No profile on this device carries the requested id. */
+  "PROFILE_NOT_FOUND",
+  /** A page action arrived for a profile that is not launched. */
+  "PROFILE_NOT_RUNNING",
+  /** The profile exists but its proxy could not be stored or applied. */
+  "PROXY_REJECTED",
+  /** The Chromium engine is missing, still being prepared, or failed verification. */
+  "ENGINE_UNAVAILABLE",
+  /** This build does not expose the requested tool. */
+  "UNKNOWN_TOOL",
+  /** Not yet classified. Treat a rise in this code as a contract gap, not as noise. */
+  "INTERNAL_ERROR",
+] as const;
+
+export type MktBrowserErrorCode = (typeof MKT_BROWSER_ERROR_CODES)[number];
+
+/**
+ * Mirrors `BrowserEngine` in `@mktbrowser/settings-store`, restated here because `types` must not
+ * depend on a package that depends on it. Adding a family is a deliberate contract change.
+ */
+export type MktBrowserEngineKind = "cft" | "cloakbrowser" | "unknown";
+
+export interface MktBrowserEngineInfo {
+  /** Which engine family this device is configured to run. */
+  kind: MktBrowserEngineKind;
+  /** Engine version once installed; `null` while it is missing or still being prepared. */
+  version: string | null;
+  /** The exact preparation stage, so a caller can tell "downloading" apart from "broken". */
+  status: ChromiumStatus["kind"] | "unknown";
+}
+
+export interface MktBrowserRuntimeInfo {
+  /** Always the owned provider slug. Another value means the caller reached a different product. */
+  provider: string;
+  appVersion: string;
+  contractVersion: number;
+  profileSchemaVersion: number;
+  engine: MktBrowserEngineInfo;
+  capabilities: MktBrowserCapability[];
+}
+
+/** Body carried inside an `isError` tool result. */
+export interface MktBrowserToolErrorBody {
+  error: { code: MktBrowserErrorCode; message: string };
+}
+
 export type ProfileId = string;
 
 export interface ProxyConfig {
