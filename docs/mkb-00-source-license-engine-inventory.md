@@ -44,7 +44,7 @@ day, the disposable Windows correct-proxy positive path passed and completed MKB
 | Node declaration  | `>=20.0.0`                                         | Root `engines.node` field                                                                |
 | Desktop version   | `0.3.1`                                            | `apps/desktop/package.json`                                                              |
 
-The local fork lives at `E:\MKTBrowser`. Its `origin` is the internal
+The local fork lives at `E:\MKTWorkspace\MKTBrowser`. Its `origin` is the internal
 `FinanceBullkk/MKTBrowser` repository. The `upstream` fetch remote remains pinned to MultiZen and
 has push URL `NO_PUSH`; `master` tracks `upstream/master` for comparison while `main` contains the
 owned W01/W02 work. No commit or push was made during the original MKB-00 baseline run; later W01
