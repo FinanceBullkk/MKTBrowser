@@ -8,10 +8,11 @@
     "apps/*",
     "packages/*"
   ],
+  "_comment_typecheck": "typecheck calls tsc directly instead of `workspaces foreach`. With nmHoistingLimits=workspaces the root-only typescript devDependency is invisible inside each workspace, so foreach reported success while every workspace had failed to find tsc.",
   "scripts": {
     "dev": "yarn workspace @mktbrowser/desktop dev",
     "build": "yarn workspaces foreach -A run build",
-    "typecheck": "yarn workspaces foreach -A run typecheck",
+    "typecheck": "tsc --noEmit -p packages/types/tsconfig.json && tsc --noEmit -p packages/settings-store/tsconfig.json && tsc --noEmit -p packages/profile-manager/tsconfig.json && tsc --noEmit -p packages/cdp-driver/tsconfig.json && tsc --noEmit -p packages/mcp-server/tsconfig.json && tsc --noEmit -p apps/desktop/tsconfig.json",
     "lint": "yarn workspaces foreach -A run lint",
     "format": "prettier --write \"**/*.{ts,tsx,js,json,md,astro}\"",
     "mcp:dev": "yarn workspace @mktbrowser/mcp-server dev",
