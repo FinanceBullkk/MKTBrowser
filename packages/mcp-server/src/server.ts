@@ -32,6 +32,10 @@ import {
   toErrorMessage,
   unknownTool,
 } from "./mkt-browser-tool-errors.js";
+import {
+  assertMcpToolInventory,
+  isClassifiedMcpTool,
+} from "./tool-exposure-policy.js";
 
 // ── Security gates (engine-independent, enforced in the MCP dispatch layer) ──
 
@@ -377,6 +381,7 @@ const MKT_BROWSER_MCP_INSTRUCTIONS = [
 export function createMktBrowserMcpServer(opts: MktBrowserMcpServerOptions): MktBrowserMcpServer {
   const { profileManager, browserDriver, engineInfo } = opts;
   const activityLog = opts.activityLog ?? new ActivityLog();
+  assertMcpToolInventory(TOOL_DEFINITIONS.map((tool) => tool.name));
 
   const server = new Server(
     { name: MKT_BROWSER_MCP_SERVER_NAME, version: MKT_BROWSER_MCP_SERVER_VERSION },
@@ -405,6 +410,7 @@ export function createMktBrowserMcpServer(opts: MktBrowserMcpServerOptions): Mkt
     const startedAt = Date.now();
 
     try {
+      if (!isClassifiedMcpTool(name)) throw unknownTool(name);
       const result = await dispatch(name, args, { profileManager, browserDriver, engineInfo });
       activityLog.finish(event, "ok", summarize(result), startedAt);
       return ok(result);

@@ -89,15 +89,13 @@ export function FirstRun({ onCreate }: Props): JSX.Element {
               </div>
             </div>
             <div className="flex items-center gap-3 mt-1.5 mono text-[11px] text-slate-500">
-              <span>macOS</span>
-              <span className="text-slate-700">·</span>
-              <span>Windows</span>
-              <span className="text-slate-700">·</span>
-              <span>Linux</span>
+              <span>Windows x64</span>
               <span className="text-slate-700">·</span>
               <span>Chromium</span>
               <span className="text-slate-700">·</span>
               <span>MCP HTTP</span>
+              <span className="text-slate-700">·</span>
+              <span>Local profiles</span>
             </div>
             <button
               type="button"

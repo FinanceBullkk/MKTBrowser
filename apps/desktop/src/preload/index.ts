@@ -11,6 +11,12 @@ import type {
 import type { ActivityEvent } from "@mktbrowser/mcp-server";
 import type { AppSettings } from "@mktbrowser/settings-store";
 import type { ChromiumStatus, DeviceFamily, ExtensionConfig, ProxyConfig } from "@mktbrowser/types";
+import {
+  IPC,
+  IPC_EVENTS,
+  type IpcEventChannel,
+  type IpcInvokeChannel,
+} from "../shared/ipc-exposure-policy.ts";
 
 /** Payload for the `extensions:installed` push (companion "Add to MKT Browser"). */
 export type ExtensionInstalledEvent =
@@ -57,113 +63,108 @@ export type RunningStateChange =
   | { kind: "launched"; profileId: ProfileId }
   | { kind: "closed"; profileId: ProfileId; reason: "user-close" | "external-exit" };
 
+function invoke(channel: IpcInvokeChannel, ...args: unknown[]): Promise<any> {
+  return ipcRenderer.invoke(channel, ...args);
+}
+
+function subscribe<T>(channel: IpcEventChannel, cb: (payload: T) => void): () => void {
+  const listener = (_event: Electron.IpcRendererEvent, payload: T): void => cb(payload);
+  ipcRenderer.on(channel, listener);
+  return () => ipcRenderer.off(channel, listener);
+}
+
 const api = {
   profiles: {
-    list: (): Promise<ProfileSummary[]> => ipcRenderer.invoke("profiles:list"),
-    get: (id: ProfileId): Promise<Profile | null> => ipcRenderer.invoke("profiles:get", id),
+    list: (): Promise<ProfileSummary[]> => invoke(IPC.PROFILES_LIST),
+    get: (id: ProfileId): Promise<Profile | null> => invoke(IPC.PROFILES_GET, id),
     create: (input: CreateProfileInput): Promise<Profile> =>
-      ipcRenderer.invoke("profiles:create", input),
+      invoke(IPC.PROFILES_CREATE, input),
     update: (id: ProfileId, patch: UpdateProfileInput): Promise<Profile> =>
-      ipcRenderer.invoke("profiles:update", id, patch),
-    delete: (id: ProfileId): Promise<void> => ipcRenderer.invoke("profiles:delete", id),
-    launch: (id: ProfileId): Promise<LaunchedProfile> => ipcRenderer.invoke("profiles:launch", id),
-    close: (id: ProfileId): Promise<void> => ipcRenderer.invoke("profiles:close", id),
+      invoke(IPC.PROFILES_UPDATE, id, patch),
+    delete: (id: ProfileId): Promise<void> => invoke(IPC.PROFILES_DELETE, id),
+    launch: (id: ProfileId): Promise<LaunchedProfile> => invoke(IPC.PROFILES_LAUNCH, id),
+    close: (id: ProfileId): Promise<void> => invoke(IPC.PROFILES_CLOSE, id),
     exportArchive: (
       id: ProfileId,
       passphrase: string,
     ): Promise<{ ok: true; path: string } | { ok: false; reason: string }> =>
-      ipcRenderer.invoke("profiles:export", id, passphrase),
+      invoke(IPC.PROFILES_EXPORT, id, passphrase),
     importArchive: (
       passphrase: string,
     ): Promise<{ ok: true; id: ProfileId } | { ok: false; reason: string }> =>
-      ipcRenderer.invoke("profiles:import", passphrase),
-    onRunningChanged: (cb: (change: RunningStateChange) => void): (() => void) => {
-      const listener = (_: unknown, change: RunningStateChange): void => cb(change);
-      ipcRenderer.on("profiles:running-changed", listener);
-      return () => ipcRenderer.off("profiles:running-changed", listener);
-    },
+      invoke(IPC.PROFILES_IMPORT, passphrase),
+    onRunningChanged: (cb: (change: RunningStateChange) => void): (() => void) =>
+      subscribe(IPC_EVENTS.PROFILES_RUNNING_CHANGED, cb),
     onProxyCountryUpdated: (
       cb: (update: { id: string; country: string }) => void,
-    ): (() => void) => {
-      const listener = (_: unknown, update: { id: string; country: string }): void => cb(update);
-      ipcRenderer.on("profiles:proxy-country-updated", listener);
-      return () => ipcRenderer.off("profiles:proxy-country-updated", listener);
-    },
+    ): (() => void) =>
+      subscribe(IPC_EVENTS.PROFILES_PROXY_COUNTRY_UPDATED, cb),
   },
   settings: {
-    get: (): Promise<AppSettings> => ipcRenderer.invoke("settings:get"),
+    get: (): Promise<AppSettings> => invoke(IPC.SETTINGS_GET),
     update: (patch: Partial<AppSettings>): Promise<AppSettings> =>
-      ipcRenderer.invoke("settings:update", patch),
+      invoke(IPC.SETTINGS_UPDATE, patch),
   },
   activity: {
-    recent: (): Promise<ActivityEvent[]> => ipcRenderer.invoke("activity:recent"),
-    onEvent: (cb: (e: ActivityEvent) => void): (() => void) => {
-      const listener = (_: unknown, e: ActivityEvent): void => cb(e);
-      ipcRenderer.on("activity:event", listener);
-      return () => ipcRenderer.off("activity:event", listener);
-    },
+    recent: (): Promise<ActivityEvent[]> => invoke(IPC.ACTIVITY_RECENT),
+    onEvent: (cb: (e: ActivityEvent) => void): (() => void) =>
+      subscribe(IPC_EVENTS.ACTIVITY_EVENT, cb),
   },
   system: {
-    info: (): Promise<SystemInfo> => ipcRenderer.invoke("system:info"),
+    info: (): Promise<SystemInfo> => invoke(IPC.SYSTEM_INFO),
   },
   chromium: {
-    status: (): Promise<ChromiumStatus> => ipcRenderer.invoke("chromium:status"),
-    retry: (): Promise<ChromiumStatus> => ipcRenderer.invoke("chromium:retry"),
-    onStatus: (cb: (status: ChromiumStatus) => void): (() => void) => {
-      const listener = (_: unknown, status: ChromiumStatus): void => cb(status);
-      ipcRenderer.on("chromium:status", listener);
-      return () => ipcRenderer.off("chromium:status", listener);
-    },
+    status: (): Promise<ChromiumStatus> => invoke(IPC.CHROMIUM_STATUS),
+    retry: (): Promise<ChromiumStatus> => invoke(IPC.CHROMIUM_RETRY),
+    onStatus: (cb: (status: ChromiumStatus) => void): (() => void) =>
+      subscribe(IPC_EVENTS.CHROMIUM_STATUS, cb),
   },
   extensions: {
     list: (profileId: string): Promise<ExtensionConfig[]> =>
-      ipcRenderer.invoke("extensions:list", profileId),
+      invoke(IPC.EXTENSIONS_LIST, profileId),
     addFromFile: (profileId: string): Promise<ExtensionConfig[]> =>
-      ipcRenderer.invoke("extensions:addFromFile", profileId),
+      invoke(IPC.EXTENSIONS_ADD_FROM_FILE, profileId),
     addFromFolder: (profileId: string): Promise<ExtensionConfig[]> =>
-      ipcRenderer.invoke("extensions:addFromFolder", profileId),
+      invoke(IPC.EXTENSIONS_ADD_FROM_FOLDER, profileId),
     addFromWebStore: (profileId: string, urlOrId: string): Promise<ExtensionConfig[]> =>
-      ipcRenderer.invoke("extensions:addFromWebStore", profileId, urlOrId),
+      invoke(IPC.EXTENSIONS_ADD_FROM_WEB_STORE, profileId, urlOrId),
     remove: (profileId: string, extId: string): Promise<ExtensionConfig[]> =>
-      ipcRenderer.invoke("extensions:remove", profileId, extId),
+      invoke(IPC.EXTENSIONS_REMOVE, profileId, extId),
     toggle: (profileId: string, extId: string, enabled: boolean): Promise<ExtensionConfig[]> =>
-      ipcRenderer.invoke("extensions:toggle", profileId, extId, enabled),
+      invoke(IPC.EXTENSIONS_TOGGLE, profileId, extId, enabled),
     // Staging (create sheet, no profile id yet).
-    storeEntries: (): Promise<ExtensionConfig[]> => ipcRenderer.invoke("extensions:storeEntries"),
+    storeEntries: (): Promise<ExtensionConfig[]> => invoke(IPC.EXTENSIONS_STORE_ENTRIES),
     prepareFromWebStore: (urlOrId: string): Promise<ExtensionConfig> =>
-      ipcRenderer.invoke("extensions:prepareFromWebStore", urlOrId),
+      invoke(IPC.EXTENSIONS_PREPARE_FROM_WEB_STORE, urlOrId),
     prepareFromFile: (): Promise<ExtensionConfig | null> =>
-      ipcRenderer.invoke("extensions:prepareFromFile"),
+      invoke(IPC.EXTENSIONS_PREPARE_FROM_FILE),
     prepareFromFolder: (): Promise<ExtensionConfig | null> =>
-      ipcRenderer.invoke("extensions:prepareFromFolder"),
+      invoke(IPC.EXTENSIONS_PREPARE_FROM_FOLDER),
     /** Real icon from the extension's manifest, as a data URI (or null). */
     icon: (ext: ExtensionConfig, profileId: string | null): Promise<string | null> =>
-      ipcRenderer.invoke("extensions:icon", ext, profileId),
-    onInstalled: (cb: (e: ExtensionInstalledEvent) => void): (() => void) => {
-      const listener = (_: unknown, e: ExtensionInstalledEvent): void => cb(e);
-      ipcRenderer.on("extensions:installed", listener);
-      return () => ipcRenderer.off("extensions:installed", listener);
-    },
+      invoke(IPC.EXTENSIONS_ICON, ext, profileId),
+    onInstalled: (cb: (e: ExtensionInstalledEvent) => void): (() => void) =>
+      subscribe(IPC_EVENTS.EXTENSIONS_INSTALLED, cb),
   },
   fingerprint: {
-    generate: (): Promise<FingerprintConfig> => ipcRenderer.invoke("fingerprint:generate"),
+    generate: (): Promise<FingerprintConfig> => invoke(IPC.FINGERPRINT_GENERATE),
     devices: (): Promise<ReadonlyArray<DeviceCatalogEntry>> =>
-      ipcRenderer.invoke("fingerprint:devices"),
+      invoke(IPC.FINGERPRINT_DEVICES),
     locales: (): Promise<ReadonlyArray<LocaleCatalogEntry>> =>
-      ipcRenderer.invoke("fingerprint:locales"),
+      invoke(IPC.FINGERPRINT_LOCALES),
     reconcile: (
       current: FingerprintConfig,
       patch: FingerprintReconcilePatch,
-    ): Promise<FingerprintConfig> => ipcRenderer.invoke("fingerprint:reconcile", current, patch),
+    ): Promise<FingerprintConfig> => invoke(IPC.FINGERPRINT_RECONCILE, current, patch),
     localeForCountry: (cc: string): Promise<string | null> =>
-      ipcRenderer.invoke("fingerprint:localeForCountry", cc),
+      invoke(IPC.FINGERPRINT_LOCALE_FOR_COUNTRY, cc),
   },
   proxy: {
     detectGeo: (
       proxy: ProxyConfig,
       profileId?: string,
     ): Promise<{ ok: true; geo: ProxyGeoResult } | { ok: false; error: string }> =>
-      ipcRenderer.invoke("proxy:detectGeo", proxy, profileId),
+      invoke(IPC.PROXY_DETECT_GEO, proxy, profileId),
   },
 };
 

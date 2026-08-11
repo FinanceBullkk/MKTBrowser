@@ -3,11 +3,12 @@ productName: MKT Browser
 executableName: MKTBrowser
 # Pinned to the version in package.json devDependencies so electron-builder
 # does not need to introspect node_modules. Bump in sync when upgrading.
-electronVersion: 33.2.0
+electronVersion: 42.8.1
 directories:
   output: release
   buildResources: ../../build
 afterPack: scripts/edit-windows-executable.cjs
+npmRebuild: false
 
 files:
   - "out/**/*"
@@ -25,7 +26,7 @@ files:
 extraMetadata:
   dependencies:
     "@modelcontextprotocol/sdk": "^1.0.4"
-    better-sqlite3: "^11.7.0"
+    better-sqlite3: "^12.11.1"
     chrome-remote-interface: "^0.33.3"
     extract-zip: "^2.0.1"
     framer-motion: "^12.0.0"

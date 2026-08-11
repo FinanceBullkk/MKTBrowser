@@ -3,6 +3,8 @@ name: Windows Technical Build
 # Windows x64 is the only v1 and team-demo platform. Run this workflow manually to validate the
 # isolated technical directory package without creating a release or claiming pilot readiness.
 on:
+  push:
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -10,7 +12,11 @@ permissions:
 
 jobs:
   windows-build:
-    runs-on: windows-latest
+    strategy:
+      matrix:
+        os: [windows-latest]
+        node: [22]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -18,7 +24,7 @@ jobs:
       - name: Setup Node.js 22
         uses: actions/setup-node@v5
         with:
-          node-version: "22"
+          node-version: ${{ matrix.node }}
           package-manager-cache: false
 
       - name: Enable Corepack
@@ -29,11 +35,23 @@ jobs:
       - name: Install dependencies
         run: yarn install --immutable
 
-      - name: Product identity tests
+      - name: Node.js build guard
+        run: yarn verify:node
+
+      - name: W01 and W02 guards
         run: yarn workspace @mktbrowser/desktop test:w02
+
+      - name: MKB-01 compatibility tests
+        run: yarn workspace @mktbrowser/desktop test:mkb01
+
+      - name: MKB-01E security guards
+        run: yarn workspace @mktbrowser/desktop test:mkb01e
 
       - name: Typecheck
         run: yarn typecheck
 
       - name: Build Windows directory package
         run: yarn workspace @mktbrowser/desktop build
+
+      - name: Verify packaged runtime contract
+        run: yarn verify:packaged-contract

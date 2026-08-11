@@ -15,3 +15,11 @@ export {
   type LocaleCatalogEntry,
 } from "./fingerprint.js";
 export { exportProfile, importProfile } from "./archive.js";
+export {
+  copyLegacyMultiZenData,
+  findLegacyMultiZenImport,
+  type LegacyMultiZenImportCandidate,
+  type LegacyMultiZenImportDiscovery,
+  type LegacyMultiZenImportResult,
+  type LegacyMultiZenImportUnreadable,
+} from "./legacy-multizen-import.js";

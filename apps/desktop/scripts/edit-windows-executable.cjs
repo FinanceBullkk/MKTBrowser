@@ -25,7 +25,6 @@ module.exports = async function editWindowsExecutable(context) {
       CompanyName: "MKTTool",
       FileDescription: PRODUCT_NAME,
       InternalName: "MKTBrowser",
-      LegalCopyright: "",
       OriginalFilename: EXECUTABLE_NAME,
       ProductName: PRODUCT_NAME,
     },

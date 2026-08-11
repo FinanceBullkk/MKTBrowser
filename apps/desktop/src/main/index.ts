@@ -1,4 +1,11 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  nativeImage,
+  type IpcMainInvokeEvent,
+} from "electron";
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync, mkdirSync } from "node:fs";
@@ -12,6 +19,8 @@ import {
   deviceCatalog,
   localeCatalog,
   findLocaleIdByCountry,
+  copyLegacyMultiZenData,
+  findLegacyMultiZenImport,
 } from "@mktbrowser/profile-manager";
 import {
   HttpTransport,
@@ -41,6 +50,14 @@ import {
   readManifestIcon,
 } from "./extensions/extensionStore.ts";
 import { probeProxyGeo, type ProxyGeoResult } from "./proxyGeo.ts";
+import {
+  IPC,
+  IPC_EVENTS,
+  isIpcEventChannel,
+  isIpcInvokeChannel,
+  type IpcEventChannel,
+  type IpcInvokeChannel,
+} from "../shared/ipc-exposure-policy.ts";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const mcpHttpPort = resolveMktBrowserMcpPort(process.env[MKT_BROWSER_MCP_PORT_ENV]);
@@ -78,6 +95,23 @@ let httpTransport: HttpTransport | null = null;
 let mcpAuthToken: string | null = null;
 let cachedSettings: AppSettings | null = null;
 
+type IpcHandler = (event: IpcMainInvokeEvent, ...args: any[]) => unknown;
+
+function handleIpc(channel: IpcInvokeChannel, handler: IpcHandler): void {
+  if (!isIpcInvokeChannel(channel)) throw new Error(`Unclassified IPC channel: ${channel}`);
+  ipcMain.handle(channel, (event, ...args) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) {
+      throw new Error(`Rejected IPC sender for ${channel}.`);
+    }
+    return handler(event, ...args);
+  });
+}
+
+function sendToRenderer(channel: IpcEventChannel, payload: unknown): void {
+  if (!isIpcEventChannel(channel)) throw new Error(`Unclassified IPC event: ${channel}`);
+  mainWindow?.webContents.send(channel, payload);
+}
+
 function createWindow(): void {
   const iconPath = resolveAppIcon();
   mainWindow = new BrowserWindow({
@@ -89,11 +123,16 @@ function createWindow(): void {
     backgroundColor: "#0a0b0f",
     icon: iconPath ?? undefined,
     webPreferences: {
-      preload: join(__dirname, "../preload/index.mjs"),
-      sandbox: false,
+      preload: join(__dirname, "../preload/index.cjs"),
+      sandbox: true,
       contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: true,
     },
   });
+
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  mainWindow.webContents.on("will-navigate", (event) => event.preventDefault());
 
   if (process.env.ELECTRON_RENDERER_URL) {
     void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
@@ -112,8 +151,8 @@ function createWindow(): void {
 
 // Product identity and the data root must be configured before app.whenReady().
 // An explicit Electron --user-data-dir remains available solely for disposable
-// development and verification runs; normal launches always use the fixed,
-// product-owned root and never inspect or migrate the legacy MultiZen store.
+// development and verification runs and skips legacy discovery. Normal launches
+// use the fixed product root and may offer a first-run copy from MultiZen.
 app.setName(PRODUCT_NAME);
 if (process.platform === "win32") app.setAppUserModelId(PRODUCT_APP_ID);
 if (!app.commandLine.hasSwitch("user-data-dir")) {
@@ -146,6 +185,53 @@ app
 
     const userData = app.getPath("userData");
     const dataRoot = join(userData, "data");
+    if (process.platform === "win32" && !app.commandLine.hasSwitch("user-data-dir")) {
+      const legacyImport = findLegacyMultiZenImport(app.getPath("appData"), dataRoot);
+      if (legacyImport?.status === "unreadable") {
+        const choice = await dialog.showMessageBox({
+          type: "warning",
+          buttons: ["Start fresh", "Quit"],
+          defaultId: 1,
+          cancelId: 1,
+          message: "MKT Browser could not read the existing MultiZen profiles.",
+          detail:
+            "The MultiZen data was not changed. Close MultiZen and try again, or start with an independent empty MKT Browser store.",
+        });
+        if (choice.response === 1) {
+          app.quit();
+          return;
+        }
+      } else if (legacyImport?.status === "ready") {
+        const choice = await dialog.showMessageBox({
+          type: "question",
+          buttons: ["Copy profiles", "Start fresh", "Quit"],
+          defaultId: 0,
+          cancelId: 2,
+          message: `MKT Browser found ${legacyImport.profileCount} MultiZen profile${legacyImport.profileCount === 1 ? "" : "s"} on this PC.`,
+          detail:
+            "Close MultiZen before copying. MKT Browser will create its own copy and will not change or delete the MultiZen data.",
+        });
+        if (choice.response === 2) {
+          app.quit();
+          return;
+        }
+        if (choice.response === 0) {
+          try {
+            await copyLegacyMultiZenData(legacyImport.legacyDataRoot, dataRoot);
+          } catch {
+            await dialog.showMessageBox({
+              type: "error",
+              buttons: ["Close MKT Browser"],
+              message: "MKT Browser could not copy the MultiZen profiles.",
+              detail:
+                "The original MultiZen data was not changed. Close MultiZen, then open MKT Browser and try again.",
+            });
+            app.quit();
+            return;
+          }
+        }
+      }
+    }
     // Shared extension store (deduped extension files loaded into many profiles).
     const extensionStoreRoot = join(dataRoot, "extension-store");
 
@@ -179,7 +265,7 @@ app
       engine: cachedSettings.browserEngine,
     });
     chromiumBootstrap.on("status", (status: ChromiumStatus) => {
-      mainWindow?.webContents.send("chromium:status", status);
+      sendToRenderer(IPC_EVENTS.CHROMIUM_STATUS, status);
     });
     // Kick off the ensure() in the background so the UI can render immediately
     // and show download progress. Profile launches will wait until ready.
@@ -226,7 +312,7 @@ app
           if (choice.response !== 0) return;
           try {
             const extension = await extensionsService.installFromWebStore(profileId, extensionId);
-            mainWindow?.webContents.send("extensions:installed", {
+            sendToRenderer(IPC_EVENTS.EXTENSIONS_INSTALLED, {
               ok: true,
               profileId,
               extension,
@@ -239,7 +325,7 @@ app
               await browserDriver.launch(profileId).catch((e: unknown) => {
                 // The profile is now closed and didn't reopen — tell the user so
                 // they're not left wondering where their browser went.
-                mainWindow?.webContents.send("extensions:installed", {
+                sendToRenderer(IPC_EVENTS.EXTENSIONS_INSTALLED, {
                   ok: false,
                   profileId,
                   error: `Added it, but the profile didn't reopen — launch it again. (${(e as Error).message})`,
@@ -247,7 +333,7 @@ app
               });
             }
           } catch (e) {
-            mainWindow?.webContents.send("extensions:installed", {
+            sendToRenderer(IPC_EVENTS.EXTENSIONS_INSTALLED, {
               ok: false,
               profileId,
               error: (e as Error).message,
@@ -269,14 +355,14 @@ app
 
     // Forward activity events to renderer
     activityLog.on("event", (e: ActivityEvent) => {
-      mainWindow?.webContents.send("activity:event", e);
+      sendToRenderer(IPC_EVENTS.ACTIVITY_EVENT, e);
     });
 
     // Forward profile running-state changes (manual launch, manual close,
     // and — most importantly — external Chromium close where the user quits
     // the browser window directly).
     browserDriver.on("running-changed", (change) => {
-      mainWindow?.webContents.send("profiles:running-changed", change);
+      sendToRenderer(IPC_EVENTS.PROFILES_RUNNING_CHANGED, change);
     });
 
     // Background-probe proxies for profiles missing a cached country code
@@ -301,7 +387,14 @@ app
         // that reuses the same profileManager/browserDriver AND the shared
         // activityLog, so every transport's tool calls land in the one live feed.
         await httpTransport.start(
-          () => createMktBrowserMcpServer({ profileManager, browserDriver, activityLog }).server,
+          () =>
+            createMktBrowserMcpServer({
+              profileManager,
+              browserDriver,
+              activityLog,
+              engineInfo: () =>
+                describeEngineStatus(chromiumBootstrap.getEngine(), chromiumBootstrap.getStatus()),
+            }).server,
         );
       } catch (e) {
         // Port collision is non-fatal — log and continue
@@ -311,19 +404,19 @@ app
     }
 
     // Profile IPC
-    ipcMain.handle("profiles:list", () =>
+    handleIpc(IPC.PROFILES_LIST, () =>
       profileManager.list().map((p) => ({ ...p, isRunning: browserDriver.isRunning(p.id) })),
     );
-    ipcMain.handle("profiles:get", (_e, id: string) => profileManager.get(id));
-    ipcMain.handle("profiles:create", (_e, input: Parameters<ProfileManager["create"]>[0]) =>
+    handleIpc(IPC.PROFILES_GET, (_e, id: string) => profileManager.get(id));
+    handleIpc(IPC.PROFILES_CREATE, (_e, input: Parameters<ProfileManager["create"]>[0]) =>
       profileManager.create(input),
     );
-    ipcMain.handle(
-      "profiles:update",
+    handleIpc(
+      IPC.PROFILES_UPDATE,
       (_e, id: string, patch: Parameters<ProfileManager["update"]>[1]) =>
         profileManager.update(id, patch),
     );
-    ipcMain.handle("profiles:delete", (_e, id: string) => {
+    handleIpc(IPC.PROFILES_DELETE, (_e, id: string) => {
       void browserDriver.close(id).catch(() => {});
       profileManager.delete(id);
       // Reclaim shared store entries this profile referenced that no other profile
@@ -333,26 +426,26 @@ app
         profileManager.allExtensionRefs().map((r) => r.ext),
       ).catch(() => {});
     });
-    ipcMain.handle("profiles:launch", (_e, id: string) => browserDriver.launch(id));
-    ipcMain.handle("profiles:close", (_e, id: string) => browserDriver.close(id));
+    handleIpc(IPC.PROFILES_LAUNCH, (_e, id: string) => browserDriver.launch(id));
+    handleIpc(IPC.PROFILES_CLOSE, (_e, id: string) => browserDriver.close(id));
 
     // Settings IPC
-    ipcMain.handle("settings:get", () => settingsStore.load());
-    ipcMain.handle("settings:update", async (_e, patch: Partial<AppSettings>) => {
+    handleIpc(IPC.SETTINGS_GET, () => settingsStore.load());
+    handleIpc(IPC.SETTINGS_UPDATE, async (_e, patch: Partial<AppSettings>) => {
       cachedSettings = await settingsStore.update(patch);
       return cachedSettings;
     });
 
     // Activity IPC
-    ipcMain.handle("activity:recent", () => activityLog.recent());
+    handleIpc(IPC.ACTIVITY_RECENT, () => activityLog.recent());
 
     // Chromium bootstrap IPC
-    ipcMain.handle("chromium:status", () => chromiumBootstrap.getStatus());
-    ipcMain.handle("chromium:retry", () => chromiumBootstrap.ensure());
+    handleIpc(IPC.CHROMIUM_STATUS, () => chromiumBootstrap.getStatus());
+    handleIpc(IPC.CHROMIUM_RETRY, () => chromiumBootstrap.ensure());
 
     // Extensions IPC (per-profile)
-    ipcMain.handle("extensions:list", (_e, profileId: string) => extensionsService.list(profileId));
-    ipcMain.handle("extensions:addFromFile", async (_e, profileId: string) => {
+    handleIpc(IPC.EXTENSIONS_LIST, (_e, profileId: string) => extensionsService.list(profileId));
+    handleIpc(IPC.EXTENSIONS_ADD_FROM_FILE, async (_e, profileId: string) => {
       const r = await dialog.showOpenDialog(mainWindow!, {
         title: "Add extension (.crx or .zip)",
         properties: ["openFile"],
@@ -362,7 +455,7 @@ app
       await extensionsService.installFromFile(profileId, r.filePaths[0]);
       return extensionsService.list(profileId);
     });
-    ipcMain.handle("extensions:addFromFolder", async (_e, profileId: string) => {
+    handleIpc(IPC.EXTENSIONS_ADD_FROM_FOLDER, async (_e, profileId: string) => {
       const r = await dialog.showOpenDialog(mainWindow!, {
         title: "Add unpacked extension folder",
         properties: ["openDirectory"],
@@ -371,7 +464,7 @@ app
       await extensionsService.installFromFile(profileId, r.filePaths[0]);
       return extensionsService.list(profileId);
     });
-    ipcMain.handle("extensions:addFromWebStore", async (_e, profileId: string, urlOrId: string) => {
+    handleIpc(IPC.EXTENSIONS_ADD_FROM_WEB_STORE, async (_e, profileId: string, urlOrId: string) => {
       try {
         await extensionsService.installFromWebStore(profileId, urlOrId);
       } catch (e) {
@@ -382,12 +475,12 @@ app
       }
       return extensionsService.list(profileId);
     });
-    ipcMain.handle("extensions:remove", async (_e, profileId: string, extId: string) => {
+    handleIpc(IPC.EXTENSIONS_REMOVE, async (_e, profileId: string, extId: string) => {
       await extensionsService.remove(profileId, extId);
       return extensionsService.list(profileId);
     });
-    ipcMain.handle(
-      "extensions:toggle",
+    handleIpc(
+      IPC.EXTENSIONS_TOGGLE,
       (_e, profileId: string, extId: string, enabled: boolean) => {
         extensionsService.setEnabled(profileId, extId, enabled);
         return extensionsService.list(profileId);
@@ -411,13 +504,13 @@ app
       }
     };
 
-    ipcMain.handle("extensions:storeEntries", () => extensionsService.storeEntries());
+    handleIpc(IPC.EXTENSIONS_STORE_ENTRIES, () => extensionsService.storeEntries());
     // Real icon from an extension's own manifest, as a data URI (or null → the
     // renderer shows the generic glyph). Lets non-catalog extensions show their
     // actual icon. Shared entries resolve from the store; profile-scoped ones
     // need the owning profile's dataDir.
-    ipcMain.handle(
-      "extensions:icon",
+    handleIpc(
+      IPC.EXTENSIONS_ICON,
       async (_e, ext: ExtensionConfig, profileId: string | null): Promise<string | null> => {
         const dataDir = profileId ? profileManager.get(profileId)?.dataDir : undefined;
         if (ext.scope !== "shared" && !dataDir) return null;
@@ -431,7 +524,7 @@ app
         return readManifestIcon(abs);
       },
     );
-    ipcMain.handle("extensions:prepareFromWebStore", async (_e, urlOrId: string) => {
+    handleIpc(IPC.EXTENSIONS_PREPARE_FROM_WEB_STORE, async (_e, urlOrId: string) => {
       try {
         return await extensionsService.prepareFromWebStore(urlOrId);
       } catch (e) {
@@ -441,7 +534,7 @@ app
         throw e;
       }
     });
-    ipcMain.handle("extensions:prepareFromFile", async () => {
+    handleIpc(IPC.EXTENSIONS_PREPARE_FROM_FILE, async () => {
       const r = await dialog.showOpenDialog(mainWindow!, {
         title: "Add extension (.crx or .zip)",
         properties: ["openFile"],
@@ -450,7 +543,7 @@ app
       if (r.canceled || !r.filePaths[0]) return null;
       return prepareStaged(r.filePaths[0]);
     });
-    ipcMain.handle("extensions:prepareFromFolder", async () => {
+    handleIpc(IPC.EXTENSIONS_PREPARE_FROM_FOLDER, async () => {
       const r = await dialog.showOpenDialog(mainWindow!, {
         title: "Add unpacked extension folder",
         properties: ["openDirectory"],
@@ -461,12 +554,14 @@ app
 
     // Fingerprint generator IPC — called from create + edit forms when the
     // user hits Regen. Returns a fresh, internally-consistent preset.
-    ipcMain.handle("fingerprint:generate", () => generateFingerprint());
-    ipcMain.handle("fingerprint:devices", () => deviceCatalog());
-    ipcMain.handle("fingerprint:locales", () => localeCatalog());
-    ipcMain.handle("fingerprint:localeForCountry", (_e, cc: string) => findLocaleIdByCountry(cc));
-    ipcMain.handle(
-      "fingerprint:reconcile",
+    handleIpc(IPC.FINGERPRINT_GENERATE, () => generateFingerprint());
+    handleIpc(IPC.FINGERPRINT_DEVICES, () => deviceCatalog());
+    handleIpc(IPC.FINGERPRINT_LOCALES, () => localeCatalog());
+    handleIpc(IPC.FINGERPRINT_LOCALE_FOR_COUNTRY, (_e, cc: string) =>
+      findLocaleIdByCountry(cc),
+    );
+    handleIpc(
+      IPC.FINGERPRINT_RECONCILE,
       (
         _e,
         current: Parameters<typeof reconcileFingerprint>[0],
@@ -494,8 +589,8 @@ app
     // Proxy geo-IP probe — verifies that the profile's locale + timezone are
     // coherent with the proxy IP's country. Detection vendors flag mismatches
     // like "Accept-Language: ru-RU + IP in US" as suspicious.
-    ipcMain.handle(
-      "proxy:detectGeo",
+    handleIpc(
+      IPC.PROXY_DETECT_GEO,
       async (
         _e,
         proxy: ProxyConfig,
@@ -517,8 +612,8 @@ app
     );
 
     // Profile import / export
-    ipcMain.handle(
-      "profiles:export",
+    handleIpc(
+      IPC.PROFILES_EXPORT,
       async (
         _e,
         id: string,
@@ -546,8 +641,8 @@ app
       },
     );
 
-    ipcMain.handle(
-      "profiles:import",
+    handleIpc(
+      IPC.PROFILES_IMPORT,
       async (
         _e,
         passphrase: string,
@@ -591,7 +686,7 @@ app
     );
 
     // System info
-    ipcMain.handle("system:info", () => ({
+    handleIpc(IPC.SYSTEM_INFO, () => ({
       mcpHttpUrl: httpTransport ? mktBrowserMcpBaseUrl(mcpHttpPort) : null,
       // Bearer token an MCP client must send as `Authorization: Bearer <token>`.
       // Surfaced so the in-app panel can show a ready-to-paste client config.
@@ -644,7 +739,7 @@ async function backfillProxyCountries(): Promise<void> {
       if (geo.country) {
         profileManager.setProxyCountry(summary.id, geo.country.toLowerCase());
         // Nudge the renderer so it refetches the list and re-renders flags.
-        mainWindow?.webContents.send("profiles:proxy-country-updated", {
+        sendToRenderer(IPC_EVENTS.PROFILES_PROXY_COUNTRY_UPDATED, {
           id: summary.id,
           country: geo.country.toLowerCase(),
         });

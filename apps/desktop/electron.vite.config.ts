@@ -26,6 +26,15 @@ const NATIVE_EXTERNALS = [
 export default defineConfig({
   main: {
     build: {
+      externalizeDeps: {
+        exclude: [
+          "@mktbrowser/cdp-driver",
+          "@mktbrowser/mcp-server",
+          "@mktbrowser/profile-manager",
+          "@mktbrowser/settings-store",
+          "@mktbrowser/types",
+        ],
+      },
       rollupOptions: {
         external: NATIVE_EXTERNALS,
         input: { index: resolve(__dirname, "src/main/index.ts") },
@@ -34,9 +43,11 @@ export default defineConfig({
   },
   preload: {
     build: {
+      externalizeDeps: false,
       rollupOptions: {
         external: ["electron"],
         input: { index: resolve(__dirname, "src/preload/index.ts") },
+        output: { format: "cjs", entryFileNames: "[name].cjs" },
       },
     },
   },

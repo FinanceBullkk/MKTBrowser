@@ -21,11 +21,21 @@ profiles on the operator device.
 - MKB-00 was verified on 11 August 2026. The current packaged Windows build launched a disposable
   profile through a dedicated working proxy, and its in-browser exit IP matched an independent
   proxy probe. No proxy value or observed IP was recorded in evidence.
+- MKB-01 Windows compatibility and product identity was completed on 11 August 2026. A fresh normal
+  launch can copy legacy MultiZen profiles without changing the source; five primary-screen visual
+  baselines are checked in; Windows CI runs the W01/W02, MKB-01, and MKB-01E guards, typecheck,
+  build, and packaged runtime-contract verification on every push and pull request.
+- MKB-01E Electron upgrade and renderer hardening was completed on 11 August 2026. The packaged
+  application runs Electron `42.8.1` with modules ABI `146` and `better-sqlite3` `12.11.1`; the
+  renderer is sandboxed with a restrictive CSP, IPC and MCP exposure inventories fail closed, and
+  the fixed-seed fingerprint measurement remained identical before and after the upgrade.
 - This build may be used for an owner-led technical demo with disposable profiles. It is not
   approved for real accounts, pilot distribution, or team rollout.
 - The Windows directory package was regenerated on 11 August 2026 with SHA-256
-  `27c27443385f4ecdbc0187772934adb5d1718169d7c387d41b3718ef72ba2b18`; W02 guards and typecheck
-  passed. It remains unsigned.
+  `84b2c277970355cef0688bd3b8a6c4f1cc6750eb5605553af78b70e31aad2901`; Node guard 2/2,
+  MKB-01E tests 6/6, MKB-01 tests 9/9, W02 guards 8/8, typecheck, lint, build, packaged runtime and
+  profile-lifecycle contracts, fingerprint comparison, and five visual-baseline reviews passed. It
+  remains unsigned.
 
 ## Owned product and local contract
 
@@ -43,9 +53,17 @@ profiles on the operator device.
 | MKTTool dev/test override | `MKT_BROWSER_MCP_URL`                |
 | Relay config override     | `mktBrowserUrl`                      |
 
-Normal launches use the fixed product data root. MKT Browser does not scan, read, copy, move, or
-delete the legacy `%APPDATA%\MultiZen` store. An explicit Electron
-`--user-data-dir` remains available for disposable development tests.
+Normal launches use the fixed product data root. On the first normal launch only, when MKT Browser
+has no profile database and `%APPDATA%\MultiZen\data\profiles.db` exists, the app asks whether to
+copy the profiles. It copies the profile database, profile directories, and shared extension store
+into the MKT Browser root, rewrites copied profile paths, and never changes or deletes the MultiZen
+source. It does not copy the legacy MCP token or settings. Choosing `Start fresh` creates an
+independent empty store. An explicit Electron `--user-data-dir` remains available for disposable
+development tests and skips legacy discovery entirely.
+
+An unreadable legacy database is reported without crashing startup and offers `Start fresh` or
+`Quit`. Import also fails closed if any database row points outside the legacy profile root or its
+profile directory is missing.
 
 The upstream application updater, manual update IPC, GitHub publish configuration, and usage
 heartbeat are absent from the runtime. Application updates are intentionally disabled until an
@@ -62,9 +80,14 @@ Use Node.js 22 and the pinned Yarn version:
 
 ```powershell
 corepack yarn install --immutable
+corepack yarn verify:node
 corepack yarn workspace @mktbrowser/desktop test:w02
+corepack yarn workspace @mktbrowser/desktop test:mkb01
+corepack yarn workspace @mktbrowser/desktop test:mkb01e
 corepack yarn typecheck
+corepack yarn lint
 corepack yarn workspace @mktbrowser/desktop build
+corepack yarn verify:packaged-contract
 ```
 
 The Windows directory package is written to:
@@ -76,9 +99,16 @@ apps/desktop/release/win-unpacked/MKTBrowser.exe
 The current build command creates an unpacked technical package. W02 does not publish an installer,
 create a release, sign binaries, or update an installed copy.
 
-The packaging helper removes local `apps/desktop/node_modules/@mktbrowser/*` workspace links before
-invoking electron-builder. Run `corepack yarn install --immutable` again after a local package build
-before continuing with development commands such as typecheck or dev.
+The build fails before touching native modules unless it runs on Node.js 22. The packaging helper
+moves local `apps/desktop/node_modules/@mktbrowser/*` workspace links outside the package tree,
+reuses the installed Electron distribution when available, temporarily rebuilds `better-sqlite3`
+for the packaged Electron ABI, then restores both the workspace links and Node ABI even when
+packaging fails. No post-build dependency reinstall is required.
+
+Regenerate the reviewed MKB-01 screen references with `corepack yarn capture:mkb01-baselines`. The
+five PNG files live under `assets/images/mkb-01-visual-baselines/`. Measure a deliberate Electron
+upgrade fingerprint comparison with `corepack yarn measure:mkb01e-fingerprint` and explicit
+`--output` / `--label` arguments passed after `--`.
 
 ## Local data
 

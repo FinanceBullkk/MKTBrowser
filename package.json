@@ -16,6 +16,10 @@
     "lint": "yarn workspaces foreach -A run lint",
     "format": "prettier --write \"**/*.{ts,tsx,js,json,md,astro}\"",
     "mcp:dev": "yarn workspace @mktbrowser/mcp-server dev",
+    "verify:node": "node scripts/verify-node-version.cjs",
+    "verify:packaged-contract": "node scripts/verify-packaged-runtime-contract.cjs",
+    "capture:mkb01-baselines": "node scripts/capture-mkb01-visual-baselines.cjs",
+    "measure:mkb01e-fingerprint": "node scripts/measure-mkb01e-packaged-fingerprint.cjs",
     "clean": "rm -rf apps/*/dist apps/*/out packages/*/dist node_modules/.cache"
   },
   "devDependencies": {
