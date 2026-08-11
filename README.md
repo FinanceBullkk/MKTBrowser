@@ -29,13 +29,18 @@ profiles on the operator device.
   application runs Electron `42.8.1` with modules ABI `146` and `better-sqlite3` `12.11.1`; the
   renderer is sandboxed with a restrictive CSP, IPC and MCP exposure inventories fail closed, and
   the fixed-seed fingerprint measurement remained identical before and after the upgrade.
+- MKB-02 is in progress. Its first Windows slice adds deterministic, idempotent managed profile
+  creation with retry reconciliation and conflict rejection. This build advertises
+  `idempotent-create-v1`; `managed-profile-v1` and `atomic-launch-v1` remain unimplemented.
 - This build may be used for an owner-led technical demo with disposable profiles. It is not
   approved for real accounts, pilot distribution, or team rollout.
 - The Windows directory package was regenerated on 11 August 2026 with SHA-256
-  `84b2c277970355cef0688bd3b8a6c4f1cc6750eb5605553af78b70e31aad2901`; Node guard 2/2,
-  MKB-01E tests 6/6, MKB-01 tests 9/9, W02 guards 8/8, typecheck, lint, build, packaged runtime and
-  profile-lifecycle contracts, fingerprint comparison, and five visual-baseline reviews passed. It
-  remains unsigned.
+  `7634f689920fb0c5a5a1e8e45aaa98b6eb7d96e9abcf97a9ee926c543dc0a662`; Node guard 2/2,
+  W02 guards 8/8, MKB-01 tests 9/9, MKB-01E tests 6/6, MKB-02 tests 4/4, Windows packaging guards
+  3/3, typecheck, lint, build, packaged runtime and profile-lifecycle contracts, fingerprint
+  comparison, and five visual-baseline reviews passed. The packaged verifier covers profile update
+  persistence, invalid-proxy rejection, a real system Chrome launch/close, deletion, and clean
+  process exit. It remains unsigned.
 
 ## Owned product and local contract
 

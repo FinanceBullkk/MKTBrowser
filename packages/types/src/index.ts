@@ -40,7 +40,7 @@ export function mktBrowserMcpBaseUrl(port: number = MKT_BROWSER_DEFAULT_MCP_PORT
 export const MKT_BROWSER_CONTRACT_VERSION = 1;
 
 /** Bump when the on-disk profile record changes shape and needs a migration. */
-export const MKT_BROWSER_PROFILE_SCHEMA_VERSION = 1;
+export const MKT_BROWSER_PROFILE_SCHEMA_VERSION = 2;
 
 /**
  * What this build can actually do. A capability is listed only once it is implemented and tested,
@@ -48,7 +48,11 @@ export const MKT_BROWSER_PROFILE_SCHEMA_VERSION = 1;
  * Managed mode (`managed-profile-v1`, `idempotent-create-v1`, `atomic-launch-v1`) belongs to MKB-02
  * and must not be advertised before it exists.
  */
-export const MKT_BROWSER_CAPABILITIES = ["profile-contract-v1", "runtime-info-v1"] as const;
+export const MKT_BROWSER_CAPABILITIES = [
+  "profile-contract-v1",
+  "runtime-info-v1",
+  "idempotent-create-v1",
+] as const;
 
 export type MktBrowserCapability = (typeof MKT_BROWSER_CAPABILITIES)[number];
 

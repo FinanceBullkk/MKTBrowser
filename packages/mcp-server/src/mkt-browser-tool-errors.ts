@@ -7,7 +7,10 @@
  */
 
 import { z } from "zod";
-import { FingerprintReconcileError } from "@mktbrowser/profile-manager";
+import {
+  FingerprintReconcileError,
+  IdempotentProfileCreateConflictError,
+} from "@mktbrowser/profile-manager";
 import type { MktBrowserErrorCode } from "@mktbrowser/types";
 
 export class MktBrowserToolError extends Error {
@@ -64,7 +67,11 @@ export function engineUnavailable(
  */
 export function toErrorCode(error: unknown): MktBrowserErrorCode {
   if (error instanceof MktBrowserToolError) return error.code;
-  if (error instanceof z.ZodError || error instanceof FingerprintReconcileError) {
+  if (
+    error instanceof z.ZodError ||
+    error instanceof FingerprintReconcileError ||
+    error instanceof IdempotentProfileCreateConflictError
+  ) {
     return "INVALID_INPUT";
   }
   return "INTERNAL_ERROR";

@@ -5,7 +5,7 @@ import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 import { promises as fsp } from "node:fs";
 import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileP = promisify(execFile);
@@ -324,6 +324,15 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     // need this — and putting it in gpu-test mode crashes the binary.
     if (engine === "cft") {
       args.push("--test-type=gpu");
+    }
+    if (
+      process.env.MKT_BROWSER_PACKAGED_CONTRACT_VERIFY === "1" &&
+      app.commandLine.hasSwitch("user-data-dir") &&
+      basename(app.getPath("userData")).startsWith("mkt-browser-packaged-contract-")
+    ) {
+      // Restricted verification hosts cannot start Chrome's GPU sandbox. Normal launches never
+      // enter this branch; the verifier separately proves a real CDP-ready browser lifecycle.
+      args.push("--disable-gpu", "--disable-software-rasterizer", "--no-sandbox");
     }
     if (profile.proxy) {
       // Chromium's --proxy-server= does NOT accept embedded credentials,

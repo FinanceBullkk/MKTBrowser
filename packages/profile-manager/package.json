@@ -11,7 +11,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:legacy": "node --experimental-strip-types --test src/legacy-multizen-import.test.ts"
+    "test:legacy": "node --experimental-strip-types --test src/legacy-multizen-import.test.ts",
+    "test:managed": "tsx --test src/managed-profile-create.test.ts"
   },
   "dependencies": {
     "@mktbrowser/types": "workspace:*",
@@ -20,6 +21,7 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
-    "@types/uuid": "^10.0.0"
+    "@types/uuid": "^10.0.0",
+    "tsx": "^4.19.2"
   }
 }

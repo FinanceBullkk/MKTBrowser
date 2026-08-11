@@ -1108,6 +1108,7 @@ __metadata:
     "@types/better-sqlite3": "npm:^7.6.12"
     "@types/uuid": "npm:^10.0.0"
     better-sqlite3: "npm:^12.11.1"
+    tsx: "npm:^4.19.2"
     uuid: "npm:^11.0.5"
   languageName: unknown
   linkType: soft

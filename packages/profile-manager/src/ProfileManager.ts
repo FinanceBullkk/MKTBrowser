@@ -30,11 +30,32 @@ interface ProfileRow {
   icon: string | null;
   start_url: string | null;
   search_provider: string | null;
+  external_ref: string | null;
+  create_request_id: string | null;
+  create_request_hash: string | null;
 }
 
 export interface ProfileManagerOptions {
   dbPath: string;
   profilesRoot: string;
+}
+
+export interface IdempotentProfileCreateMetadata {
+  externalRef: string;
+  requestId: string;
+  requestHash: string;
+}
+
+export interface IdempotentProfileCreateResult {
+  profile: Profile;
+  created: boolean;
+}
+
+export class IdempotentProfileCreateConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "IdempotentProfileCreateConflictError";
+  }
 }
 
 export class ProfileManager {
@@ -83,6 +104,21 @@ export class ProfileManager {
     if (!cols.some((c) => c.name === "search_provider")) {
       this.db.exec(`ALTER TABLE profiles ADD COLUMN search_provider TEXT`);
     }
+    if (!cols.some((c) => c.name === "external_ref")) {
+      this.db.exec(`ALTER TABLE profiles ADD COLUMN external_ref TEXT`);
+    }
+    if (!cols.some((c) => c.name === "create_request_id")) {
+      this.db.exec(`ALTER TABLE profiles ADD COLUMN create_request_id TEXT`);
+    }
+    if (!cols.some((c) => c.name === "create_request_hash")) {
+      this.db.exec(`ALTER TABLE profiles ADD COLUMN create_request_hash TEXT`);
+    }
+    this.db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_external_ref
+        ON profiles(external_ref) WHERE external_ref IS NOT NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_create_request_id
+        ON profiles(create_request_id) WHERE create_request_id IS NOT NULL;
+    `);
   }
 
   list(): ProfileSummary[] {
@@ -121,6 +157,28 @@ export class ProfileManager {
   }
 
   create(input: CreateProfileInput): Profile {
+    return this.createWithMetadata(input);
+  }
+
+  createIdempotent(
+    input: CreateProfileInput,
+    metadata: IdempotentProfileCreateMetadata,
+  ): IdempotentProfileCreateResult {
+    const byRequest = this.findManagedCreate("create_request_id", metadata.requestId);
+    if (byRequest) return this.reconcileManagedCreate(byRequest, metadata, "request_id");
+
+    const byExternalRef = this.findManagedCreate("external_ref", metadata.externalRef);
+    if (byExternalRef) {
+      return this.reconcileManagedCreate(byExternalRef, metadata, "external_ref");
+    }
+
+    return { profile: this.createWithMetadata(input, metadata), created: true };
+  }
+
+  private createWithMetadata(
+    input: CreateProfileInput,
+    metadata?: IdempotentProfileCreateMetadata,
+  ): Profile {
     const id = uuidv4();
     const now = new Date().toISOString();
     const dataDir = join(this.profilesRoot, id);
@@ -150,8 +208,9 @@ export class ProfileManager {
     this.db
       .prepare(
         `INSERT INTO profiles
-         (id, name, notes, tags, proxy, fingerprint, extensions, icon, start_url, search_provider, data_dir, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, name, notes, tags, proxy, fingerprint, extensions, icon, start_url, search_provider,
+          data_dir, created_at, updated_at, external_ref, create_request_id, create_request_hash)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         profile.id,
@@ -167,9 +226,37 @@ export class ProfileManager {
         profile.dataDir,
         profile.createdAt,
         profile.updatedAt,
+        metadata?.externalRef ?? null,
+        metadata?.requestId ?? null,
+        metadata?.requestHash ?? null,
       );
 
     return profile;
+  }
+
+  private findManagedCreate(
+    column: "external_ref" | "create_request_id",
+    value: string,
+  ): ProfileRow | null {
+    const row = this.db.prepare(`SELECT * FROM profiles WHERE ${column} = ?`).get(value) as
+      | ProfileRow
+      | undefined;
+    return row ?? null;
+  }
+
+  private reconcileManagedCreate(
+    row: ProfileRow,
+    metadata: IdempotentProfileCreateMetadata,
+    matchedBy: "external_ref" | "request_id",
+  ): IdempotentProfileCreateResult {
+    const sameExternalRef = row.external_ref === metadata.externalRef;
+    const sameRequest = row.create_request_hash === metadata.requestHash;
+    if (!sameExternalRef || !sameRequest) {
+      throw new IdempotentProfileCreateConflictError(
+        `Managed profile create ${matchedBy} was already used for a different request.`,
+      );
+    }
+    return { profile: this.rowToProfile(row), created: false };
   }
 
   /**

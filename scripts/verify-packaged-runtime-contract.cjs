@@ -8,6 +8,10 @@ const { mkdtemp, readFile, rm } = require("node:fs/promises");
 const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
+const {
+  installSystemChromeEngineFixture,
+  removeSystemChromeEngineFixture,
+} = require("./system-chrome-engine-fixture.cjs");
 
 const EXPECTED_PROVIDER = "mkt-browser";
 const EXPECTED_CONTRACT_VERSION = 1;
@@ -24,47 +28,56 @@ async function main() {
   assert.ok(existsSync(executable), "Build the Windows directory package before verification.");
 
   const userData = await mkdtemp(path.join(os.tmpdir(), "mkt-browser-packaged-contract-"));
-  const port = await reservePort();
-  const env = {
-    ...process.env,
-    ELECTRON_ENABLE_LOGGING: "1",
-    MKT_BROWSER_MCP_PORT: String(port),
-  };
-  delete env.ELECTRON_RUN_AS_NODE;
-
-  const appPath = process.env.MKT_BROWSER_APP_PATH;
-  const child = spawn(
-    executable,
-    [
-      ...(appPath ? [path.resolve(appPath)] : []),
-      `--user-data-dir=${userData}`,
-      // The verifier exercises MCP only; CI and restricted Windows hosts may not launch GPU/sandbox subprocesses.
-      "--disable-gpu",
-      "--disable-software-rasterizer",
-      "--no-sandbox",
-      "--enable-logging=stderr",
-      "--v=1",
-    ],
-    {
-    env,
-    stdio: ["ignore", "pipe", "pipe"],
-    windowsHide: true,
-    },
-  );
+  let engineFixture;
+  let child;
   let diagnostics = "";
-  const collect = (chunk) => {
-    diagnostics = (diagnostics + chunk.toString("utf8")).slice(-8_000);
-  };
-  child.stdout.on("data", collect);
-  child.stderr.on("data", collect);
-
+  let baseUrl;
+  let token;
+  let createdProfileId;
+  let launchedPid;
+  let failure;
   try {
+    engineFixture = await installSystemChromeEngineFixture(userData);
+    const port = await reservePort();
+    const env = {
+      ...process.env,
+      ELECTRON_ENABLE_LOGGING: "1",
+      MKT_BROWSER_PACKAGED_CONTRACT_VERIFY: "1",
+      MKT_BROWSER_MCP_PORT: String(port),
+    };
+    delete env.ELECTRON_RUN_AS_NODE;
+
+    const appPath = process.env.MKT_BROWSER_APP_PATH;
+    child = spawn(
+      executable,
+      [
+        ...(appPath ? [path.resolve(appPath)] : []),
+        `--user-data-dir=${userData}`,
+        // The verifier exercises MCP only; restricted hosts may not launch GPU/sandbox subprocesses.
+        "--disable-gpu",
+        "--disable-software-rasterizer",
+        "--no-sandbox",
+        "--enable-logging=stderr",
+        "--v=1",
+      ],
+      {
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      },
+    );
+    const collect = (chunk) => {
+      diagnostics = (diagnostics + chunk.toString("utf8")).slice(-8_000);
+    };
+    child.stdout.on("data", collect);
+    child.stderr.on("data", collect);
+
     const tokenPath = path.join(userData, "mcp-token");
     await waitFor(() => existsSync(tokenPath), 30_000, "MCP token file", child);
-    const token = (await readFile(tokenPath, "utf8")).trim();
+    token = (await readFile(tokenPath, "utf8")).trim();
     assert.ok(token, "The packaged app created an empty MCP token.");
 
-    const baseUrl = `http://127.0.0.1:${port}`;
+    baseUrl = `http://127.0.0.1:${port}`;
     await waitFor(async () => {
       try {
         const response = await fetch(`${baseUrl}/healthz`, {
@@ -94,28 +107,71 @@ async function main() {
     assert.ok(runtime.capabilities.includes("runtime-info-v1"));
 
     const beforeCreate = await callTool(baseUrl, token, "list_profiles", {});
-    const created = await callTool(baseUrl, token, "create_profile", {
+    const createRequest = {
       name: "Packaged contract verifier",
       seed: "packaged-contract-verifier-v1",
-    });
+      external_ref: "packaged-contract-verifier",
+      request_id: "packaged-contract-verifier-v1",
+    };
+    const created = await callTool(baseUrl, token, "create_profile", createRequest);
     assert.equal(typeof created.id, "string");
     assert.ok(created.id);
+    assert.equal(created.created, true);
+    createdProfileId = created.id;
+
+    const retried = await callTool(baseUrl, token, "create_profile", createRequest);
+    assert.equal(retried.id, created.id);
+    assert.equal(retried.created, false);
+
+    const conflictingCreate = await callToolResult(baseUrl, token, "create_profile", {
+      ...createRequest,
+      name: "Conflicting packaged contract verifier",
+    });
+    assert.equal(conflictingCreate.isError, true);
+    assert.equal(conflictingCreate.body.error?.code, "INVALID_INPUT");
 
     const afterCreate = await callTool(baseUrl, token, "list_profiles", {});
     assert.equal(afterCreate.profiles.length, beforeCreate.profiles.length + 1);
     assert.ok(afterCreate.profiles.some((profile) => profile.id === created.id));
 
-    const launch = await callToolResult(baseUrl, token, "launch_profile", {
+    const updated = await callTool(baseUrl, token, "update_profile", {
+      profile_id: created.id,
+      name: "Packaged contract verifier updated",
+      tags: ["packaged-contract", "lifecycle"],
+    });
+    assert.equal(updated.id, created.id);
+    assert.equal(updated.name, "Packaged contract verifier updated");
+    assert.deepEqual(updated.tags, ["packaged-contract", "lifecycle"]);
+
+    const invalidProxy = await callToolResult(baseUrl, token, "update_profile", {
+      profile_id: created.id,
+      proxy: { type: "http", host: "127.0.0.1", port: 0 },
+    });
+    assert.equal(invalidProxy.isError, true, "update_profile accepted proxy port 0.");
+    assert.equal(invalidProxy.body.error?.code, "INVALID_INPUT");
+
+    const afterUpdate = await callTool(baseUrl, token, "list_profiles", {});
+    const persisted = afterUpdate.profiles.find((profile) => profile.id === created.id);
+    assert.equal(persisted?.name, "Packaged contract verifier updated");
+    assert.deepEqual(persisted?.tags, ["packaged-contract", "lifecycle"]);
+    assert.equal(persisted?.proxy, null);
+
+    const launch = await callTool(baseUrl, token, "launch_profile", {
       profile_id: created.id,
     });
-    if (launch.isError) {
-      assert.equal(launch.body.error?.code, "ENGINE_UNAVAILABLE");
-    } else {
-      assert.equal(launch.body.id, created.id);
-    }
+    assert.equal(launch.id, created.id);
+    assert.equal(Number.isInteger(launch.pid), true);
+    launchedPid = launch.pid;
+    assert.equal(isProcessRunning(launch.pid), true, "Launched Chrome process is not running.");
 
     const closed = await callTool(baseUrl, token, "close_profile", { profile_id: created.id });
     assert.equal(closed.closed, created.id);
+    await waitFor(
+      () => !isProcessRunning(launch.pid),
+      10_000,
+      `Chrome process ${launch.pid} to exit after close_profile`,
+      child,
+    );
     const deleted = await callTool(baseUrl, token, "delete_profile", { profile_id: created.id });
     assert.equal(deleted.deleted, created.id);
 
@@ -128,12 +184,47 @@ async function main() {
     if (diagnostics.trim()) {
       error.message += `\nPackaged app diagnostics:\n${diagnostics.trim()}`;
     }
-    throw error;
+    failure = error;
   } finally {
-    child.kill();
-    await Promise.race([once(child, "exit"), new Promise((resolve) => setTimeout(resolve, 5_000))]);
-    await rm(userData, { recursive: true, force: true });
+    const cleanupErrors = [];
+    if (child && baseUrl && token && createdProfileId) {
+      try {
+        const closeResult = await callToolResult(baseUrl, token, "close_profile", {
+          profile_id: createdProfileId,
+        });
+        assert.equal(closeResult.isError, false, "Cleanup close_profile returned an MCP error.");
+        if (launchedPid) {
+          await waitFor(
+            () => !isProcessRunning(launchedPid),
+            10_000,
+            `Chrome process ${launchedPid} to exit during cleanup`,
+            child,
+          );
+        }
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    if (child) {
+      try {
+        await stopChild(child, "packaged MKT Browser app");
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    try {
+      if (engineFixture) await removeSystemChromeEngineFixture(engineFixture);
+      await rm(userData, { recursive: true, force: true });
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    if (cleanupErrors.length > 0) {
+      const details = cleanupErrors.map((error) => error.message).join("\n");
+      if (failure) failure.message += `\nPackaged verifier cleanup failed:\n${details}`;
+      else failure = new Error(`Packaged verifier cleanup failed:\n${details}`);
+    }
   }
+  if (failure) throw failure;
 }
 
 async function callTool(baseUrl, token, name, toolArgs) {
@@ -182,13 +273,45 @@ async function reservePort() {
 async function waitFor(check, timeoutMs, label, child) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (child.exitCode !== null) {
-      throw new Error(`Packaged app exited with code ${child.exitCode} while waiting for ${label}.`);
+    if (child.exitCode !== null || child.signalCode !== null) {
+      const outcome = child.exitCode !== null ? `code ${child.exitCode}` : `signal ${child.signalCode}`;
+      throw new Error(`Packaged app exited with ${outcome} while waiting for ${label}.`);
     }
     if (await check()) return;
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
   throw new Error(`Timed out waiting for ${label}.`);
+}
+
+function isProcessRunning(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error.code === "ESRCH") return false;
+    if (error.code === "EPERM") return true;
+    throw error;
+  }
+}
+
+async function stopChild(child, label) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const exitPromise = once(child, "exit");
+  child.kill();
+  let timeout;
+  try {
+    await Promise.race([
+      exitPromise,
+      new Promise((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`Timed out waiting for ${label} (PID ${child.pid}) to exit.`)),
+          10_000,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 main().catch((error) => {

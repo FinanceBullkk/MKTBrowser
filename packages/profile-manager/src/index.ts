@@ -1,4 +1,9 @@
-export { ProfileManager } from "./ProfileManager.js";
+export {
+  ProfileManager,
+  IdempotentProfileCreateConflictError,
+  type IdempotentProfileCreateMetadata,
+  type IdempotentProfileCreateResult,
+} from "./ProfileManager.js";
 export {
   defaultFingerprint,
   generateFingerprint,

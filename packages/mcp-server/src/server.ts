@@ -1,5 +1,6 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { ProfileManager } from "@mktbrowser/profile-manager";
 import {
@@ -338,15 +339,34 @@ const FingerprintInputSchema = z
   })
   .strict();
 
-const CreateProfileSchema = z.object({
-  name: z.string().min(1),
-  notes: z.string().optional(),
-  tags: z.array(z.string()).optional(),
-  proxy: ProxySchema.optional(),
-  fingerprint: FingerprintInputSchema.optional(),
-  // Optional entropy seed; rotates CloakBrowser canvas/audio/WebGL noise.
-  seed: z.string().min(1).optional(),
-});
+const CreateProfileSchema = z
+  .object({
+    name: z.string().min(1),
+    notes: z.string().optional(),
+    tags: z.array(z.string()).optional(),
+    proxy: ProxySchema.optional(),
+    fingerprint: FingerprintInputSchema.optional(),
+    // Optional entropy seed; rotates CloakBrowser canvas/audio/WebGL noise.
+    seed: z.string().min(1).optional(),
+    external_ref: z.string().trim().min(1).max(200).optional(),
+    request_id: z.string().trim().min(1).max(128).optional(),
+  })
+  .superRefine((input, context) => {
+    const hasExternalRef = input.external_ref !== undefined;
+    const hasRequestId = input.request_id !== undefined;
+    if (hasExternalRef !== hasRequestId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "external_ref and request_id must be provided together.",
+      });
+    }
+    if (hasExternalRef && input.seed === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Managed profile creation requires a deterministic seed.",
+      });
+    }
+  });
 
 const UpdateProfileSchema = ProfileIdSchema.extend({
   name: z.string().min(1).optional(),
@@ -492,10 +512,18 @@ async function dispatch(
         const reconciled = reconcileFingerprint(generateFingerprint(seed), input.fingerprint ?? {});
         createInput.fingerprint = seed ? { ...reconciled, seed } : reconciled;
       }
-      const created = profileManager.create(createInput);
+      const result = input.request_id
+        ? profileManager.createIdempotent(createInput, {
+            externalRef: input.external_ref!,
+            requestId: input.request_id,
+            requestHash: managedCreateRequestHash(input),
+          })
+        : { profile: profileManager.create(createInput), created: true };
+      const created = result.profile;
       return {
         id: created.id,
         name: created.name,
+        created: result.created,
         proxy: redactedProxy(created.proxy),
         fingerprint: fingerprintSummary(created.fingerprint),
       };
@@ -770,7 +798,7 @@ const TOOL_DEFINITIONS = [
   {
     name: "create_profile",
     description:
-      "Create a new browser profile. Only `name` is required; a coherent default fingerprint is generated. Optionally pass a `proxy`, high-level `fingerprint` knobs, and/or a `seed` (rotates canvas/audio/WebGL noise). Call list_fingerprint_options for valid device families and locale ids.",
+      "Create a new browser profile. Only `name` is required; a coherent default fingerprint is generated. Managed callers pass `external_ref`, `request_id`, and a deterministic `seed`; exact retries return the original profile instead of creating a duplicate. Optionally pass a `proxy` and high-level `fingerprint` knobs. Call list_fingerprint_options for valid device families and locale ids.",
     inputSchema: {
       type: "object",
       required: ["name"],
@@ -783,6 +811,14 @@ const TOOL_DEFINITIONS = [
         seed: {
           type: "string",
           description: "Optional entropy seed for the native fingerprint noise.",
+        },
+        external_ref: {
+          type: "string",
+          description: "Stable MKTTool-owned reference for idempotent managed creation.",
+        },
+        request_id: {
+          type: "string",
+          description: "Retry-stable request identifier. Requires external_ref and seed.",
         },
       },
     },
@@ -1087,6 +1123,11 @@ const TOOL_DEFINITIONS = [
     },
   },
 ];
+
+function managedCreateRequestHash(input: z.infer<typeof CreateProfileSchema>): string {
+  const { external_ref: _externalRef, request_id: _requestId, ...profileRequest } = input;
+  return createHash("sha256").update(JSON.stringify(profileRequest)).digest("hex");
+}
 
 /** Coherent, non-secret view of a fingerprint for tool responses. */
 function fingerprintSummary(fp: FingerprintConfig): {

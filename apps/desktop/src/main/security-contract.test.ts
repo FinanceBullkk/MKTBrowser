@@ -83,13 +83,30 @@ test("packaged verification exercises the profile lifecycle", () => {
   for (const tool of [
     "list_profiles",
     "create_profile",
+    "update_profile",
     "launch_profile",
     "close_profile",
     "delete_profile",
   ]) {
     assert.ok(verifier.includes(`"${tool}"`), `Packaged verifier does not call ${tool}.`);
   }
-  assert.match(verifier, /ENGINE_UNAVAILABLE/);
+  assert.doesNotMatch(verifier, /ENGINE_UNAVAILABLE/);
+  assert.match(verifier, /INVALID_INPUT/);
+  assert.match(verifier, /isProcessRunning/);
+  assert.match(verifier, /stopChild/);
+  assert.match(verifier, /MKT_BROWSER_PACKAGED_CONTRACT_VERIFY:\s*"1"/);
+
+  const fixture = source("scripts/system-chrome-engine-fixture.cjs");
+  assert.match(fixture, /MKT_BROWSER_SYSTEM_CHROME/);
+  assert.match(fixture, /current\.json/);
+  assert.match(fixture, /browserEngine:\s*"cft"/);
+  assert.match(fixture, /symlink\([^\n]+"junction"\)/);
+  assert.match(fixture, /unlink\(fixture\.junctionPath\)/);
+
+  const driver = source("apps/desktop/src/main/ChromiumBrowserDriver.ts");
+  assert.match(driver, /MKT_BROWSER_PACKAGED_CONTRACT_VERIFY === "1"/);
+  assert.match(driver, /mkt-browser-packaged-contract-/);
+  assert.match(driver, /"--disable-gpu", "--disable-software-rasterizer", "--no-sandbox"/);
 });
 
 test("fingerprint measurement reports cleanup failures", () => {

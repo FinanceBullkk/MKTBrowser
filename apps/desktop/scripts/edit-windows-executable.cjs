@@ -3,6 +3,41 @@ const { join } = require("node:path");
 
 const PRODUCT_NAME = "MKT Browser";
 const EXECUTABLE_NAME = "MKTBrowser.exe";
+const TRANSIENT_COMMIT_ERROR = "Unable to commit changes";
+const RETRY_DELAYS_MS = [250, 500, 1000];
+
+function isTransientCommitError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes(TRANSIENT_COMMIT_ERROR);
+}
+
+function wait(delayMs) {
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
+async function runRceditWithRetry(
+  editExecutable,
+  executablePath,
+  options,
+  { retryDelaysMs = RETRY_DELAYS_MS, sleep = wait, warn = console.warn } = {},
+) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await editExecutable(executablePath, options);
+    } catch (error) {
+      const retryDelayMs = retryDelaysMs[attempt];
+      if (!isTransientCommitError(error) || retryDelayMs === undefined) {
+        throw error;
+      }
+
+      warn(
+        `[edit-windows-executable] rcedit could not commit PE changes; retrying in ${retryDelayMs}ms ` +
+          `(attempt ${attempt + 2}/${retryDelaysMs.length + 1}).`,
+      );
+      await sleep(retryDelayMs);
+    }
+  }
+}
 
 /**
  * Apply Windows VersionInfo after electron-builder creates the directory
@@ -18,7 +53,7 @@ module.exports = async function editWindowsExecutable(context) {
   const { rcedit } = await import("rcedit");
   const version = context.packager.appInfo.version;
 
-  await rcedit(executablePath, {
+  await runRceditWithRetry(rcedit, executablePath, {
     "file-version": version,
     "product-version": version,
     "version-string": {
@@ -30,3 +65,6 @@ module.exports = async function editWindowsExecutable(context) {
     },
   });
 };
+
+module.exports.isTransientCommitError = isTransientCommitError;
+module.exports.runRceditWithRetry = runRceditWithRetry;
