@@ -1,7 +1,7 @@
-name: Windows W02 Build
+name: Windows Technical Build
 
-# W02 has no release or publishing channel. Run this workflow manually to
-# validate the isolated Windows directory package without creating a release.
+# Windows x64 is the only v1 and team-demo platform. Run this workflow manually to validate the
+# isolated technical directory package without creating a release or claiming pilot readiness.
 on:
   workflow_dispatch:
 

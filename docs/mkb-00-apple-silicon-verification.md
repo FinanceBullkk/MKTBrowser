@@ -1,7 +1,10 @@
-# MKB-00 Apple Silicon verification runbook
+# MKB-07 Apple Silicon verification runbook
 
-**Purpose:** Close the macOS half of MKB-00 using a real Apple Silicon Mac.
+**Purpose:** Preserve the future MKB-07 native macOS verification path using a real Apple Silicon Mac.
 **Current result:** Not run. CI configuration and release assets are not substitutes for this test.
+
+**Scope update, 11 August 2026:** Windows x64 is the only v1 and team-demo platform. Do not run this
+work on the current critical path; Apple Silicon no longer closes or blocks MKB-00.
 
 This runbook uses only a disposable application data directory, a disposable browser profile, and a
 dedicated test proxy. Do not sign in to Reddit, Facebook, Google, or any other account. Do not point
@@ -361,8 +364,8 @@ Record only redacted facts:
 
 ## Gate result
 
-Pass MKB-00 only when every acceptance item above is green on a real Apple Silicon Mac and the
-Windows evidence remains green. If the app or engine runs through Rosetta, the checksum or license
-cannot be confirmed, proxy application fails, exit IP differs, or a failed update is followed by a
-launch, record MKB-00 as blocked. Do not expand the Windows-only implementation exception recorded
-through W02, claim MKB-01 compatibility, or begin pilot distribution.
+Pass the native-runtime portion of MKB-07 only when every acceptance item above is green on a real
+Apple Silicon Mac and the Windows evidence remains green. If the app or engine runs through Rosetta,
+the checksum or license cannot be confirmed, proxy application fails, exit IP differs, or a failed
+update is followed by a launch, keep MKB-07 blocked. This future result does not change Windows v1
+pilot or distribution approval.

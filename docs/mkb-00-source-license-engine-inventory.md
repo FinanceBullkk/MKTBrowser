@@ -1,7 +1,7 @@
 # MKB-00 source, license, engine, and Windows baseline inventory
 
-**Last updated:** 10 August 2026
-**Status:** In progress; MKB-00 has not passed its cross-platform gate
+**Last updated:** 11 August 2026
+**Status:** Verified on Windows x64; later release and pilot gates remain open
 **Scope:** Engineering inventory for an internal product. It is not legal advice.
 
 ## Decision summary
@@ -23,11 +23,12 @@ MKT Browser may continue as an internal experiment only under all of these const
 - Recheck the current binary license and subscription terms before every engine approval.
 - Keep application, engine, and release-channel approval separate.
 
-On 10 August 2026, the project owner approved MKB-W01 as a Windows-only technical exception to the
-original phase order. Product identity and storage isolation may advance on Windows while this gate
-remains open, but no cross-platform compatibility, pilot, distribution, or rollout claim may be
-made. A real Apple Silicon build/runtime test and a disposable correct-proxy test are still missing.
-See [MKB-W01 Windows product isolation](mkb-w01-windows-product-isolation.md).
+On 10 August 2026, the project owner made Windows x64 the only v1 platform and moved Apple Silicon
+to MKB-07 after v1. On 11 August the owner stopped active MacBook setup so the Windows technical
+demo could remain on the critical path. Mac evidence no longer closes or blocks MKB-00. Later that
+day, the disposable Windows correct-proxy positive path passed and completed MKB-00. See
+[MKB-W01 Windows product isolation](mkb-w01-windows-product-isolation.md) and
+[MKB-W02 Windows internal clean break](mkb-w02-windows-internal-clean-break.md).
 
 ## Pinned application source
 
@@ -43,21 +44,32 @@ See [MKB-W01 Windows product isolation](mkb-w01-windows-product-isolation.md).
 | Node declaration  | `>=20.0.0`                                         | Root `engines.node` field                                                                |
 | Desktop version   | `0.3.1`                                            | `apps/desktop/package.json`                                                              |
 
-The local fork lives at `E:\MKTBrowser`. It has a fetch-only `upstream` remote; its push URL is
-`NO_PUSH`. No `origin` remote exists because no destination repository has been authorized. The
-local `main` branch is pinned at the commit above, and `master` tracks `upstream/master` for future
-comparison. No commit or push was made during MKB-00.
+The local fork lives at `E:\MKTBrowser`. Its `origin` is the internal
+`FinanceBullkk/MKTBrowser` repository. The `upstream` fetch remote remains pinned to MultiZen and
+has push URL `NO_PUSH`; `master` tracks `upstream/master` for comparison while `main` contains the
+owned W01/W02 work. No commit or push was made during the original MKB-00 baseline run; later W01
+and W02 changes were committed and pushed to `origin/main`.
 
 The pinned source tree has one tracked license/notice file: the root `LICENSE`. It remains intact.
 
 ## Device inventory
 
-| Platform            | Observed inventory                                                    | MKB-00 status                              |
-| ------------------- | --------------------------------------------------------------------- | ------------------------------------------ |
-| Windows x64         | One Windows x64 host, build `10.0.26200`, tested on 10 August 2026    | Baseline built and exercised               |
-| macOS Apple Silicon | No device, chip model, or macOS version was available in this session | **Unverified; gate blocker**               |
-| Intel Mac           | No demonstrated operational need or test device                       | Out of scope until inventory proves a need |
-| Wider Windows fleet | Device count was not supplied                                         | Inventory remains open                     |
+| Platform            | Observed inventory                                                    | Current disposition                               |
+| ------------------- | --------------------------------------------------------------------- | ------------------------------------------------- |
+| Windows x64         | One Windows x64 host, build `10.0.26200`, tested on 10-11 August 2026 | Sole v1/demo platform; MKB-00 verified             |
+| macOS Apple Silicon | No device, chip model, or macOS version was available in this session | Deferred to MKB-07; not an MKB-00 blocker         |
+| Intel Mac           | No demonstrated operational need or test device                       | Out of scope                                      |
+| Wider Windows fleet | Device count was not supplied                                         | Required before MKB-04, not MKB-00                |
+
+### Current owned Windows artifact — 11 August 2026
+
+The post-W02 directory package was regenerated at
+`apps/desktop/release/win-unpacked/MKTBrowser.exe`. It is PE x64, reports product and file
+description `MKT Browser`, and has SHA-256
+`27c27443385f4ecdbc0187772934adb5d1718169d7c387d41b3718ef72ba2b18`, identical to the verified W02
+artifact. W02 guards passed 8/8 and repository typecheck passed after packaging. The executable is
+unsigned and remains suitable only for an owner-led technical demo with disposable profiles; this
+does not authorize pilot distribution or real-account use.
 
 ## Windows build evidence
 
@@ -110,8 +122,8 @@ unimplemented and unverified.
 
 ## Windows runtime and MCP evidence
 
-All successful tests used an explicit Electron `--user-data-dir` pointing to a new temporary vault,
-`MULTIZEN_NO_TELEMETRY=1`, no account login, no cookies, and no real proxy credentials.
+The 10 August baseline tests used an explicit Electron `--user-data-dir` pointing to a new temporary
+vault, `MULTIZEN_NO_TELEMETRY=1`, no account login, no cookies, and no real proxy credentials.
 
 Changing `APPDATA` and `LOCALAPPDATA` alone did not isolate Electron's application data on this host.
 An initial launch therefore opened the pre-existing default MultiZen directory. It was stopped before
@@ -172,6 +184,20 @@ Windows negative-path evidence. Atomic application-and-launch remains MKB-02 wor
 
 Every disposable profile and app process was closed after testing. The temporary engine cache was
 left in the isolated test directory as reproducibility evidence; it contains no account data.
+
+### Correct-proxy positive path — 11 August 2026
+
+MKTTool's `smoke-test-mkt-browser-correct-proxy.ts` ran the current packaged Windows build through a
+dedicated working proxy. The proxy was supplied through a fixed local handoff file, parsed only in
+memory, and removed before any network request. The script redacted proxy fields, bearer tokens,
+database URLs, and all observed IP values.
+
+An independent proxy probe first returned an exit IP distinct from the direct connection. The
+isolated MKT Browser instance then created a blank disposable profile, applied the same proxy,
+launched it, and obtained an in-browser exit IP matching the independent probe. It closed and
+deleted the profile and terminated the isolated application. Final checks found zero disposable
+profiles, MKT Browser processes, handoff files, and temporary MKB-00 roots. No account, cookie,
+account password, TOTP secret, or operational profile was used.
 
 ## Engine supply-chain inventory
 
@@ -249,20 +275,17 @@ Official sources reviewed on 10 August 2026:
   publishing on the Windows development line. Signing and an approved release channel remain later
   gates.
 
-## Remaining gate items
+## MKB-00 disposition
 
-MKB-00 remains open until all of the following are recorded:
+MKB-00 is complete for the Windows-only v1 scope. The pinned source and license boundaries are
+recorded, the Windows engine is conditionally approved for unmodified internal use through its
+official download path, and both the fail-closed invalid-proxy path and the positive working-proxy
+path have passed with disposable profiles.
 
-1. A real Apple Silicon model, chip, macOS version, and operator inventory.
-2. An unmodified native arm64 build on that machine.
-3. Native arm64 verification for the Electron executable, `better_sqlite3.node`, and selected engine.
-4. The full current-adapter list/create/update/launch/close sequence on macOS.
-5. A disposable correct-proxy launch on macOS with observed exit IP matching the expected proxy;
-   no real account may be used.
-6. A recorded license/subscription decision for the exact engine version selected on each platform.
-7. Authorization for the fork's destination `origin` remote, if one is required.
+The Windows CloakBrowser artifact remains conditionally approved only for unmodified internal use
+through its official download path. Recheck the exact version, checksum, license, and subscription
+before operational use; that supply-chain check does not put macOS back into MKB-00.
 
-The [Apple Silicon verification runbook](mkb-00-apple-silicon-verification.md) defines the commands
-and acceptance criteria for closing items 1 through 5. Electron upgrade, production signing,
-notarization, independent updates, and a complete dependency SBOM remain later release gates even
-after MKB-00 passes.
+The [Apple Silicon verification runbook](mkb-00-apple-silicon-verification.md) is retained for
+MKB-07 and no longer closes MKB-00. Electron upgrade, production signing, independent updates, and a
+complete dependency SBOM remain later Windows release gates after MKB-00.

@@ -16,9 +16,16 @@ profiles on the operator device.
 - MKB-W01 Windows product isolation: implemented and verified on Windows x64 on 10 August 2026.
 - MKB-W02 internal clean break: implemented and verified across MKT Browser, MKTTool, and Relay on
   Windows x64 on 10 August 2026.
-- MKB-00 remains open because a native Apple Silicon build and runtime/proxy test have not run on
-  real Mac hardware.
-- This build is for technical development only. It is not approved for pilot or team rollout.
+- Windows x64 is the only v1 and team-demo platform. macOS Apple Silicon is deferred to MKB-07 and
+  does not block current work.
+- MKB-00 was verified on 11 August 2026. The current packaged Windows build launched a disposable
+  profile through a dedicated working proxy, and its in-browser exit IP matched an independent
+  proxy probe. No proxy value or observed IP was recorded in evidence.
+- This build may be used for an owner-led technical demo with disposable profiles. It is not
+  approved for real accounts, pilot distribution, or team rollout.
+- The Windows directory package was regenerated on 11 August 2026 with SHA-256
+  `27c27443385f4ecdbc0187772934adb5d1718169d7c387d41b3718ef72ba2b18`; W02 guards and typecheck
+  passed. It remains unsigned.
 
 ## Owned product and local contract
 
@@ -100,7 +107,7 @@ license and checksum before operational use.
 - [MKB-00 source, license, engine, and Windows baseline](docs/mkb-00-source-license-engine-inventory.md)
 - [MKB-W01 Windows product isolation](docs/mkb-w01-windows-product-isolation.md)
 - [MKB-W02 Windows internal clean break](docs/mkb-w02-windows-internal-clean-break.md)
-- [Apple Silicon verification runbook](docs/mkb-00-apple-silicon-verification.md)
+- [Deferred MKB-07 Apple Silicon verification runbook](docs/mkb-00-apple-silicon-verification.md)
 
 ## Upstream and license
 
