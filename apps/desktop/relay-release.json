@@ -1,6 +1,6 @@
 {
-  "version": 7,
-  "sizeBytes": 34171895,
-  "sha256": "3bb75631a4fd6cf8ac8c3730e5353fb9da2e57a0088b9441821bfffca5a26447",
-  "url": "https://mkttool-web-production.up.railway.app/api/relay/download/v7"
+  "version": 8,
+  "sizeBytes": 34175030,
+  "sha256": "00054e264babaf0292541a8f349942c15e9e99725476678e0800e8985e0131f1",
+  "url": "https://mkttool-web-production.up.railway.app/api/relay/download/v8"
 }
