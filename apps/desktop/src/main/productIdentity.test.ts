@@ -23,6 +23,10 @@ test("keeps desktop packaging metadata aligned with the product identity", () =>
     new URL("../../electron-builder.yml", import.meta.url),
     "utf8",
   );
+  const installerBuilderConfig = readFileSync(
+    new URL("../../electron-builder-installer.yml", import.meta.url),
+    "utf8",
+  );
   const windowsResourceHook = readFileSync(
     new URL("../../scripts/edit-windows-executable.cjs", import.meta.url),
     "utf8",
@@ -43,6 +47,15 @@ test("keeps desktop packaging metadata aligned with the product identity", () =>
     new URL("../../scripts/package-windows-installer.cjs", import.meta.url),
     "utf8",
   );
+  const relayManifest = JSON.parse(
+    readFileSync(new URL("../../relay-release.json", import.meta.url), "utf8"),
+  ) as { version?: number; sizeBytes?: number; sha256?: string; url?: string };
+  const relayFetcher = readFileSync(
+    new URL("../../scripts/fetch-pinned-relay.cjs", import.meta.url),
+    "utf8",
+  );
+  const installerIncludeBytes = readFileSync(new URL("../../build/installer.nsh", import.meta.url));
+  const installerInclude = installerIncludeBytes.toString("ascii");
 
   assert.equal(desktopPackage.productName, PRODUCT_NAME);
   assert.match(desktopPackage.scripts?.build ?? "", /verify-node-version\.cjs/);
@@ -68,11 +81,38 @@ test("keeps desktop packaging metadata aligned with the product identity", () =>
   assert.match(windowsDirectoryPackager, /builderArgs: \["--dir"\]/);
   assert.match(windowsInstallerPackager, /require\("\.\/package-windows\.cjs"\)/);
   assert.match(windowsInstallerPackager, /"--win"/);
+  assert.match(windowsInstallerPackager, /includeRelay: true/);
   assert.match(desktopPackage.scripts?.["build:win"] ?? "", /package:windows-installer/);
   assert.doesNotMatch(desktopPackage.scripts?.["build:win"] ?? "", /electron-builder/);
 
   // The installer must not overwrite the directory package a gate result cites by hash.
   assert.match(windowsInstallerPackager, /--config\.directories\.output=release\/installer/);
+  assert.equal(Number.isSafeInteger(relayManifest.version), true);
+  assert.equal(Number.isSafeInteger(relayManifest.sizeBytes), true);
+  assert.equal((relayManifest.sizeBytes ?? 0) > 0, true);
+  assert.match(relayManifest.sha256 ?? "", /^[0-9a-f]{64}$/);
+  assert.match(relayManifest.url ?? "", new RegExp(`/v${relayManifest.version}$`));
+  assert.doesNotMatch(builderConfig, /MKTTool-Relay\.zip/);
+  assert.match(installerBuilderConfig, /from: \.relay-payload\/MKTTool-Relay\.zip/);
+  assert.match(windowsInstallerPackager, /--config=electron-builder-installer\.yml/);
+  assert.match(builderConfig, /include: build\/installer\.nsh/);
+  assert.match(relayFetcher, /checksum mismatch/);
+  assert.match(relayFetcher, /headers\.Range = `bytes=\$\{start\}-`/);
+  assert.match(installerInclude, /install-relay\.ps1/);
+  assert.match(installerInclude, /MKT Browser\.lnk/);
+  assert.match(installerInclude, /"Publisher" "Techieslab"/);
+  assert.match(installerInclude, /"RelayOwned"/);
+  assert.match(installerInclude, /StrCpy \$2 0\s+ClearErrors\s+ReadRegDWORD \$2/);
+  assert.match(installerInclude, /\$2 == 1/);
+  assert.match(installerInclude, /CreateShortcut/);
+  assert.match(installerInclude, /Remove-Item -LiteralPath \$\$relayExe/);
+  assert.doesNotMatch(installerInclude, /nsProcess/);
+  assert.doesNotMatch(installerInclude, /Remove-Item[^\r\n]*relay-config\.json/i);
+  assert.equal(
+    installerIncludeBytes.every((byte) => byte <= 0x7f),
+    true,
+    "installer.nsh must remain ASCII-only so NSIS never depends on the system ANSI codepage",
+  );
 
   // Packaging must leave the tree runnable: a run that kept the Electron-ABI binaries in place
   // would break the next `yarn test`, which loads the same modules under Node.

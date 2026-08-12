@@ -1,0 +1,9 @@
+extends: electron-builder.yml
+
+extraResources:
+  - from: resources/companion
+    to: companion
+  - from: .relay-payload/MKTTool-Relay.zip
+    to: relay/MKTTool-Relay.zip
+  - from: relay-release.json
+    to: relay/relay-release.json

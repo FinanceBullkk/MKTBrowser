@@ -24,6 +24,8 @@ files:
 # which is outside apps/desktop, and refuses to package
 # ("package.json must be under apps/desktop").
 extraMetadata:
+  author: Techieslab
+  description: Internal MKTTool browser profile runtime
   dependencies:
     "@modelcontextprotocol/sdk": "^1.0.4"
     better-sqlite3: "^12.11.1"
@@ -108,3 +110,5 @@ nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
+  include: build/installer.nsh
+  uninstallDisplayName: "MKT Browser"

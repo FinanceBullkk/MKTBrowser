@@ -61,3 +61,17 @@ jobs:
 
       - name: Verify packaged runtime contract
         run: yarn verify:packaged-contract
+
+      - name: Build combined Windows installer
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          MKTTOOL_RELEASE_COOKIE: ${{ secrets.MKTTOOL_RELEASE_COOKIE }}
+        run: yarn workspace @mktbrowser/desktop build:win
+
+      - name: Upload combined Windows installer
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mktbrowser-windows-installer
+          path: apps/desktop/release/installer/*.exe
+          if-no-files-found: error

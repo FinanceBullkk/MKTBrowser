@@ -21,6 +21,11 @@
 const { runAsScript } = require("./package-windows.cjs");
 
 runAsScript({
-  builderArgs: ["--win", "--config.directories.output=release/installer"],
+  builderArgs: [
+    "--win",
+    "--config=electron-builder-installer.yml",
+    "--config.directories.output=release/installer",
+  ],
+  includeRelay: true,
   label: "package-windows-installer",
 });

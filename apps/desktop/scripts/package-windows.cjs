@@ -30,16 +30,18 @@
 
 const { execFileSync } = require("node:child_process");
 const { randomUUID } = require("node:crypto");
-const { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } = require("node:fs");
+const { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } = require("node:fs");
 const path = require("node:path");
 const { rebuild } = require("@electron/rebuild");
 const { assertSupportedNodeVersion } = require("../../../scripts/verify-node-version.cjs");
+const { fetchPinnedRelay } = require("./fetch-pinned-relay.cjs");
 
 const desktopRoot = path.resolve(__dirname, "..");
 const repoRoot = path.resolve(desktopRoot, "..", "..");
 const packageJsonPath = path.join(desktopRoot, "package.json");
 const localElectronDist = path.join(desktopRoot, "node_modules", "electron", "dist");
 const workspaceLinksPath = path.join(desktopRoot, "node_modules", "@mktbrowser");
+const relayPayloadPath = path.join(desktopRoot, ".relay-payload", "MKTTool-Relay.zip");
 
 /**
  * Both copies exist because yarn's workspace layout gives `profile-manager` its own `node_modules`.
@@ -75,9 +77,16 @@ function readPinnedElectronVersion() {
  * @param {string[]} options.builderArgs Target selection passed straight to electron-builder,
  *   for example `["--dir"]` or `["--win"]`.
  * @param {string} options.label Prefix for this run's console output.
+ * @param {boolean} [options.includeRelay] Fetch and stage the pinned Relay payload.
  */
-async function packageWindows({ builderArgs, label }) {
+async function packageWindows({ builderArgs, label, includeRelay = false }) {
   assertSupportedNodeVersion();
+
+  if (includeRelay) {
+    const { manifest, archivePath } = await fetchPinnedRelay();
+    copyFileSync(archivePath, relayPayloadPath);
+    process.stdout.write(`[${label}] staged verified Relay v${manifest.version}.\n`);
+  }
 
   const electronVersion = readPinnedElectronVersion();
   const developmentPackageJson = readFileSync(packageJsonPath);

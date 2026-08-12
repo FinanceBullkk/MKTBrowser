@@ -14,6 +14,9 @@ build/
 !build/icon.icns
 !build/icons/
 !build/icons/*.png
+!apps/desktop/build/
+apps/desktop/build/*
+!apps/desktop/build/installer.nsh
 
 # logs
 *.log
@@ -37,6 +40,7 @@ thumbs.db
 # electron-builder artifacts
 release/
 release-builds/
+apps/desktop/.relay-payload/
 
 # local SQLite databases (dev only)
 *.db
