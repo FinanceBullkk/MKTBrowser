@@ -72,30 +72,57 @@ export class ActivityLog extends EventEmitter {
   }
 }
 
+type ArgumentReducer = (value: unknown) => unknown;
+
+const boundedString: ArgumentReducer = (value) =>
+  typeof value === "string" ? value.slice(0, 128) : undefined;
+
+const boundedNumber: ArgumentReducer = (value) =>
+  typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
+/**
+ * Diagnostics are default-deny. Each entry names one permitted argument and the reduced shape
+ * retained by the feed; every unrecognised key is discarded.
+ */
+const ACTIVITY_ARGUMENT_ALLOWLIST: Readonly<Record<string, ArgumentReducer>> = {
+  profile_id: boundedString,
+  operation_id: boundedString,
+  request_id: boundedString,
+  sessionId: boundedString,
+  target_id: boundedString,
+  timeout_ms: boundedNumber,
+  tags: (value) => (Array.isArray(value) ? { count: value.length } : undefined),
+  urls: (value) => (Array.isArray(value) ? { count: value.length } : undefined),
+  cookies: (value) => (Array.isArray(value) ? { count: value.length } : undefined),
+  proxy: (value) => {
+    if (!value || typeof value !== "object") return undefined;
+    const proxy = value as Record<string, unknown>;
+    return {
+      type: proxy.type === "http" || proxy.type === "socks5" ? proxy.type : "unknown",
+      configured: true,
+      hasAuth: Boolean(proxy.username || proxy.password),
+    };
+  },
+  fingerprint: (value) => {
+    if (!value || typeof value !== "object") return undefined;
+    const fingerprint = value as Record<string, unknown>;
+    return {
+      device: typeof fingerprint.device === "string" ? fingerprint.device : undefined,
+      hasLocale: typeof fingerprint.localeId === "string",
+      hasTimezone: typeof fingerprint.timezone === "string",
+      hasScreen: Boolean(fingerprint.screen),
+      hasHardwareConcurrency: typeof fingerprint.hardwareConcurrency === "number",
+      hasDeviceMemory: typeof fingerprint.deviceMemory === "number",
+    };
+  },
+};
+
 function sanitize(args: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(args)) {
-    if (["text", "url", "expression", "notes", "seed", "external_ref", "params"].includes(k)) {
-      out[k] = `[redacted ${k}]`;
-    } else if (k === "fingerprint") {
-      out[k] = "[redacted fingerprint]";
-    } else if (k === "proxy" && v && typeof v === "object") {
-      // create_profile / update_profile args carry proxy username/password in
-      // cleartext. NEVER log them — the activity feed is rendered in the desktop
-      // UI and can be piped to an audit file. Keep only the non-secret shape.
-      const p = v as {
-        type?: unknown;
-        host?: unknown;
-        port?: unknown;
-        username?: unknown;
-        password?: unknown;
-      };
-      out[k] = { type: p.type, hasAuth: Boolean(p.username || p.password) };
-    } else if (k === "cookies" && Array.isArray(v)) {
-      out[k] = `[redacted cookies: ${v.length}]`;
-    } else {
-      out[k] = v;
-    }
+  for (const [key, reducer] of Object.entries(ACTIVITY_ARGUMENT_ALLOWLIST)) {
+    if (!(key in args)) continue;
+    const reduced = reducer(args[key]);
+    if (reduced !== undefined) out[key] = reduced;
   }
   return out;
 }
