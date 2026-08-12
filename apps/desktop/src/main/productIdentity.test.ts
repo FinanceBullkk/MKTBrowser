@@ -31,8 +31,16 @@ test("keeps desktop packaging metadata aligned with the product identity", () =>
     new URL("../../scripts/patch-electron-info-plist.cjs", import.meta.url),
     "utf8",
   );
+  const windowsPackagePipeline = readFileSync(
+    new URL("../../scripts/package-windows.cjs", import.meta.url),
+    "utf8",
+  );
   const windowsDirectoryPackager = readFileSync(
     new URL("../../scripts/package-windows-directory.cjs", import.meta.url),
+    "utf8",
+  );
+  const windowsInstallerPackager = readFileSync(
+    new URL("../../scripts/package-windows-installer.cjs", import.meta.url),
     "utf8",
   );
 
@@ -47,13 +55,29 @@ test("keeps desktop packaging metadata aligned with the product identity", () =>
   assert.match(windowsResourceHook, /const EXECUTABLE_NAME = "MKTBrowser\.exe";/);
   assert.match(devPlistPatch, /const APP_NAME = "MKT Browser";/);
   assert.match(devPlistPatch, /const APP_ID = "com\.mkttool\.browser\.dev";/);
-  assert.match(windowsDirectoryPackager, /onlyModules: \["better-sqlite3"\]/);
-  assert.match(windowsDirectoryPackager, /--config\.electronDist=/);
-  assert.match(windowsDirectoryPackager, /assertSupportedNodeVersion\(\)/);
-  assert.match(windowsDirectoryPackager, /renameSync\(workspaceLinksPath, backup\)/);
-  assert.match(windowsDirectoryPackager, /renameSync\(backup, workspaceLinksPath\)/);
-  assert.match(windowsDirectoryPackager, /finally \{/);
-  assert.match(windowsDirectoryPackager, /writeFileSync\(file, contents\)/);
+  assert.match(windowsPackagePipeline, /onlyModules: \["better-sqlite3"\]/);
+  assert.match(windowsPackagePipeline, /--config\.electronDist=/);
+  assert.match(windowsPackagePipeline, /assertSupportedNodeVersion\(\)/);
+  assert.match(windowsPackagePipeline, /renameSync\(workspaceLinksPath, backup\)/);
+  assert.match(windowsPackagePipeline, /renameSync\(backup, workspaceLinksPath\)/);
+
+  // Every Windows artifact must go through the shared pipeline. Calling electron-builder directly
+  // skips the Electron-ABI rebuild for better-sqlite3, which produces an application that installs
+  // and then dies on its first database call — shipped once on 12 August 2026.
+  assert.match(windowsDirectoryPackager, /require\("\.\/package-windows\.cjs"\)/);
+  assert.match(windowsDirectoryPackager, /builderArgs: \["--dir"\]/);
+  assert.match(windowsInstallerPackager, /require\("\.\/package-windows\.cjs"\)/);
+  assert.match(windowsInstallerPackager, /"--win"/);
+  assert.match(desktopPackage.scripts?.["build:win"] ?? "", /package:windows-installer/);
+  assert.doesNotMatch(desktopPackage.scripts?.["build:win"] ?? "", /electron-builder/);
+
+  // The installer must not overwrite the directory package a gate result cites by hash.
+  assert.match(windowsInstallerPackager, /--config\.directories\.output=release\/installer/);
+
+  // Packaging must leave the tree runnable: a run that kept the Electron-ABI binaries in place
+  // would break the next `yarn test`, which loads the same modules under Node.
+  assert.match(windowsPackagePipeline, /finally \{/);
+  assert.match(windowsPackagePipeline, /writeFileSync\(file, contents\)/);
 });
 
 test("uses the fixed Windows LocalAppData product root", () => {

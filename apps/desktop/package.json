@@ -10,7 +10,7 @@
     "dev": "electron-vite dev --watch",
     "build": "node ../../scripts/verify-node-version.cjs && electron-vite build && yarn package:windows-directory",
     "build:mac": "electron-vite build && node ./scripts/strip-workspace-symlinks.cjs && electron-builder --mac",
-    "build:win": "electron-vite build && node ./scripts/strip-workspace-symlinks.cjs && electron-builder --win",
+    "build:win": "node ../../scripts/verify-node-version.cjs && electron-vite build && yarn package:windows-installer",
     "build:linux": "electron-vite build && node ./scripts/strip-workspace-symlinks.cjs && electron-builder --linux",
     "test:w01": "node --experimental-strip-types --test src/main/productIdentity.test.ts",
     "test:w02": "node --test ../../scripts/verify-node-version.test.cjs && node --experimental-strip-types --test src/main/productIdentity.test.ts src/main/mkt-browser-contract.test.ts",
@@ -19,6 +19,7 @@
     "test:mkb02": "yarn workspace @mktbrowser/profile-manager test:managed && yarn workspace @mktbrowser/mcp-server test:managed && node --experimental-strip-types --test src/main/managed-mode-contract.test.ts src/main/browser-process-discovery.test.ts",
     "test:packaging": "node --test scripts/edit-windows-executable.test.cjs",
     "package:windows-directory": "node ./scripts/package-windows-directory.cjs",
+    "package:windows-installer": "node ./scripts/package-windows-installer.cjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "preview": "electron-vite preview"
   },
