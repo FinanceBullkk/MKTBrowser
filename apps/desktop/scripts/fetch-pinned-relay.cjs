@@ -73,8 +73,11 @@ async function fetchPinnedRelay(options = {}) {
 
   const start = existsSync(partialPath) ? statSync(partialPath).size : 0;
   const headers = { ...(options.headers ?? {}) };
-  const releaseCookie = process.env.MKTTOOL_RELEASE_COOKIE?.trim();
-  if (releaseCookie) headers.Cookie = releaseCookie;
+  // A token scoped to this one route, not a human's session cookie. A cookie unlocks the whole
+  // app including the identity vault, expires mid-build, and dies when that person leaves the
+  // team. See MKTTool/src/lib/relay/release-download-token.ts for the server side.
+  const releaseToken = process.env.MKTTOOL_RELEASE_TOKEN?.trim();
+  if (releaseToken) headers.Authorization = `Bearer ${releaseToken}`;
   if (start > 0) headers.Range = `bytes=${start}-`;
   const response = await (options.fetchImpl ?? fetch)(manifest.url, { headers, redirect: "error" });
   if (!(response.status === 200 || (start > 0 && response.status === 206)) || !response.body) {

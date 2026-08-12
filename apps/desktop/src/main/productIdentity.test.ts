@@ -98,6 +98,12 @@ test("keeps desktop packaging metadata aligned with the product identity", () =>
   assert.match(builderConfig, /include: build\/installer\.nsh/);
   assert.match(relayFetcher, /checksum mismatch/);
   assert.match(relayFetcher, /headers\.Range = `bytes=\$\{start\}-`/);
+
+  // The build machine authenticates with a token scoped to the release route. A session cookie
+  // unlocks the whole app including the identity vault, so leaving that path in place invites
+  // someone to paste a full-privilege credential into CI.
+  assert.match(relayFetcher, /headers\.Authorization = `Bearer \$\{releaseToken\}`/);
+  assert.doesNotMatch(relayFetcher, /MKTTOOL_RELEASE_COOKIE/);
   assert.match(installerInclude, /install-relay\.ps1/);
   assert.match(installerInclude, /MKT Browser\.lnk/);
   assert.match(installerInclude, /"Publisher" "Techieslab"/);

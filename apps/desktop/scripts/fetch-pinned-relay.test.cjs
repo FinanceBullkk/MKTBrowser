@@ -7,6 +7,13 @@ const test = require("node:test");
 
 const scriptPath = path.resolve(__dirname, "fetch-pinned-relay.cjs");
 
+// Ambient configuration must not decide what these tests measure, and the machine that runs them is
+// exactly the machine that exports these two. With MKTTOOL_RELAY_ARCHIVE set, the download cases
+// stop exercising the download at all and fail comparing a 32 MB archive against an 8-byte fixture —
+// which is how a green suite turned red on 12 August without a line of source changing.
+delete process.env.MKTTOOL_RELAY_ARCHIVE;
+delete process.env.MKTTOOL_RELEASE_TOKEN;
+
 function loadIsolated(manifest, initialPartial = null) {
   const root = mkdtempSync(path.join(tmpdir(), "mktbrowser-relay-fetch-"));
   const source = readFileSync(scriptPath, "utf8")
