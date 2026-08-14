@@ -31,9 +31,10 @@ async function main() {
   let child;
   let diagnostics = "";
   let baseUrl;
-  let token;
-  let createdProfileId;
-  let launchedPid;
+    let token;
+    let createdProfileId;
+    let lifecycleProfileId;
+    let launchedPid;
   let failure;
   try {
     engineFixture = await installSystemChromeEngineFixture(userData);
@@ -206,25 +207,44 @@ async function main() {
     assert.equal(pageControl.isError, true);
     assert.equal(pageControl.body.error?.code, "UNKNOWN_TOOL");
 
-    const launch = await callTool(baseUrl, token, "launch_managed_profile", {
+    const blockedLaunch = await callToolResult(baseUrl, token, "launch_managed_profile", {
       profile_id: created.id,
       proxy: { type: "http", host: "127.0.0.1", port: 9 },
       operation_id: "packaged-launch-1",
     });
-    assert.equal(launch.id, created.id);
+    assert.equal(blockedLaunch.isError, true);
+    assert.equal(blockedLaunch.body.error?.code, "PROXY_REJECTED");
+
+    const lifecycleProfile = await callTool(baseUrl, token, "create_profile", {
+      name: "Packaged browser lifecycle verifier",
+      seed: "packaged-browser-lifecycle-verifier-v1",
+    });
+    assert.equal(lifecycleProfile.managed, false);
+    lifecycleProfileId = lifecycleProfile.id;
+
+    const launch = await callTool(baseUrl, token, "launch_profile", {
+      profile_id: lifecycleProfile.id,
+    });
+    assert.equal(launch.id, lifecycleProfile.id);
     assert.equal(Number.isInteger(launch.pid), true);
-    assert.equal(launch.diagnostic?.operationId, "packaged-launch-1");
     launchedPid = launch.pid;
     assert.equal(isProcessRunning(launch.pid), true, "Launched Chrome process is not running.");
 
-    const closed = await callTool(baseUrl, token, "close_profile", { profile_id: created.id });
-    assert.equal(closed.closed, created.id);
+    const closed = await callTool(baseUrl, token, "close_profile", {
+      profile_id: lifecycleProfile.id,
+    });
+    assert.equal(closed.closed, lifecycleProfile.id);
     await waitFor(
       () => !isProcessRunning(launch.pid),
       10_000,
       `Chrome process ${launch.pid} to exit after close_profile`,
       child,
     );
+    const lifecycleDeleted = await callTool(baseUrl, token, "delete_profile", {
+      profile_id: lifecycleProfile.id,
+    });
+    assert.equal(lifecycleDeleted.deleted, lifecycleProfile.id);
+    lifecycleProfileId = undefined;
     const deleted = await callToolResult(baseUrl, token, "delete_profile", {
       profile_id: created.id,
     });
@@ -249,6 +269,15 @@ async function main() {
           profile_id: createdProfileId,
         });
         assert.equal(closeResult.isError, false, "Cleanup close_profile returned an MCP error.");
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    if (child && baseUrl && token && lifecycleProfileId) {
+      try {
+        await callToolResult(baseUrl, token, "close_profile", {
+          profile_id: lifecycleProfileId,
+        });
         if (launchedPid) {
           await waitFor(
             () => !isProcessRunning(launchedPid),
@@ -257,6 +286,10 @@ async function main() {
             child,
           );
         }
+        const deleteResult = await callToolResult(baseUrl, token, "delete_profile", {
+          profile_id: lifecycleProfileId,
+        });
+        assert.equal(deleteResult.isError, false, "Cleanup delete_profile returned an MCP error.");
       } catch (error) {
         cleanupErrors.push(error);
       }

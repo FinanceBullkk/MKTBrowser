@@ -95,6 +95,8 @@ let settingsStore: SettingsStore;
 let httpTransport: HttpTransport | null = null;
 let mcpAuthToken: string | null = null;
 let cachedSettings: AppSettings | null = null;
+let browserDriverReady = false;
+let switchToCftInFlight: Promise<ChromiumStatus> | null = null;
 
 type IpcHandler = (event: IpcMainInvokeEvent, ...args: any[]) => unknown;
 
@@ -111,6 +113,22 @@ function handleIpc(channel: IpcInvokeChannel, handler: IpcHandler): void {
 function sendToRenderer(channel: IpcEventChannel, payload: unknown): void {
   if (!isIpcEventChannel(channel)) throw new Error(`Unclassified IPC event: ${channel}`);
   mainWindow?.webContents.send(channel, payload);
+}
+
+function createChromiumBootstrap(engine: AppSettings["browserEngine"]): ChromiumBootstrap {
+  const bootstrap = new ChromiumBootstrap({ engine });
+  bootstrap.on("status", (status: ChromiumStatus) => {
+    if (chromiumBootstrap === bootstrap) {
+      sendToRenderer(IPC_EVENTS.CHROMIUM_STATUS, status);
+    }
+  });
+  return bootstrap;
+}
+
+function startChromiumBootstrap(bootstrap: ChromiumBootstrap): void {
+  void bootstrap.ensure().catch((error) => {
+    process.stderr.write(`Chromium bootstrap failed: ${String(error)}\n`);
+  });
 }
 
 function createWindow(): void {
@@ -262,17 +280,10 @@ app
     // Chromium bootstrap — picks the engine from user settings (CFT default,
     // CloakBrowser opt-in for stronger anti-detect), downloads it on first
     // run, and reports progress to the renderer.
-    chromiumBootstrap = new ChromiumBootstrap({
-      engine: cachedSettings.browserEngine,
-    });
-    chromiumBootstrap.on("status", (status: ChromiumStatus) => {
-      sendToRenderer(IPC_EVENTS.CHROMIUM_STATUS, status);
-    });
+    chromiumBootstrap = createChromiumBootstrap(cachedSettings.browserEngine);
     // Kick off the ensure() in the background so the UI can render immediately
     // and show download progress. Profile launches will wait until ready.
-    void chromiumBootstrap.ensure().catch((e) => {
-      process.stderr.write(`Chromium bootstrap failed: ${String(e)}\n`);
-    });
+    startChromiumBootstrap(chromiumBootstrap);
 
     // Per-profile extension management. Engine version feeds the Web Store CRX
     // endpoint's prodversion (falls back to a sane default before the runtime is
@@ -343,6 +354,7 @@ app
         })();
       },
     });
+    browserDriverReady = true;
 
     const mcp = createMktBrowserMcpServer({
       profileManager,
@@ -454,7 +466,35 @@ app
 
     // Chromium bootstrap IPC
     handleIpc(IPC.CHROMIUM_STATUS, () => chromiumBootstrap.getStatus());
-    handleIpc(IPC.CHROMIUM_RETRY, () => chromiumBootstrap.ensure());
+    handleIpc(IPC.CHROMIUM_RETRY, () => chromiumBootstrap.retry());
+    handleIpc(IPC.CHROMIUM_SWITCH_TO_CFT, async () => {
+      if (switchToCftInFlight) return switchToCftInFlight;
+      if (chromiumBootstrap.getEngine() !== "cloakbrowser") {
+        return chromiumBootstrap.getStatus();
+      }
+
+      const operation = (async (): Promise<ChromiumStatus> => {
+        const previous = chromiumBootstrap;
+        const fallback = createChromiumBootstrap("cft");
+        if (browserDriverReady) browserDriver.setChromiumBootstrap(fallback);
+        try {
+          cachedSettings = await settingsStore.update({ browserEngine: "cft" });
+          chromiumBootstrap = fallback;
+        } catch (cause) {
+          if (browserDriverReady) browserDriver.setChromiumBootstrap(previous);
+          throw cause;
+        }
+        sendToRenderer(IPC_EVENTS.CHROMIUM_STATUS, fallback.getStatus());
+        startChromiumBootstrap(fallback);
+        return fallback.getStatus();
+      })();
+      switchToCftInFlight = operation;
+      try {
+        return await operation;
+      } finally {
+        if (switchToCftInFlight === operation) switchToCftInFlight = null;
+      }
+    });
 
     // Extensions IPC (per-profile)
     handleIpc(IPC.EXTENSIONS_LIST, (_e, profileId: string) => extensionsService.list(profileId));

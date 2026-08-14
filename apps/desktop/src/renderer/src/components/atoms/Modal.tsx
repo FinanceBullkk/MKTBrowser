@@ -60,17 +60,22 @@ export function Modal({
   const idRef = useRef<number>(0);
   const previouslyFocused = useRef<HTMLElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const [closing, setClosing] = useState(false);
+  const closingRef = useRef(false);
 
   // Wrap onClose with the optional confirm gate.
   const tryClose = useCallback(async () => {
-    if (closing) return;
-    if (confirmClose) {
-      const ok = await confirmClose();
-      if (!ok) return;
+    if (closingRef.current) return;
+    closingRef.current = true;
+    try {
+      if (confirmClose) {
+        const ok = await confirmClose();
+        if (!ok) return;
+      }
+      onClose();
+    } finally {
+      closingRef.current = false;
     }
-    onClose();
-  }, [confirmClose, onClose, closing]);
+  }, [confirmClose, onClose]);
 
   // Stack registration — first effect runs on mount, last on unmount.
   useEffect(() => {
@@ -145,7 +150,7 @@ export function Modal({
         background: "rgba(5,6,10,0.55)",
         backdropFilter: "blur(14px)",
         WebkitBackdropFilter: "blur(14px)",
-        animation: closing ? undefined : "mkt-browser-fade-in 180ms ease-out",
+        animation: "mkt-browser-fade-in 180ms ease-out",
       }}
     >
       <div

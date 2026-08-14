@@ -92,6 +92,7 @@ export interface MktBrowserApi {
   chromium: {
     status: () => Promise<ChromiumStatus>;
     retry: () => Promise<ChromiumStatus>;
+    switchToCft: () => Promise<ChromiumStatus>;
     onStatus: (cb: (s: ChromiumStatus) => void) => () => void;
   };
   extensions: {

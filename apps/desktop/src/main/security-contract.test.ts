@@ -107,6 +107,7 @@ test("packaged verification exercises the profile lifecycle", () => {
   }
   assert.doesNotMatch(verifier, /ENGINE_UNAVAILABLE/);
   assert.match(verifier, /INVALID_INPUT/);
+  assert.match(verifier, /PROXY_REJECTED/);
   assert.match(verifier, /isProcessRunning/);
   assert.match(verifier, /stopChild/);
   assert.match(verifier, /MKT_BROWSER_PACKAGED_CONTRACT_VERIFY:\s*"1"/);
@@ -119,9 +120,13 @@ test("packaged verification exercises the profile lifecycle", () => {
   assert.match(fixture, /unlink\(fixture\.junctionPath\)/);
 
   const driver = source("apps/desktop/src/main/ChromiumBrowserDriver.ts");
+  assert.doesNotMatch(driver, /proxy IP probe failed[^\n]*\(e as Error\)\.message/);
   assert.match(driver, /MKT_BROWSER_PACKAGED_CONTRACT_VERIFY === "1"/);
   assert.match(driver, /mkt-browser-packaged-contract-/);
   assert.match(driver, /"--disable-gpu", "--disable-software-rasterizer", "--no-sandbox"/);
+  assert.match(driver, /if \(profile\.proxy\) \{/);
+  assert.doesNotMatch(driver, /profile\.proxy && !packagedContractFixture/);
+  assert.match(driver, /stableWindowsRuntime\(join\(app\.getPath\("userData"\), "chromium", engine\)\)/);
 });
 
 test("fingerprint measurement reports cleanup failures", () => {

@@ -56,6 +56,10 @@ test("keeps desktop packaging metadata aligned with the product identity", () =>
   );
   const installerIncludeBytes = readFileSync(new URL("../../build/installer.nsh", import.meta.url));
   const installerInclude = installerIncludeBytes.toString("ascii");
+  const relayCleanup = readFileSync(
+    new URL("../../build/windows-relay-cleanup.ps1", import.meta.url),
+    "utf8",
+  );
 
   assert.equal(desktopPackage.productName, PRODUCT_NAME);
   assert.match(desktopPackage.scripts?.build ?? "", /verify-node-version\.cjs/);
@@ -110,10 +114,12 @@ test("keeps desktop packaging metadata aligned with the product identity", () =>
   assert.match(installerInclude, /"RelayOwned"/);
   assert.match(installerInclude, /StrCpy \$2 0\s+ClearErrors\s+ReadRegDWORD \$2/);
   assert.match(installerInclude, /\$2 == 1/);
-  assert.match(installerInclude, /CreateShortcut/);
-  assert.match(installerInclude, /Remove-Item -LiteralPath \$\$relayExe/);
+  assert.match(installerInclude, /windows-relay-cleanup\.ps1/);
+  assert.match(relayCleanup, /CreateShortcut/);
+  assert.match(relayCleanup, /Remove-Item -LiteralPath \$relayExe/);
   assert.doesNotMatch(installerInclude, /nsProcess/);
   assert.doesNotMatch(installerInclude, /Remove-Item[^\r\n]*relay-config\.json/i);
+  assert.doesNotMatch(relayCleanup, /Remove-Item[^\r\n]*relay-config\.json/i);
   assert.equal(
     installerIncludeBytes.every((byte) => byte <= 0x7f),
     true,

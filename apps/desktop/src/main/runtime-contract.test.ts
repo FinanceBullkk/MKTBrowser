@@ -62,6 +62,10 @@ test("reports an engine version only when one is actually installed", () => {
       bytesReceived: 1,
       bytesTotal: 2,
       version: "148.0.0.0",
+      engine: "cft",
+      attempt: 1,
+      maxAttempts: 5,
+      resuming: false,
     }),
     { kind: "cft", version: "148.0.0.0", status: "downloading" },
   );
@@ -69,7 +73,7 @@ test("reports an engine version only when one is actually installed", () => {
   for (const status of [
     { kind: "missing" } as const,
     { kind: "fetching-manifest" } as const,
-    { kind: "error", message: "checksum mismatch" } as const,
+    { kind: "error", engine: "cft", message: "checksum mismatch" } as const,
     { kind: "dev-system", binaryPath: "C:/chrome.exe" } as const,
   ]) {
     const described = describeEngineStatus("cft", status);

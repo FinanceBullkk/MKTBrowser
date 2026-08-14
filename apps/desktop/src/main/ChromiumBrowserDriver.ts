@@ -39,6 +39,8 @@ import {
   findBrowserProcessesUsingDataDir,
   selectPrimaryBrowserPid,
 } from "./browser-process-discovery";
+import { assertWindowsWebRtcFirewallProtection } from "./windows-webrtc-firewall.ts";
+import { stableWindowsRuntime, win32PathEquals } from "./chromium-runtime-path.ts";
 
 interface RunningProcess {
   child: ChildProcess;
@@ -95,7 +97,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
   private readonly running = new Map<ProfileId, RunningProcess>();
   private nextPort = 9222;
   private readonly profileManager: ProfileManager;
-  private readonly bootstrap: ChromiumBootstrap;
+  private bootstrap: ChromiumBootstrap;
   private readonly onCompanionInstall?: (profileId: ProfileId, extensionId: string) => void;
   private readonly extensionStoreRoot: string;
 
@@ -105,6 +107,13 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     this.bootstrap = opts.chromiumBootstrap;
     this.onCompanionInstall = opts.onCompanionInstall;
     this.extensionStoreRoot = opts.extensionStoreRoot;
+  }
+
+  setChromiumBootstrap(bootstrap: ChromiumBootstrap): void {
+    if (this.running.size > 0) {
+      throw new Error("Close all profiles before changing the browser engine.");
+    }
+    this.bootstrap = bootstrap;
   }
 
   override on<K extends keyof DriverEvents>(event: K, listener: DriverEvents[K]): this {
@@ -150,6 +159,29 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       );
     }
     const engine: BrowserEngine = this.bootstrap.getEngine();
+    const packagedContractFixture =
+      process.env.MKT_BROWSER_PACKAGED_CONTRACT_VERIFY === "1" &&
+      app.commandLine.hasSwitch("user-data-dir") &&
+      basename(app.getPath("userData")).startsWith("mkt-browser-packaged-contract-");
+    if (profile.proxy) {
+      try {
+        if (
+          process.platform === "win32" &&
+          !win32PathEquals(
+            chromiumPath,
+            stableWindowsRuntime(join(app.getPath("userData"), "chromium", engine)),
+          )
+        ) {
+          throw new Error("The browser engine is not installed at its protected stable path.");
+        }
+        await assertWindowsWebRtcFirewallProtection({ engine, binaryPath: chromiumPath });
+      } catch (cause) {
+        throw proxyRejected(
+          "Required WebRTC containment could not be verified; the proxied profile was not launched.",
+          { cause },
+        );
+      }
+    }
     const browserDataDir = browserDataDirForEngine(profile.dataDir, engine);
     // Read the actual Chromium binary's version and reconcile the
     // profile's spoofed UA against it. Detection vendors fingerprint the
@@ -215,11 +247,8 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
           );
           fp = { ...fp, timezone: geo.timezone };
         }
-      } catch (e) {
-        console.warn(
-          "[mkt-browser] proxy IP probe failed; using WebRTC block fallback:",
-          (e as Error).message,
-        );
+      } catch {
+        console.warn("[mkt-browser] proxy geo probe failed; continuing with verified containment.");
       }
     }
     // No-proxy: fp.timezone is left as the profile configured it (issue #13).
@@ -339,9 +368,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       args.push("--test-type=gpu");
     }
     if (
-      process.env.MKT_BROWSER_PACKAGED_CONTRACT_VERIFY === "1" &&
-      app.commandLine.hasSwitch("user-data-dir") &&
-      basename(app.getPath("userData")).startsWith("mkt-browser-packaged-contract-")
+      packagedContractFixture
     ) {
       // Restricted verification hosts cannot start Chrome's GPU sandbox. Normal launches never
       // enter this branch; the verifier separately proves a real CDP-ready browser lifecycle.

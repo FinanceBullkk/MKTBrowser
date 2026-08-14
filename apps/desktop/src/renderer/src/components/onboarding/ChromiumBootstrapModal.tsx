@@ -118,8 +118,9 @@ function Body({ status }: { status: ChromiumStatus }): JSX.Element {
   }
 
   if (status.kind === "downloading") {
+    const totalKnown = status.bytesTotal > 0;
     const pct =
-      status.bytesTotal > 0
+      totalKnown
         ? Math.min(100, Math.round((status.bytesReceived / status.bytesTotal) * 100))
         : 0;
     return (
@@ -129,18 +130,29 @@ function Body({ status }: { status: ChromiumStatus }): JSX.Element {
           style={{ background: "rgba(255,255,255,0.06)" }}
         >
           <div
-            className="absolute inset-y-0 left-0 transition-[width] duration-200"
+            className={
+              totalKnown
+                ? "absolute inset-y-0 left-0 transition-[width] duration-200"
+                : "absolute inset-y-0 w-1/3 animate-pulse"
+            }
             style={{
-              width: `${pct}%`,
+              width: totalKnown ? `${pct}%` : "33%",
+              left: totalKnown ? 0 : "33%",
               background: "linear-gradient(90deg, #6366f1, #a855f7, #ec4899)",
             }}
           />
         </div>
         <div className="flex items-center justify-between text-[11px] mono text-slate-500">
           <span>
-            {formatMB(status.bytesReceived)} / {formatMB(status.bytesTotal)}
+            {totalKnown
+              ? `${formatMB(status.bytesReceived)} / ${formatMB(status.bytesTotal)}`
+              : "Connecting..."}
           </span>
-          <span>{pct}%</span>
+          <span>
+            Attempt {status.attempt}/{status.maxAttempts}
+            {status.resuming ? " - resuming" : ""}
+            {totalKnown ? ` - ${pct}%` : ""}
+          </span>
         </div>
       </>
     );
@@ -179,14 +191,30 @@ function Body({ status }: { status: ChromiumStatus }): JSX.Element {
             {status.message}
           </div>
         </div>
-        <Button
-          variant="primary"
-          fullWidth
-          leftIcon={<Download size={14} strokeWidth={1.5} />}
-          onClick={() => void window.mktBrowser.chromium.retry()}
-        >
-          Retry download
-        </Button>
+        <div className="space-y-2">
+          <Button
+            variant="primary"
+            fullWidth
+            leftIcon={<Download size={14} strokeWidth={1.5} />}
+            onClick={() => void window.mktBrowser.chromium.retry()}
+          >
+            Retry download
+          </Button>
+          {status.engine === "cloakbrowser" ? (
+            <>
+              <Button
+                variant="secondary"
+                fullWidth
+                onClick={() => void window.mktBrowser.chromium.switchToCft()}
+              >
+                Switch to Chrome for Testing
+              </Button>
+              <p className="text-[11px] text-slate-500 text-center">
+                Compatibility fallback only. Chrome for Testing is not the primary antidetect runtime.
+              </p>
+            </>
+          ) : null}
+        </div>
       </>
     );
   }

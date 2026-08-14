@@ -393,10 +393,19 @@ export type ChromiumStatus =
   | { kind: "ready"; version: string; binaryPath: string }
   | { kind: "missing" }
   | { kind: "fetching-manifest" }
-  | { kind: "downloading"; bytesReceived: number; bytesTotal: number; version: string }
+  | {
+      kind: "downloading";
+      engine: "cft" | "cloakbrowser";
+      bytesReceived: number;
+      bytesTotal: number;
+      version: string;
+      attempt: number;
+      maxAttempts: number;
+      resuming: boolean;
+    }
   | { kind: "verifying"; version: string }
   | { kind: "extracting"; version: string }
-  | { kind: "error"; message: string }
+  | { kind: "error"; engine: "cft" | "cloakbrowser"; message: string }
   | { kind: "dev-system"; binaryPath: string };
 
 export interface ChromiumManifest {

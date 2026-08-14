@@ -1,6 +1,6 @@
 import { app, net } from "electron";
 import { EventEmitter } from "node:events";
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync } from "node:fs";
 import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
@@ -36,15 +36,13 @@ async function extractArchive(archivePath: string, destDir: string): Promise<voi
   await extract(archivePath, { dir: destDir });
 }
 
-/**
- * Backwards-compat alias kept for any callers that imported the old
- * name. Both formats now route through {@link extractArchive}.
- */
-async function extractZipPreservingAttrs(zipPath: string, destDir: string): Promise<void> {
-  return extractArchive(zipPath, destDir);
-}
 import type { BrowserEngine } from "@mktbrowser/settings-store";
 import type { ChromiumStatus } from "@mktbrowser/types";
+import {
+  extractedWindowsRuntimeRoot,
+  stableWindowsRuntime,
+  win32PathEquals,
+} from "./chromium-runtime-path.ts";
 
 const execFileP = promisify(execFile);
 
@@ -276,8 +274,18 @@ export class ChromiumBootstrap extends EventEmitter {
       }
 
       // Atomic rename — only after this point is the version "installed".
-      await rm(versionDir, { recursive: true, force: true });
-      await rename(tmpExtract, versionDir);
+      let finalBinary: string;
+      let binaryRelative: string;
+      if (process.platform === "win32") {
+        finalBinary = await this.installStableWindowsRuntime(binaryPath, manifest.version);
+        binaryRelative = join("runtime", "chrome.exe");
+        await rm(tmpExtract, { recursive: true, force: true });
+      } else {
+        await rm(versionDir, { recursive: true, force: true });
+        await rename(tmpExtract, versionDir);
+        finalBinary = binaryPath.replace(tmpExtract, versionDir);
+        binaryRelative = binaryPath.slice(tmpExtract.length + 1);
+      }
 
       // Persist current.json so the next launch picks up the cached copy.
       await writeFile(
@@ -285,7 +293,7 @@ export class ChromiumBootstrap extends EventEmitter {
         JSON.stringify(
           {
             version: manifest.version,
-            binaryRelative: binaryPath.slice(tmpExtract.length + 1),
+            binaryRelative,
             sha256,
             installedAt: new Date().toISOString(),
             channel: this.channel,
@@ -294,9 +302,6 @@ export class ChromiumBootstrap extends EventEmitter {
           2,
         ),
       );
-
-      // Re-resolve binaryPath under the final versionDir.
-      const finalBinary = binaryPath.replace(tmpExtract, versionDir);
 
       // Best-effort GC: keep current + previous, drop everything older.
       await this.gcOldVersions(manifest.version).catch(() => {});
@@ -308,7 +313,7 @@ export class ChromiumBootstrap extends EventEmitter {
       });
       return this.status;
     } catch (e) {
-      this.setStatus({ kind: "error", message: (e as Error).message });
+      this.setStatus({ kind: "error", engine: this.engine, message: (e as Error).message });
       throw e;
     }
   }
@@ -335,13 +340,87 @@ export class ChromiumBootstrap extends EventEmitter {
         version: string;
         binaryRelative: string;
       };
+      await this.recoverStableWindowsRuntimeSwap();
+      const stableBinary = stableWindowsRuntime(this.cacheDir);
+      if (process.platform === "win32" && existsSync(stableBinary)) {
+        await stat(stableBinary);
+        const runtimeVersion = await this.readStableWindowsRuntimeVersion();
+        return { version: runtimeVersion ?? cur.version, binaryPath: stableBinary };
+      }
       const versionDir = join(this.cacheDir, cur.version);
       const candidate = join(versionDir, cur.binaryRelative);
       if (!existsSync(candidate)) return null;
       // Quick sanity: stat must succeed. We don't re-hash on every
       // launch — a 280MB read is too expensive for a cold path.
       await stat(candidate);
+      if (process.platform === "win32") {
+        const migrated = await this.installStableWindowsRuntime(candidate, cur.version);
+        return { version: cur.version, binaryPath: migrated };
+      }
       return { version: cur.version, binaryPath: candidate };
+    } catch {
+      return null;
+    }
+  }
+
+  private async recoverStableWindowsRuntimeSwap(): Promise<void> {
+    if (process.platform !== "win32") return;
+    const runtimeDir = join(this.cacheDir, "runtime");
+    const rollbackDir = join(this.cacheDir, "runtime.rollback");
+    if (!existsSync(runtimeDir) && existsSync(join(rollbackDir, "chrome.exe"))) {
+      await rename(rollbackDir, runtimeDir);
+      return;
+    }
+    if (existsSync(runtimeDir) && existsSync(rollbackDir)) {
+      await rm(rollbackDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
+  private async installStableWindowsRuntime(
+    sourceBinary: string,
+    version: string,
+  ): Promise<string> {
+    const finalBinary = stableWindowsRuntime(this.cacheDir);
+    const runtimeDir = join(this.cacheDir, "runtime");
+    const stagingDir = join(this.cacheDir, "runtime.partial");
+    const rollbackDir = join(this.cacheDir, "runtime.rollback");
+    const sourceDir = extractedWindowsRuntimeRoot(sourceBinary);
+
+    if (win32PathEquals(sourceBinary, finalBinary)) return finalBinary;
+    await rm(stagingDir, { recursive: true, force: true });
+    await rename(sourceDir, stagingDir);
+    if (!existsSync(join(stagingDir, "chrome.exe"))) {
+      await rename(stagingDir, sourceDir).catch(() => {});
+      throw new Error("The staged Windows browser runtime does not contain chrome.exe.");
+    }
+    await writeFile(join(stagingDir, ".mkt-runtime.json"), JSON.stringify({ version }));
+
+    await rm(rollbackDir, { recursive: true, force: true });
+    let previousMoved = false;
+    try {
+      if (existsSync(runtimeDir)) {
+        await rename(runtimeDir, rollbackDir);
+        previousMoved = true;
+      }
+      await rename(stagingDir, runtimeDir);
+    } catch (cause) {
+      if (previousMoved && !existsSync(runtimeDir)) {
+        await rename(rollbackDir, runtimeDir).catch(() => {});
+      }
+      if (existsSync(stagingDir) && !existsSync(sourceDir)) {
+        await rename(stagingDir, sourceDir).catch(() => {});
+      }
+      throw new Error("The Windows browser runtime could not be installed atomically.", { cause });
+    }
+    await rm(rollbackDir, { recursive: true, force: true }).catch(() => {});
+    return finalBinary;
+  }
+
+  private async readStableWindowsRuntimeVersion(): Promise<string | null> {
+    try {
+      const raw = await readFile(join(this.cacheDir, "runtime", ".mkt-runtime.json"), "utf8");
+      const parsed = JSON.parse(raw) as { version?: unknown };
+      return typeof parsed.version === "string" && parsed.version ? parsed.version : null;
     } catch {
       return null;
     }
@@ -406,7 +485,13 @@ export class ChromiumBootstrap extends EventEmitter {
         // attempt 1 always starts clean (also scrubs any stale .partial
         // left by an older build / previous failed run). attempts 2+
         // resume whatever bytes survived on disk.
-        const sha = await this.downloadAttempt(manifest, outPath, /* allowResume */ attempt > 1);
+        const sha = await this.downloadAttempt(
+          manifest,
+          outPath,
+          /* allowResume */ attempt > 1,
+          attempt,
+          MAX_ATTEMPTS,
+        );
 
         if (manifest.sha256 && sha !== manifest.sha256) {
           // Byte-complete but wrong content. Resuming would just append to
@@ -451,6 +536,8 @@ export class ChromiumBootstrap extends EventEmitter {
     manifest: BrowserDownloadManifest,
     outPath: string,
     allowResume: boolean,
+    attempt: number,
+    maxAttempts: number,
   ): Promise<string> {
     let have = 0;
     if (allowResume && existsSync(outPath)) {
@@ -461,9 +548,13 @@ export class ChromiumBootstrap extends EventEmitter {
 
     this.setStatus({
       kind: "downloading",
+      engine: this.engine,
       version: manifest.version,
       bytesReceived: have,
       bytesTotal: 0,
+      attempt,
+      maxAttempts,
+      resuming: have > 0,
     });
 
     const total = await new Promise<number>((resolve, reject) => {
@@ -539,9 +630,13 @@ export class ChromiumBootstrap extends EventEmitter {
             lastEmit = now;
             this.setStatus({
               kind: "downloading",
+              engine: this.engine,
               version: manifest.version,
               bytesReceived: received,
               bytesTotal: total,
+              attempt,
+              maxAttempts,
+              resuming: append,
             });
           }
           // Manual backpressure: pause the response while the disk catches up.
@@ -575,9 +670,13 @@ export class ChromiumBootstrap extends EventEmitter {
 
     this.setStatus({
       kind: "downloading",
+      engine: this.engine,
       version: manifest.version,
       bytesReceived: finalSize,
       bytesTotal: total || finalSize,
+      attempt,
+      maxAttempts,
+      resuming: have > 0,
     });
 
     return sha256File(outPath);

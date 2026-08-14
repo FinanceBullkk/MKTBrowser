@@ -69,8 +69,8 @@ export class SettingsStore {
   async update(patch: Partial<AppSettings>): Promise<AppSettings> {
     const current = await this.load();
     const next = { ...current, ...patch };
-    this.cache = next;
     writeFileSync(this.jsonPath, JSON.stringify(next, null, 2), "utf8");
+    this.cache = next;
     return next;
   }
 }

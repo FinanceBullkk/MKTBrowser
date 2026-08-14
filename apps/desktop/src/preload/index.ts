@@ -116,6 +116,7 @@ const api = {
   chromium: {
     status: (): Promise<ChromiumStatus> => invoke(IPC.CHROMIUM_STATUS),
     retry: (): Promise<ChromiumStatus> => invoke(IPC.CHROMIUM_RETRY),
+    switchToCft: (): Promise<ChromiumStatus> => invoke(IPC.CHROMIUM_SWITCH_TO_CFT),
     onStatus: (cb: (status: ChromiumStatus) => void): (() => void) =>
       subscribe(IPC_EVENTS.CHROMIUM_STATUS, cb),
   },

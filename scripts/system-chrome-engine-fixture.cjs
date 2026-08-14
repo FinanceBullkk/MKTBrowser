@@ -32,10 +32,9 @@ async function installSystemChromeEngineFixture(userData) {
   const chromeExecutable = locateSystemChrome();
   const cacheDir = path.join(userData, "chromium", "cft");
   const version = "system-chrome";
-  const versionDir = path.join(cacheDir, version);
-  const junctionPath = path.join(versionDir, "chrome-win64");
+  const junctionPath = path.join(cacheDir, "runtime");
 
-  await mkdir(versionDir, { recursive: true });
+  await mkdir(cacheDir, { recursive: true });
   try {
     // Link the complete Application directory so chrome.exe can resolve its DLLs and resources.
     await symlink(path.dirname(chromeExecutable), junctionPath, "junction");
@@ -44,7 +43,7 @@ async function installSystemChromeEngineFixture(userData) {
       JSON.stringify(
         {
           version,
-          binaryRelative: path.join("chrome-win64", "chrome.exe"),
+          binaryRelative: path.join("runtime", "chrome.exe"),
           installedAt: new Date().toISOString(),
           channel: "System Chrome verifier fixture",
         },
