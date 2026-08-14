@@ -38,6 +38,12 @@ jobs:
       - name: Node.js build guard
         run: yarn verify:node
 
+      - name: Workspace quality contract
+        run: yarn verify:workspace-quality
+
+      - name: Lint
+        run: yarn lint
+
       - name: W01 and W02 guards
         run: yarn workspace @mktbrowser/desktop test:w02
 

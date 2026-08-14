@@ -10,6 +10,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "lint": "node ../../node_modules/typescript/bin/tsc --noEmit -p tsconfig.json --noUnusedLocals --noUnusedParameters --noFallthroughCasesInSwitch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:legacy": "node --experimental-strip-types --test src/legacy-multizen-import.test.ts",
     "test:managed": "tsx --test src/managed-profile-create.test.ts"

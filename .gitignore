@@ -17,6 +17,11 @@ build/
 !apps/desktop/build/
 apps/desktop/build/*
 !apps/desktop/build/installer.nsh
+!apps/desktop/build/windows-webrtc-firewall.ps1
+!apps/desktop/build/windows-relay-cleanup.ps1
+!apps/desktop/build/windows-install-conflict-detection.ps1
+
+apps/desktop/.installer-generated/
 
 # logs
 *.log

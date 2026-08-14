@@ -15,6 +15,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx watch src/standalone.ts",
+    "lint": "node ../../node_modules/typescript/bin/tsc --noEmit -p tsconfig.json --noUnusedLocals --noUnusedParameters --noFallthroughCasesInSwitch",
     "test:managed": "tsx --test src/managed-profile-launch.test.ts src/tool-exposure-policy.test.ts src/activity-log-redaction.test.ts src/activity-log-allowlist.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

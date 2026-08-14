@@ -34,7 +34,11 @@ const { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFile
 const path = require("node:path");
 const { rebuild } = require("@electron/rebuild");
 const { assertSupportedNodeVersion } = require("../../../scripts/verify-node-version.cjs");
+const {
+  assertWorkspaceQualityContract,
+} = require("../../../scripts/workspace-quality-contract.cjs");
 const { fetchPinnedRelay } = require("./fetch-pinned-relay.cjs");
+const { generateWindowsFirewallCommands } = require("./generate-windows-firewall-commands.cjs");
 
 const desktopRoot = path.resolve(__dirname, "..");
 const repoRoot = path.resolve(desktopRoot, "..", "..");
@@ -81,6 +85,13 @@ function readPinnedElectronVersion() {
  */
 async function packageWindows({ builderArgs, label, includeRelay = false }) {
   assertSupportedNodeVersion();
+  assertWorkspaceQualityContract(repoRoot);
+  runPrepackageQualityGates(label);
+
+  if (includeRelay) {
+    generateWindowsFirewallCommands();
+    process.stdout.write(`[${label}] generated self-contained WebRTC firewall commands.\n`);
+  }
 
   if (includeRelay) {
     const { manifest, archivePath } = await fetchPinnedRelay();
@@ -138,6 +149,36 @@ async function packageWindows({ builderArgs, label, includeRelay = false }) {
   }
 }
 
+function runPrepackageQualityGates(label) {
+  const { command, argsPrefix } = resolveCorepackInvocation();
+  for (const script of ["lint", "test:installer"]) {
+    process.stdout.write(`[${label}] running ${script} before artifact creation.\n`);
+    execFileSync(command, [...argsPrefix, "yarn", script], { cwd: repoRoot, stdio: "inherit" });
+  }
+}
+
+function resolveCorepackInvocation(options = {}) {
+  const platform = options.platform ?? process.platform;
+  if (platform !== "win32") return { command: "corepack", argsPrefix: [] };
+
+  const execPath = options.execPath ?? process.execPath;
+  const pathExists = options.pathExists ?? existsSync;
+  const corepackEntrypoint = path.join(
+    path.dirname(execPath),
+    "node_modules",
+    "corepack",
+    "dist",
+    "corepack.js",
+  );
+  if (!pathExists(corepackEntrypoint)) {
+    throw new Error(`Bundled Corepack entrypoint not found beside Node.js: ${corepackEntrypoint}`);
+  }
+
+  // Node 22 rejects direct spawn of .cmd shims on Windows. Invoke Corepack through node.exe so the
+  // prepackage gates use the same pinned runtime without shell parsing.
+  return { command: execPath, argsPrefix: [corepackEntrypoint] };
+}
+
 function moveWorkspaceLinksOutOfPackageTree(label) {
   if (!existsSync(workspaceLinksPath)) return null;
   const backup = path.join(desktopRoot, `.mktbrowser-workspace-links-${randomUUID()}`);
@@ -163,4 +204,4 @@ function runAsScript(options) {
   });
 }
 
-module.exports = { packageWindows, runAsScript };
+module.exports = { packageWindows, resolveCorepackInvocation, runAsScript };
