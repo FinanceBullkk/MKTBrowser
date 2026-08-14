@@ -40,9 +40,11 @@ profiles on the operator device.
   boundary is uncertain. CloakBrowser download failure can switch to CFT in-modal; CFT remains a
   compatibility fallback, not the primary antidetect runtime. The combined-installer manifest now
   pins the locally verified, unpublished Relay v12 archive, which accepts Browser contract v4. The
-  full Node 22 installer suite and a fresh local NSIS build pass; operational distribution remains
-  blocked until the immutable v12
-  object is published and the human Windows gates pass.
+  installer also persists its conflict detector for runtime setup checks; contract v4 advertises
+  `local-install-ready-v1` only after expected process, fixed-port, MultiZen-process, and startup
+  ownership pass. The complete Node 22 installer suite passes 97/97, packaging contracts pass 24/24,
+  and typecheck, lint, and the production Electron bundle pass. Operational distribution remains
+  blocked until the immutable v12 object is published and the human Windows gates pass.
 - MKB-03 Browser profile deletion is implemented as a separate in-app lifecycle. Contract version
   `4` removes `delete_profile` from MCP, and profile schema version `3` records incomplete deletion
   for crash-safe retry. The operator must type `DELETE <full profile id>`; active launch/close work

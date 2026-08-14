@@ -5,3 +5,5 @@ extraResources:
     to: relay/MKTTool-Relay.zip
   - from: relay-release.json
     to: relay/relay-release.json
+  - from: build/windows-install-conflict-detection.ps1
+    to: installer/windows-install-conflict-detection.ps1

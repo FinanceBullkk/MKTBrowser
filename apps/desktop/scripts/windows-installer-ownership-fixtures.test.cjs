@@ -41,7 +41,7 @@ function createShortcut(linkPath, targetPath) {
   ]);
 }
 
-function detectorArgs(root, browserPath, relayPath, repair = false) {
+function detectorArgs(root, browserPath, relayPath, repair = false, runtime = false) {
   return [
     "-NoProfile",
     "-NonInteractive",
@@ -56,11 +56,13 @@ function detectorArgs(root, browserPath, relayPath, repair = false) {
     "-StartupDirectory",
     root,
     ...(repair ? ["-RepairOwnedShortcuts"] : []),
+    ...(runtime ? ["-RuntimeInspection"] : []),
   ];
 }
 
-test("standard-user conflict inspection and owned shortcut repair stay non-destructive", windowsOnly, () => {
+test("standard-user conflict inspection and owned shortcut repair stay non-destructive", windowsOnly, async () => {
   const root = mkdtempSync(join(tmpdir(), "mktbrowser-conflict-fixture-"));
+  let browserProcess;
   try {
     const browserPath = join(root, "expected", "MKTBrowser.exe");
     const relayPath = join(root, "expected", "MKTTool-Relay.exe");
@@ -70,6 +72,32 @@ test("standard-user conflict inspection and owned shortcut repair stay non-destr
       encoding: "utf8",
     });
     assert.equal(probe.status, 0, probe.stderr || probe.stdout);
+
+    copyFileSync(
+      process.env.SystemRoot + "\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      browserPath,
+    );
+    browserProcess = spawn(browserPath, ["-NoProfile", "-Command", "Start-Sleep -Seconds 30"], {
+      windowsHide: true,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    const installMode = spawnSync(
+      "powershell.exe",
+      detectorArgs(root, browserPath, relayPath),
+      { encoding: "utf8" },
+    );
+    assert.equal(installMode.status, 20, installMode.stderr || installMode.stdout);
+
+    const runtimeMode = spawnSync(
+      "powershell.exe",
+      detectorArgs(root, browserPath, relayPath, false, true),
+      { encoding: "utf8" },
+    );
+    assert.equal(runtimeMode.status, 0, runtimeMode.stderr || runtimeMode.stdout);
+    const browserExited = new Promise((resolve) => browserProcess.once("exit", resolve));
+    browserProcess.kill();
+    await browserExited;
 
     const canonical = join(root, "MKT Browser.lnk");
     const ownedDuplicate = join(root, "Owned Browser Duplicate.lnk");
@@ -95,6 +123,7 @@ test("standard-user conflict inspection and owned shortcut repair stay non-destr
     assert.equal(conflict.status, 25, conflict.stderr || conflict.stdout);
     assert.equal(existsSync(unowned), true);
   } finally {
+    if (browserProcess?.exitCode === null) browserProcess.kill();
     rmSync(root, { recursive: true, force: true });
   }
 });

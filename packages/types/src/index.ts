@@ -48,13 +48,22 @@ export const MKT_BROWSER_PROFILE_SCHEMA_VERSION = 3;
  * Managed mode (`managed-profile-v1`, `idempotent-create-v1`, `atomic-launch-v1`) belongs to MKB-02
  * and must not be advertised before it exists.
  */
-export const MKT_BROWSER_CAPABILITIES = [
+export const MKT_BROWSER_BASE_CAPABILITIES = [
   "profile-contract-v1",
   "runtime-info-v1",
   "idempotent-create-v1",
   "atomic-launch-v1",
   "managed-profile-v1",
   "operation-diagnostics-v1",
+] as const;
+
+/**
+ * Complete capability vocabulary for this contract. Runtime-dependent entries are reported only
+ * after their local inspection passes; their presence here means callers may understand them.
+ */
+export const MKT_BROWSER_CAPABILITIES = [
+  ...MKT_BROWSER_BASE_CAPABILITIES,
+  "local-install-ready-v1",
 ] as const;
 
 export type MktBrowserCapability = (typeof MKT_BROWSER_CAPABILITIES)[number];

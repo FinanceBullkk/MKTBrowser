@@ -52,6 +52,7 @@ import {
 } from "./extensions/extensionStore.ts";
 import { probeProxyGeo, type ProxyGeoResult } from "./proxyGeo.ts";
 import { deleteBrowserProfile } from "./profile-deletion-lifecycle.ts";
+import { WindowsLocalInstallInspector } from "./windows-local-install-inspector.ts";
 import {
   IPC,
   IPC_EVENTS,
@@ -204,6 +205,27 @@ app
     }
 
     const userData = app.getPath("userData");
+    const localInstallInspector = new WindowsLocalInstallInspector({
+      scriptPath: join(
+        process.resourcesPath,
+        "installer",
+        "windows-install-conflict-detection.ps1",
+      ),
+      browserPath: process.execPath,
+      relayPath: process.env.LOCALAPPDATA
+        ? join(process.env.LOCALAPPDATA, "MKTTool-Relay", "MKTTool-Relay.exe")
+        : "",
+      startupDirectory: join(
+        app.getPath("appData"),
+        "Microsoft",
+        "Windows",
+        "Start Menu",
+        "Programs",
+        "Startup",
+      ),
+    });
+    const runtimeCapabilities = async () =>
+      (await localInstallInspector.isReady()) ? (["local-install-ready-v1"] as const) : [];
     const dataRoot = join(userData, "data");
     if (process.platform === "win32" && !app.commandLine.hasSwitch("user-data-dir")) {
       const legacyImport = findLegacyMultiZenImport(app.getPath("appData"), dataRoot);
@@ -364,6 +386,7 @@ app
       // has since been removed, which is exactly the answer the caller is trying to verify.
       engineInfo: () =>
         describeEngineStatus(chromiumBootstrap.getEngine(), chromiumBootstrap.getStatus()),
+      runtimeCapabilities,
     });
     activityLog = mcp.activityLog;
 
@@ -410,6 +433,7 @@ app
               accessPolicy,
               engineInfo: () =>
                 describeEngineStatus(chromiumBootstrap.getEngine(), chromiumBootstrap.getStatus()),
+              runtimeCapabilities,
             }).server,
         );
       } catch (e) {

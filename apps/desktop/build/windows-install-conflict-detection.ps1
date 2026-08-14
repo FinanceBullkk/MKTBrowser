@@ -2,7 +2,8 @@ param(
     [Parameter(Mandatory = $true)][string]$ExpectedBrowserPath,
     [Parameter(Mandatory = $true)][string]$ExpectedRelayPath,
     [Parameter(Mandatory = $true)][string]$StartupDirectory,
-    [switch]$RepairOwnedShortcuts
+    [switch]$RepairOwnedShortcuts,
+    [switch]$RuntimeInspection
 )
 
 $ErrorActionPreference = "Stop"
@@ -153,7 +154,8 @@ function Repair-OwnedShortcuts([object[]]$Duplicates, [string]$Label) {
 }
 
 try {
-    Assert-Named-Processes "MKTBrowser.exe" $ExpectedBrowserPath $false 20 "MKT Browser"
+    $allowExpectedBrowser = $RuntimeInspection.IsPresent
+    Assert-Named-Processes "MKTBrowser.exe" $ExpectedBrowserPath $allowExpectedBrowser 20 "MKT Browser"
     Assert-Named-Processes "MKTTool-Relay.exe" $ExpectedRelayPath $true 21 "MKTTool Relay"
 
     if (@(Get-Process -Name "MultiZen" -ErrorAction SilentlyContinue).Count -gt 0) {
@@ -162,7 +164,7 @@ try {
 
     $listeners = @(Tcp-Listeners)
     Assert-Listener $listeners 47821 $ExpectedRelayPath $true 22 "Relay"
-    Assert-Listener $listeners 47822 $ExpectedBrowserPath $false 23 "Browser MCP"
+    Assert-Listener $listeners 47822 $ExpectedBrowserPath $allowExpectedBrowser 23 "Browser MCP"
 
     $shortcuts = Shortcut-Targets $StartupDirectory
     $browserDuplicates = @(Assert-Shortcuts $shortcuts "MKTBrowser.exe" $ExpectedBrowserPath (Join-Path $StartupDirectory "MKT Browser.lnk") 25 "MKT Browser")

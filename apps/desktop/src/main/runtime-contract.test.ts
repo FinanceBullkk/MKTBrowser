@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  MKT_BROWSER_BASE_CAPABILITIES,
   MKT_BROWSER_CAPABILITIES,
   MKT_BROWSER_CONTRACT_VERSION,
   MKT_BROWSER_ERROR_CODES,
   MKT_BROWSER_PROFILE_SCHEMA_VERSION,
 } from "../../../../packages/types/src/index.ts";
 import { describeEngineStatus } from "./engine-runtime-info.ts";
+import { resolveRuntimeCapabilities } from "../../../../packages/mcp-server/src/runtime-capabilities.ts";
 
 const REPO_ROOT = new URL("../../../../", import.meta.url);
 
@@ -15,7 +17,7 @@ test("publishes a versioned runtime contract", () => {
   assert.equal(MKT_BROWSER_CONTRACT_VERSION, 4);
   assert.equal(MKT_BROWSER_PROFILE_SCHEMA_VERSION, 3);
   assert.deepEqual(
-    [...MKT_BROWSER_CAPABILITIES],
+    [...MKT_BROWSER_BASE_CAPABILITIES],
     [
       "profile-contract-v1",
       "runtime-info-v1",
@@ -25,6 +27,41 @@ test("publishes a versioned runtime contract", () => {
       "operation-diagnostics-v1",
     ],
   );
+  assert.deepEqual(
+    [...MKT_BROWSER_CAPABILITIES],
+    [
+      "profile-contract-v1",
+      "runtime-info-v1",
+      "idempotent-create-v1",
+      "atomic-launch-v1",
+      "managed-profile-v1",
+      "operation-diagnostics-v1",
+      "local-install-ready-v1",
+    ],
+  );
+});
+
+test("keeps the local-install capability conditional at runtime", async () => {
+  const server = source("packages/mcp-server/src/server.ts");
+  const main = source("apps/desktop/src/main/index.ts");
+
+  assert.match(server, /runtimeCapabilities/);
+  assert.deepEqual(await resolveRuntimeCapabilities(), [...MKT_BROWSER_BASE_CAPABILITIES]);
+  assert.deepEqual(
+    await resolveRuntimeCapabilities(async () => [
+      "local-install-ready-v1",
+      "local-install-ready-v1",
+    ]),
+    [...MKT_BROWSER_BASE_CAPABILITIES, "local-install-ready-v1"],
+  );
+  assert.deepEqual(
+    await resolveRuntimeCapabilities(async () => {
+      throw new Error("inspection failed");
+    }),
+    [...MKT_BROWSER_BASE_CAPABILITIES],
+  );
+  assert.match(main, /local-install-ready-v1/);
+  assert.match(main, /WindowsLocalInstallInspector/);
 });
 
 test("keeps every failing layer separately addressable", () => {

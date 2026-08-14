@@ -10,7 +10,6 @@ import {
   localeCatalog,
 } from "@mktbrowser/profile-manager";
 import {
-  MKT_BROWSER_CAPABILITIES,
   MKT_BROWSER_CONTRACT_VERSION,
   MKT_BROWSER_MCP_SERVER_NAME,
   MKT_BROWSER_MCP_SERVER_VERSION,
@@ -42,6 +41,10 @@ import {
   isMcpToolAllowed,
   type McpToolAccessPolicy,
 } from "./tool-exposure-policy.js";
+import {
+  resolveRuntimeCapabilities,
+  type RuntimeCapabilityProvider,
+} from "./runtime-capabilities.js";
 import { launchManagedProfile, type RunningProfileState } from "./managed-profile-launch.js";
 
 // ── Security gates (engine-independent, enforced in the MCP dispatch layer) ──
@@ -232,6 +235,8 @@ export interface MktBrowserMcpServerOptions {
    * a version this process cannot actually observe.
    */
   engineInfo?: () => MktBrowserEngineInfo;
+  /** Runtime-dependent capabilities that have passed their local checks on this device. */
+  runtimeCapabilities?: RuntimeCapabilityProvider;
   /** Capability filter resolved from the authenticated transport token. */
   accessPolicy?: McpToolAccessPolicy;
 }
@@ -433,7 +438,7 @@ export function buildMcpInstructions(accessPolicy: McpToolAccessPolicy): string 
 }
 
 export function createMktBrowserMcpServer(opts: MktBrowserMcpServerOptions): MktBrowserMcpServer {
-  const { profileManager, browserDriver, engineInfo } = opts;
+  const { profileManager, browserDriver, engineInfo, runtimeCapabilities } = opts;
   const activityLog = opts.activityLog ?? new ActivityLog();
   const accessPolicy = opts.accessPolicy ?? FULL_LOCAL_ACCESS_POLICY;
   assertMcpToolInventory(TOOL_DEFINITIONS.map((tool) => tool.name));
@@ -469,7 +474,12 @@ export function createMktBrowserMcpServer(opts: MktBrowserMcpServerOptions): Mkt
       if (!isClassifiedMcpTool(name) || !isMcpToolAllowed(name, accessPolicy)) {
         throw unknownTool(name);
       }
-      const result = await dispatch(name, args, { profileManager, browserDriver, engineInfo });
+      const result = await dispatch(name, args, {
+        profileManager,
+        browserDriver,
+        engineInfo,
+        runtimeCapabilities,
+      });
       activityLog.finish(event, "ok", summarize(result), startedAt);
       return ok(withOperationDiagnostic(result, args, "complete", startedAt, engineInfo));
     } catch (e) {
@@ -492,6 +502,7 @@ interface DispatchDeps {
   profileManager: ProfileManager;
   browserDriver: BrowserDriver;
   engineInfo?: () => MktBrowserEngineInfo;
+  runtimeCapabilities?: MktBrowserMcpServerOptions["runtimeCapabilities"];
 }
 
 const UNKNOWN_ENGINE: MktBrowserEngineInfo = { kind: "unknown", version: null, status: "unknown" };
@@ -501,7 +512,7 @@ const UNKNOWN_ENGINE: MktBrowserEngineInfo = { kind: "unknown", version: null, s
  * tell a healthy device from one whose engine is still downloading, and must never infer a
  * capability from the version number alone.
  */
-function buildRuntimeInfo(engineInfo?: () => MktBrowserEngineInfo): MktBrowserRuntimeInfo {
+function buildRuntimeIdentity(engineInfo?: () => MktBrowserEngineInfo) {
   let engine = UNKNOWN_ENGINE;
   try {
     engine = engineInfo?.() ?? UNKNOWN_ENGINE;
@@ -516,8 +527,15 @@ function buildRuntimeInfo(engineInfo?: () => MktBrowserEngineInfo): MktBrowserRu
     contractVersion: MKT_BROWSER_CONTRACT_VERSION,
     profileSchemaVersion: MKT_BROWSER_PROFILE_SCHEMA_VERSION,
     engine,
-    capabilities: [...MKT_BROWSER_CAPABILITIES],
   };
+}
+
+async function buildRuntimeInfo(
+  engineInfo?: () => MktBrowserEngineInfo,
+  runtimeCapabilities?: MktBrowserMcpServerOptions["runtimeCapabilities"],
+): Promise<MktBrowserRuntimeInfo> {
+  const capabilities = await resolveRuntimeCapabilities(runtimeCapabilities);
+  return { ...buildRuntimeIdentity(engineInfo), capabilities };
 }
 
 async function dispatch(
@@ -528,7 +546,7 @@ async function dispatch(
   const { profileManager, browserDriver } = deps;
   switch (name) {
     case "get_runtime_info": {
-      return buildRuntimeInfo(deps.engineInfo);
+      return await buildRuntimeInfo(deps.engineInfo, deps.runtimeCapabilities);
     }
     case "list_profiles": {
       const profiles = profileManager.list().map((p) => ({
@@ -1276,7 +1294,7 @@ function operationDiagnostic(
   const operationId = args.operation_id;
   if (typeof operationId !== "string" || operationId === "") return undefined;
 
-  const runtime = buildRuntimeInfo(engineInfo);
+  const runtime = buildRuntimeIdentity(engineInfo);
   const requestId = args.request_id;
   return {
     operationId,

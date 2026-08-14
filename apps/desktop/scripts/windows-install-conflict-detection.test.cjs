@@ -17,6 +17,10 @@ const installSectionTemplate = readFileSync(
   join(desktopRoot, "node_modules", "app-builder-lib", "templates", "nsis", "installSection.nsh"),
   "utf8",
 );
+const installerBuilder = readFileSync(
+  join(desktopRoot, "electron-builder-installer.yml"),
+  "utf8",
+);
 
 function macroBody(name) {
   const match = installer.match(new RegExp(`!macro ${name}\\b([\\s\\S]*?)!macroend`));
@@ -73,6 +77,8 @@ test("detects fixed-port, running Browser path, MultiZen, and startup conflicts 
   assert.match(detector, /Duplicate .* startup entries/);
   assert.match(detector, /Get-Process/);
   assert.match(detector, /netstat\.exe/);
+  assert.match(detector, /\[switch\]\$RuntimeInspection/);
+  assert.match(detector, /\$allowExpectedBrowser = \$RuntimeInspection\.IsPresent/);
   assert.doesNotMatch(detector, /Get-CimInstance|Get-NetTCPConnection/);
   assert.doesNotMatch(detector, /Exception\.Message|Detail:/);
   for (const code of [20, 21, 22, 23, 24, 27, 28]) {
@@ -80,6 +86,13 @@ test("detects fixed-port, running Browser path, MultiZen, and startup conflicts 
   }
   assert.match(detector, /\) 25 "MKT Browser"/);
   assert.match(detector, /\) 26 "MKTTool Relay"/);
+});
+
+test("packages the shared detector for setup-time runtime inspection", () => {
+  assert.match(
+    installerBuilder,
+    /from: build\/windows-install-conflict-detection\.ps1[\s\S]*to: installer\/windows-install-conflict-detection\.ps1/,
+  );
 });
 
 test("repairs only exact-target owned shortcut duplicates after all conflict checks", () => {
