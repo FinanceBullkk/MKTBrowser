@@ -2,9 +2,14 @@ export {
   ProfileManager,
   IdempotentProfileCreateConflictError,
   ManagedProfileLockedError,
+  ProfileDeletionPendingError,
   type IdempotentProfileCreateMetadata,
   type IdempotentProfileCreateResult,
 } from "./ProfileManager.js";
+export {
+  ProfileDeletionIncompleteError,
+  UnsafeProfileDeletionPathError,
+} from "./permanent-profile-deletion.js";
 export {
   defaultFingerprint,
   generateFingerprint,

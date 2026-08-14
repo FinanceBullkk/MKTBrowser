@@ -51,6 +51,7 @@ import {
   readManifestIcon,
 } from "./extensions/extensionStore.ts";
 import { probeProxyGeo, type ProxyGeoResult } from "./proxyGeo.ts";
+import { deleteBrowserProfile } from "./profile-deletion-lifecycle.ts";
 import {
   IPC,
   IPC_EVENTS,
@@ -431,20 +432,11 @@ app
       (_e, id: string, patch: Parameters<ProfileManager["update"]>[1]) =>
         profileManager.update(id, patch),
     );
-    handleIpc(IPC.PROFILES_DELETE, (_e, id: string) => {
-      const profile = profileManager.get(id);
-      if (profile?.managed) {
-        throw new Error(`Managed profile ${id} can be deleted only through MKTTool recovery.`);
-      }
-      void browserDriver.close(id).catch(() => {});
-      profileManager.delete(id);
-      // Reclaim shared store entries this profile referenced that no other profile
-      // still uses (delete() only removed the profile's own dataDir). Best-effort.
-      void sweepOrphans(
-        extensionStoreRoot,
-        profileManager.allExtensionRefs().map((r) => r.ext),
-      ).catch(() => {});
-    });
+    handleIpc(
+      IPC.PROFILES_DELETE_PERMANENTLY,
+      (_e, input: { profileId: string; confirmation: string }) =>
+        deleteBrowserProfile(input, { profileManager, browserDriver }),
+    );
     handleIpc(IPC.PROFILES_LAUNCH, (_e, id: string) => {
       const profile = profileManager.get(id);
       if (profile?.managed) {
@@ -669,6 +661,12 @@ app
       ): Promise<{ ok: true; path: string } | { ok: false; reason: string }> => {
         const profile = profileManager.get(id);
         if (!profile) return { ok: false, reason: "not_found" };
+        if (profile.deletionPending) {
+          return {
+            ok: false,
+            reason: "Finish or retry this profile's pending deletion before exporting it.",
+          };
+        }
         if (profile.managed) {
           return {
             ok: false,

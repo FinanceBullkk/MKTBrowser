@@ -77,11 +77,11 @@ const api = {
   profiles: {
     list: (): Promise<ProfileSummary[]> => invoke(IPC.PROFILES_LIST),
     get: (id: ProfileId): Promise<Profile | null> => invoke(IPC.PROFILES_GET, id),
-    create: (input: CreateProfileInput): Promise<Profile> =>
-      invoke(IPC.PROFILES_CREATE, input),
+    create: (input: CreateProfileInput): Promise<Profile> => invoke(IPC.PROFILES_CREATE, input),
     update: (id: ProfileId, patch: UpdateProfileInput): Promise<Profile> =>
       invoke(IPC.PROFILES_UPDATE, id, patch),
-    delete: (id: ProfileId): Promise<void> => invoke(IPC.PROFILES_DELETE, id),
+    deletePermanently: (input: { profileId: ProfileId; confirmation: string }): Promise<void> =>
+      invoke(IPC.PROFILES_DELETE_PERMANENTLY, input),
     launch: (id: ProfileId): Promise<LaunchedProfile> => invoke(IPC.PROFILES_LAUNCH, id),
     close: (id: ProfileId): Promise<void> => invoke(IPC.PROFILES_CLOSE, id),
     exportArchive: (
@@ -95,9 +95,7 @@ const api = {
       invoke(IPC.PROFILES_IMPORT, passphrase),
     onRunningChanged: (cb: (change: RunningStateChange) => void): (() => void) =>
       subscribe(IPC_EVENTS.PROFILES_RUNNING_CHANGED, cb),
-    onProxyCountryUpdated: (
-      cb: (update: { id: string; country: string }) => void,
-    ): (() => void) =>
+    onProxyCountryUpdated: (cb: (update: { id: string; country: string }) => void): (() => void) =>
       subscribe(IPC_EVENTS.PROFILES_PROXY_COUNTRY_UPDATED, cb),
   },
   settings: {
@@ -121,8 +119,7 @@ const api = {
       subscribe(IPC_EVENTS.CHROMIUM_STATUS, cb),
   },
   extensions: {
-    list: (profileId: string): Promise<ExtensionConfig[]> =>
-      invoke(IPC.EXTENSIONS_LIST, profileId),
+    list: (profileId: string): Promise<ExtensionConfig[]> => invoke(IPC.EXTENSIONS_LIST, profileId),
     addFromFile: (profileId: string): Promise<ExtensionConfig[]> =>
       invoke(IPC.EXTENSIONS_ADD_FROM_FILE, profileId),
     addFromFolder: (profileId: string): Promise<ExtensionConfig[]> =>
@@ -149,10 +146,8 @@ const api = {
   },
   fingerprint: {
     generate: (): Promise<FingerprintConfig> => invoke(IPC.FINGERPRINT_GENERATE),
-    devices: (): Promise<ReadonlyArray<DeviceCatalogEntry>> =>
-      invoke(IPC.FINGERPRINT_DEVICES),
-    locales: (): Promise<ReadonlyArray<LocaleCatalogEntry>> =>
-      invoke(IPC.FINGERPRINT_LOCALES),
+    devices: (): Promise<ReadonlyArray<DeviceCatalogEntry>> => invoke(IPC.FINGERPRINT_DEVICES),
+    locales: (): Promise<ReadonlyArray<LocaleCatalogEntry>> => invoke(IPC.FINGERPRINT_LOCALES),
     reconcile: (
       current: FingerprintConfig,
       patch: FingerprintReconcilePatch,

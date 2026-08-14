@@ -12,12 +12,16 @@ const execFileP = promisify(execFile);
 import type { BrowserDriver } from "@mktbrowser/mcp-server";
 import {
   engineUnavailable,
+  profileAlreadyRunning,
   profileNotFound,
   profileNotRunning,
   proxyRejected,
 } from "@mktbrowser/mcp-server";
 import type { ProfileManager } from "@mktbrowser/profile-manager";
-import { reconcileDeviceFamilyToHost } from "@mktbrowser/profile-manager";
+import {
+  ProfileDeletionPendingError,
+  reconcileDeviceFamilyToHost,
+} from "@mktbrowser/profile-manager";
 import type {
   ClientHints,
   FingerprintConfig,
@@ -95,6 +99,8 @@ interface DriverEvents {
  */
 export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver {
   private readonly running = new Map<ProfileId, RunningProcess>();
+  private readonly launching = new Set<ProfileId>();
+  private readonly closing = new Set<ProfileId>();
   private nextPort = 9222;
   private readonly profileManager: ProfileManager;
   private bootstrap: ChromiumBootstrap;
@@ -110,7 +116,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
   }
 
   setChromiumBootstrap(bootstrap: ChromiumBootstrap): void {
-    if (this.running.size > 0) {
+    if (this.running.size > 0 || this.launching.size > 0 || this.closing.size > 0) {
       throw new Error("Close all profiles before changing the browser engine.");
     }
     this.bootstrap = bootstrap;
@@ -137,9 +143,17 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
         startedAt: existing.startedAt,
       };
     }
+    if (this.launching.has(profileId) || this.closing.has(profileId)) {
+      throw profileAlreadyRunning(profileId);
+    }
+    this.launching.add(profileId);
+    return this.launchTracked(profileId).finally(() => this.launching.delete(profileId));
+  }
 
+  private async launchTracked(profileId: ProfileId): Promise<LaunchedProfile> {
     const profile = this.profileManager.get(profileId);
     if (!profile) throw profileNotFound(profileId);
+    if (profile.deletionPending) throw new ProfileDeletionPendingError(profileId);
 
     // Update `last_opened_at` for every launch, regardless of trigger
     // (UI button, MCP tool, command palette). Done early so even a
@@ -367,9 +381,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     if (engine === "cft") {
       args.push("--test-type=gpu");
     }
-    if (
-      packagedContractFixture
-    ) {
+    if (packagedContractFixture) {
       // Restricted verification hosts cannot start Chrome's GPU sandbox. Normal launches never
       // enter this branch; the verifier separately proves a real CDP-ready browser lifecycle.
       args.push("--disable-gpu", "--disable-software-rasterizer", "--no-sandbox");
@@ -826,6 +838,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
   async close(profileId: ProfileId): Promise<void> {
     const r = this.running.get(profileId);
     if (!r) return;
+    this.closing.add(profileId);
     console.log(`[mkt-browser] close() profile=${profileId} pid=${r.pid}`);
     // Signal the terminating phase up front (covers MCP/external callers that
     // don't drive the button's local "Stopping…" state).
@@ -854,12 +867,15 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       console.log(
         `[mkt-browser] close() done profile=${profileId} pid=${r.pid} alive=${isPidAlive(r.pid)}`,
       );
+      this.closing.delete(profileId);
       this.emit("running-changed", { kind: "closed", profileId, reason: "user-close" });
     }
   }
 
   isRunning(profileId: ProfileId): boolean {
-    return this.running.has(profileId);
+    return (
+      this.running.has(profileId) || this.launching.has(profileId) || this.closing.has(profileId)
+    );
   }
 
   getRunningProfileState(profileId: ProfileId): RunningProfileState | null {

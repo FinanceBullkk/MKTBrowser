@@ -12,8 +12,8 @@ import { describeEngineStatus } from "./engine-runtime-info.ts";
 const REPO_ROOT = new URL("../../../../", import.meta.url);
 
 test("publishes a versioned runtime contract", () => {
-  assert.equal(MKT_BROWSER_CONTRACT_VERSION, 3);
-  assert.equal(MKT_BROWSER_PROFILE_SCHEMA_VERSION, 2);
+  assert.equal(MKT_BROWSER_CONTRACT_VERSION, 4);
+  assert.equal(MKT_BROWSER_PROFILE_SCHEMA_VERSION, 3);
   assert.deepEqual(
     [...MKT_BROWSER_CAPABILITIES],
     [
@@ -38,6 +38,7 @@ test("keeps every failing layer separately addressable", () => {
     "ENGINE_UNAVAILABLE",
     "UNKNOWN_TOOL",
     "MANAGED_PROFILE_LOCKED",
+    "PROFILE_DELETION_PENDING",
     "INTERNAL_ERROR",
   ]) {
     assert.equal((MKT_BROWSER_ERROR_CODES as readonly string[]).includes(code), true, code);

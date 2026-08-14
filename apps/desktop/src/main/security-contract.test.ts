@@ -101,10 +101,10 @@ test("packaged verification exercises the profile lifecycle", () => {
     "update_profile",
     "launch_profile",
     "close_profile",
-    "delete_profile",
   ]) {
     assert.ok(verifier.includes(`"${tool}"`), `Packaged verifier does not call ${tool}.`);
   }
+  assert.doesNotMatch(verifier, /callTool(?:Result)?\([^\n]*"delete_profile"/);
   assert.doesNotMatch(verifier, /ENGINE_UNAVAILABLE/);
   assert.match(verifier, /INVALID_INPUT/);
   assert.match(verifier, /PROXY_REJECTED/);
@@ -126,7 +126,10 @@ test("packaged verification exercises the profile lifecycle", () => {
   assert.match(driver, /"--disable-gpu", "--disable-software-rasterizer", "--no-sandbox"/);
   assert.match(driver, /if \(profile\.proxy\) \{/);
   assert.doesNotMatch(driver, /profile\.proxy && !packagedContractFixture/);
-  assert.match(driver, /stableWindowsRuntime\(join\(app\.getPath\("userData"\), "chromium", engine\)\)/);
+  assert.match(
+    driver,
+    /stableWindowsRuntime\(join\(app\.getPath\("userData"\), "chromium", engine\)\)/,
+  );
 });
 
 test("fingerprint measurement reports cleanup failures", () => {

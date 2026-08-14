@@ -108,6 +108,11 @@ export function ProfileRow({
                 Managed
               </span>
             )}
+            {profile.deletionPending && (
+              <span className="shrink-0 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-200 ring-1 ring-inset ring-amber-400/25">
+                Deletion incomplete
+              </span>
+            )}
             <ChevronRight
               size={12}
               className="text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
@@ -167,10 +172,16 @@ export function ProfileRow({
       <div
         className={cn(
           "flex items-center justify-end gap-1.5 transition-opacity",
-          isRunning || terminating ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+          isRunning || terminating || profile.deletionPending
+            ? "opacity-100"
+            : "opacity-0 group-hover:opacity-100",
         )}
       >
-        {terminating ? (
+        {profile.deletionPending ? (
+          <Button variant="secondary" size="sm" disabled>
+            Deleting
+          </Button>
+        ) : terminating ? (
           <Button
             variant="secondary"
             size="sm"
@@ -209,7 +220,7 @@ export function ProfileRow({
           onEdit={onOpen}
           onExport={onExport}
           onDelete={onDelete}
-          managed={profile.managed}
+          managed={profile.managed || profile.deletionPending}
         />
       </div>
     </div>
@@ -395,22 +406,16 @@ function RowMenu({
                   Export archive…
                 </MenuItem>
               )}
-              {!managed && (
-                <>
-                  <div
-                    style={{ height: 1, margin: "4px 0", background: "rgba(255,255,255,0.06)" }}
-                  />
-                  <MenuItem
-                    onClick={() => {
-                      setOpen(false);
-                      onDelete();
-                    }}
-                    tone="danger"
-                  >
-                    Delete profile
-                  </MenuItem>
-                </>
-              )}
+              <div style={{ height: 1, margin: "4px 0", background: "rgba(255,255,255,0.06)" }} />
+              <MenuItem
+                onClick={() => {
+                  setOpen(false);
+                  onDelete();
+                }}
+                tone="danger"
+              >
+                Delete profile data...
+              </MenuItem>
             </div>
           </>,
           document.body,

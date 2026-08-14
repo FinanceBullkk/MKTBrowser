@@ -9,7 +9,7 @@ import {
 const REPO_ROOT = new URL("../../../../", import.meta.url);
 
 test("advertises the completed MKB-02 managed-mode capabilities", () => {
-  assert.equal(MKT_BROWSER_PROFILE_SCHEMA_VERSION, 2);
+  assert.equal(MKT_BROWSER_PROFILE_SCHEMA_VERSION, 3);
   assert.equal(MKT_BROWSER_CAPABILITIES.includes("idempotent-create-v1"), true);
   assert.equal(MKT_BROWSER_CAPABILITIES.includes("atomic-launch-v1"), true);
   for (const implemented of ["managed-profile-v1", "operation-diagnostics-v1"]) {

@@ -11,6 +11,7 @@ import {
   FingerprintReconcileError,
   IdempotentProfileCreateConflictError,
   ManagedProfileLockedError,
+  ProfileDeletionPendingError,
 } from "@mktbrowser/profile-manager";
 import type { MktBrowserErrorCode } from "@mktbrowser/types";
 
@@ -90,6 +91,7 @@ export function toErrorCode(error: unknown): MktBrowserErrorCode {
     return "INVALID_INPUT";
   }
   if (error instanceof ManagedProfileLockedError) return "MANAGED_PROFILE_LOCKED";
+  if (error instanceof ProfileDeletionPendingError) return "PROFILE_DELETION_PENDING";
   return "INTERNAL_ERROR";
 }
 

@@ -65,7 +65,7 @@ export interface MktBrowserApi {
     get: (id: ProfileId) => Promise<Profile | null>;
     create: (input: CreateProfileInput) => Promise<Profile>;
     update: (id: ProfileId, patch: UpdateProfileInput) => Promise<Profile>;
-    delete: (id: ProfileId) => Promise<void>;
+    deletePermanently: (input: { profileId: ProfileId; confirmation: string }) => Promise<void>;
     launch: (id: ProfileId) => Promise<LaunchedProfile>;
     close: (id: ProfileId) => Promise<void>;
     exportArchive: (

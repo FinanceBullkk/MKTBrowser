@@ -29,7 +29,7 @@ profiles on the operator device.
   application runs Electron `42.8.1` with modules ABI `146` and `better-sqlite3` `12.11.1`; the
   renderer is sandboxed with a restrictive CSP, IPC and MCP exposure inventories fail closed, and
   the fixed-seed fingerprint measurement remained identical before and after the upgrade.
-- MKB-02 managed mode was completed on 12 August 2026. Contract version `3` advertises idempotent
+- MKB-02 managed mode was completed on 12 August 2026. Contract version `3` introduced idempotent
   create, atomic launch, managed-profile locking, and correlated operation diagnostics. The Relay
   token is profile-management only; page, cookie, and raw-CDP tools are unavailable and no
   page-control token is issued by this build.
@@ -39,9 +39,15 @@ profiles on the operator device.
   exact rule and all Windows firewall profiles, then fails closed before browser startup if the
   boundary is uncertain. CloakBrowser download failure can switch to CFT in-modal; CFT remains a
   compatibility fallback, not the primary antidetect runtime. The combined-installer manifest now
-  pins the locally verified, unpublished Relay v11 archive. The full Node 22 installer suite and a
-  fresh local NSIS build pass; operational distribution remains blocked until the immutable v11
+  pins the locally verified, unpublished Relay v12 archive, which accepts Browser contract v4. The
+  full Node 22 installer suite and a fresh local NSIS build pass; operational distribution remains
+  blocked until the immutable v12
   object is published and the human Windows gates pass.
+- MKB-03 Browser profile deletion is implemented as a separate in-app lifecycle. Contract version
+  `4` removes `delete_profile` from MCP, and profile schema version `3` records incomplete deletion
+  for crash-safe retry. The operator must type `DELETE <full profile id>`; active launch/close work
+  is refused. Deletion is limited to the selected owned profile directory and database row, never
+  Relay configuration, device credentials, the MCP token, or MultiZen data.
 - This build may be used for an owner-led technical demo with disposable profiles. It is not
   approved for real accounts, pilot distribution, or team rollout.
 - The Windows directory package was regenerated on 12 August 2026 with SHA-256
@@ -87,10 +93,16 @@ heartbeat are absent from the runtime. Application updates are intentionally dis
 approved internal release channel and rollback process exist.
 
 The HTTP bearer token stored in this data root grants profile management only. It can inspect runtime
-and profile state and call authorized lifecycle tools, but it cannot navigate, click, type, read
-pages, access cookies, or send raw CDP. `tools/list` is authoritative. Managed profiles can be opened
+and profile state and call authorized non-destructive lifecycle tools, but it cannot delete profiles,
+navigate, click, type, read pages, access cookies, or send raw CDP. `tools/list` is authoritative.
+Managed profiles can be opened
 only through the MKTTool → Relay → `launch_managed_profile` path; ordinary direct launch, delete,
 export, and proxy/fingerprint edits are locked.
+
+Permanent deletion is initiated only inside MKT Browser. It requires the full profile id in a typed
+confirmation and refuses while Chromium is launching, running, or closing. The profile directory is
+atomically moved to an owned quarantine before removal. If disk or database cleanup stops midway,
+the row stays visibly marked for retry instead of silently orphaning data or reporting success.
 
 W02 deliberately removed the retained first-party MultiZen package, preload, MCP client/server,
 adapter, and configuration identities. There is no dual-name compatibility fallback. Existing MCP
@@ -152,6 +164,9 @@ The Windows implementation uses this layout:
 
 The MCP token and profile directory contain sensitive local state. Never log, commit, or share them.
 Uninstalling the application must not delete profiles by default.
+
+Permanent deletion removes only the selected directory under `data\profiles\` and its database row.
+It never removes `settings.json`, `mcp-token`, Relay state, device identity, or legacy MultiZen data.
 
 On Windows, each engine executable lives at a deliberately unversioned path:
 `chromium\cft\runtime\chrome.exe` or `chromium\cloakbrowser\runtime\chrome.exe`. Runtime updates

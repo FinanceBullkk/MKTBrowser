@@ -149,6 +149,7 @@ export function ProfileTile({
                 {profile.name}
               </div>
               {profile.managed && <ManagedBadge />}
+              {profile.deletionPending && <DeletionPendingBadge />}
             </div>
             <div className="mono text-[10px] text-slate-600 mt-[3px] truncate">
               {profile.id.slice(0, 12)}
@@ -204,7 +205,11 @@ export function ProfileTile({
       {/* Actions — pinned to the card bottom so Launch aligns across a row
           regardless of how much content (tags / context line) sits above. */}
       <div className="flex gap-1.5 mt-auto pt-1">
-        {terminating ? (
+        {profile.deletionPending ? (
+          <Button variant="secondary" size="md" fullWidth disabled>
+            Deletion incomplete
+          </Button>
+        ) : terminating ? (
           <Button
             variant="secondary"
             size="md"
@@ -245,7 +250,7 @@ export function ProfileTile({
           onEdit={onOpen}
           onExport={onExport}
           onDelete={onDelete}
-          managed={profile.managed}
+          managed={profile.managed || profile.deletionPending}
         />
       </div>
     </div>
@@ -483,22 +488,16 @@ function ActionMenu({
                   Export archive…
                 </MenuItem>
               )}
-              {!managed && (
-                <>
-                  <div
-                    style={{ height: 1, margin: "4px 0", background: "rgba(255,255,255,0.06)" }}
-                  />
-                  <MenuItem
-                    onClick={() => {
-                      setOpen(false);
-                      onDelete();
-                    }}
-                    tone="danger"
-                  >
-                    Delete profile
-                  </MenuItem>
-                </>
-              )}
+              <div style={{ height: 1, margin: "4px 0", background: "rgba(255,255,255,0.06)" }} />
+              <MenuItem
+                onClick={() => {
+                  setOpen(false);
+                  onDelete();
+                }}
+                tone="danger"
+              >
+                Delete profile data...
+              </MenuItem>
             </div>
           </>,
           document.body,
@@ -511,6 +510,14 @@ function ManagedBadge(): JSX.Element {
   return (
     <span className="shrink-0 rounded-md bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-300 ring-1 ring-inset ring-sky-400/20">
       Managed
+    </span>
+  );
+}
+
+function DeletionPendingBadge(): JSX.Element {
+  return (
+    <span className="shrink-0 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-200 ring-1 ring-inset ring-amber-400/25">
+      Deletion incomplete
     </span>
   );
 }

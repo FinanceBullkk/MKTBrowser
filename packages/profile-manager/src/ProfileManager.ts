@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { v4 as uuidv4 } from "uuid";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type {
   Profile,
@@ -13,6 +13,7 @@ import type {
   ExtensionConfig,
 } from "@mktbrowser/types";
 import { defaultFingerprint } from "./fingerprint.js";
+import { permanentlyDeleteOwnedProfile } from "./permanent-profile-deletion.js";
 
 interface ProfileRow {
   id: string;
@@ -33,6 +34,7 @@ interface ProfileRow {
   external_ref: string | null;
   create_request_id: string | null;
   create_request_hash: string | null;
+  deletion_state: string | null;
 }
 
 export interface ProfileManagerOptions {
@@ -62,6 +64,13 @@ export class ManagedProfileLockedError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "ManagedProfileLockedError";
+  }
+}
+
+export class ProfileDeletionPendingError extends Error {
+  constructor(profileId: ProfileId) {
+    super(`Profile ${profileId} has an incomplete deletion and cannot be used.`);
+    this.name = "ProfileDeletionPendingError";
   }
 }
 
@@ -120,6 +129,9 @@ export class ProfileManager {
     if (!cols.some((c) => c.name === "create_request_hash")) {
       this.db.exec(`ALTER TABLE profiles ADD COLUMN create_request_hash TEXT`);
     }
+    if (!cols.some((c) => c.name === "deletion_state")) {
+      this.db.exec(`ALTER TABLE profiles ADD COLUMN deletion_state TEXT`);
+    }
     this.db.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_external_ref
         ON profiles(external_ref) WHERE external_ref IS NOT NULL;
@@ -131,7 +143,8 @@ export class ProfileManager {
   list(): ProfileSummary[] {
     const rows = this.db
       .prepare(
-        `SELECT id, name, tags, last_opened_at, proxy, fingerprint, proxy_country, icon, external_ref
+        `SELECT id, name, tags, last_opened_at, proxy, fingerprint, proxy_country, icon, external_ref,
+                deletion_state
          FROM profiles ORDER BY updated_at DESC`,
       )
       .all() as Pick<
@@ -145,6 +158,7 @@ export class ProfileManager {
       | "proxy_country"
       | "icon"
       | "external_ref"
+      | "deletion_state"
     >[];
     return rows.map((r) => {
       const fingerprint = JSON.parse(r.fingerprint) as FingerprintConfig;
@@ -160,6 +174,7 @@ export class ProfileManager {
         proxyCountry: r.proxy_country ?? undefined,
         device: fingerprint.device,
         managed: r.external_ref !== null,
+        deletionPending: r.deletion_state === "pending",
       };
     });
   }
@@ -220,6 +235,7 @@ export class ProfileManager {
       createdAt: now,
       updatedAt: now,
       managed: metadata !== undefined,
+      deletionPending: false,
     };
 
     this.db
@@ -311,12 +327,15 @@ export class ProfileManager {
         profile.createdAt,
         profile.updatedAt,
       );
-    return profile;
+    return { ...profile, deletionPending: false };
   }
 
   update(id: ProfileId, patch: UpdateProfileInput): Profile {
     const existing = this.get(id);
     if (!existing) throw new Error(`Profile ${id} not found`);
+    if (existing.deletionPending) {
+      throw new ProfileDeletionPendingError(id);
+    }
     if (existing.managed && (patch.proxy !== undefined || patch.fingerprint !== undefined)) {
       throw new ManagedProfileLockedError(
         `Managed profile ${id} keeps its proxy and fingerprint under MKTTool control.`,
@@ -379,6 +398,9 @@ export class ProfileManager {
   updateManagedProxy(id: ProfileId, proxy: ProxyConfig): Profile {
     const existing = this.get(id);
     if (!existing) throw new Error(`Profile ${id} not found`);
+    if (existing.deletionPending) {
+      throw new ProfileDeletionPendingError(id);
+    }
     if (!existing.managed) {
       throw new ManagedProfileLockedError(
         `Profile ${id} is not managed by MKTTool and cannot use the managed launch path.`,
@@ -398,24 +420,49 @@ export class ProfileManager {
   }
 
   delete(id: ProfileId): void {
-    // Remove the on-disk profile directory (cookies, Chromium state, and any
-    // installed extensions under dataDir/extensions/) so deleting a profile
-    // doesn't orphan its data. Best-effort — a locked dir shouldn't block the
-    // DB delete.
     const existing = this.get(id);
     if (existing?.managed) {
       throw new ManagedProfileLockedError(
         `Managed profile ${id} cannot be deleted through ordinary desktop controls.`,
       );
     }
-    this.db.prepare(`DELETE FROM profiles WHERE id = ?`).run(id);
-    if (existing) {
-      try {
-        rmSync(existing.dataDir, { recursive: true, force: true });
-      } catch {
-        // ignore — directory may be in use; DB row is already gone.
-      }
-    }
+    this.deletePermanently(id);
+  }
+
+  /** Browser-only lifecycle path. Managed profiles stay locked to ordinary delete calls. */
+  deletePermanently(id: ProfileId): void {
+    const existing = this.get(id);
+    if (!existing) throw new Error(`Profile ${id} not found`);
+    permanentlyDeleteOwnedProfile({
+      profileId: existing.id,
+      dataDir: existing.dataDir,
+      profilesRoot: this.profilesRoot,
+      pending: existing.deletionPending,
+      markPending: () => {
+        const result = this.db
+          .prepare(
+            `UPDATE profiles SET deletion_state = 'pending' WHERE id = ? AND deletion_state IS NULL`,
+          )
+          .run(id);
+        if (result.changes !== 1)
+          throw new Error("The profile deletion state could not be started.");
+      },
+      clearPending: () => {
+        const result = this.db
+          .prepare(
+            `UPDATE profiles SET deletion_state = NULL WHERE id = ? AND deletion_state = 'pending'`,
+          )
+          .run(id);
+        if (result.changes !== 1) throw new Error("The profile deletion state could not be reset.");
+      },
+      deleteRecord: () => {
+        const result = this.db
+          .prepare(`DELETE FROM profiles WHERE id = ? AND deletion_state = 'pending'`)
+          .run(id);
+        if (result.changes !== 1)
+          throw new Error("The profile deletion record could not be finalized.");
+      },
+    });
   }
 
   markOpened(id: ProfileId): void {
@@ -463,6 +510,7 @@ export class ProfileManager {
       lastOpenedAt: row.last_opened_at ?? undefined,
       proxyCountry: row.proxy_country ?? undefined,
       managed: row.external_ref !== null,
+      deletionPending: row.deletion_state === "pending",
     };
   }
 }

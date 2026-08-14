@@ -37,10 +37,10 @@ export function mktBrowserMcpBaseUrl(port: number = MKT_BROWSER_DEFAULT_MCP_PORT
  * written against the previous number would now behave incorrectly. Adding an optional response
  * field is not a bump.
  */
-export const MKT_BROWSER_CONTRACT_VERSION = 3;
+export const MKT_BROWSER_CONTRACT_VERSION = 4;
 
 /** Bump when the on-disk profile record changes shape and needs a migration. */
-export const MKT_BROWSER_PROFILE_SCHEMA_VERSION = 2;
+export const MKT_BROWSER_PROFILE_SCHEMA_VERSION = 3;
 
 /**
  * What this build can actually do. A capability is listed only once it is implemented and tested,
@@ -82,6 +82,8 @@ export const MKT_BROWSER_ERROR_CODES = [
   "UNKNOWN_TOOL",
   /** A generic desktop or MCP control tried to mutate, delete, or directly launch a managed profile. */
   "MANAGED_PROFILE_LOCKED",
+  /** A prior local deletion did not finish; only the in-app deletion retry may continue. */
+  "PROFILE_DELETION_PENDING",
   /** Not yet classified. Treat a rise in this code as a contract gap, not as noise. */
   "INTERNAL_ERROR",
 ] as const;
@@ -312,6 +314,8 @@ export interface Profile {
   proxyCountry?: string;
   /** True when MKTTool owns the profile lifecycle through its stable external reference. */
   managed: boolean;
+  /** A previous permanent-deletion attempt must be retried before the profile can be used. */
+  deletionPending: boolean;
 }
 
 export interface ProfileSummary {
@@ -334,6 +338,8 @@ export interface ProfileSummary {
   device?: DeviceFamily;
   /** Managed profiles can be opened only through the MKTTool Relay path. */
   managed: boolean;
+  /** A previous permanent-deletion attempt must be retried before the profile can be used. */
+  deletionPending: boolean;
 }
 
 export interface CreateProfileInput {

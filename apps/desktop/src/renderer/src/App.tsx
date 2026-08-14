@@ -9,7 +9,8 @@ import type { Profile } from "@mktbrowser/types";
 import { ActivityDrawer } from "./components/activity/ActivityDrawer";
 import { McpPanel } from "./components/mcp/McpPanel";
 import { Settings } from "./components/screens/Settings";
-import { Confirm, Prompt } from "./components/screens/Confirm";
+import { Prompt } from "./components/screens/Confirm";
+import { DeleteProfileDialog } from "./components/profile/DeleteProfileDialog";
 import { CommandPalette, type CommandAction } from "./components/palette/CommandPalette";
 import { FirstRun } from "./components/onboarding/FirstRun";
 import { ChromiumBootstrapModal } from "./components/onboarding/ChromiumBootstrapModal";
@@ -271,12 +272,17 @@ export function App(): JSX.Element {
     }
   }
 
-  async function deleteProfile(id: string): Promise<void> {
-    setModal({ kind: "none" });
-    await window.mktBrowser.profiles.close(id).catch(() => {});
-    await window.mktBrowser.profiles.delete(id);
-    if (selectedId === id) setSelectedId(null);
-    await refresh();
+  async function deleteProfile(id: string, confirmation: string): Promise<void> {
+    try {
+      await window.mktBrowser.profiles.deletePermanently({ profileId: id, confirmation });
+      if (selectedId === id) setSelectedId(null);
+      setModal({ kind: "none" });
+      await refresh();
+      showToast("Profile data permanently deleted");
+    } catch (error) {
+      await refresh();
+      throw error;
+    }
   }
 
   function handleCommand(a: CommandAction): void {
@@ -476,15 +482,14 @@ export function App(): JSX.Element {
         onCancel={() => setModal({ kind: "none" })}
       />
 
-      <Confirm
+      <DeleteProfileDialog
         open={modal.kind === "delete-confirm"}
-        title="Delete this profile?"
-        description="Cookies, login state, and on-disk data will be erased permanently. This cannot be undone."
-        confirmLabel="Yes, delete"
-        destructive
-        onConfirm={() => {
-          if (modal.kind === "delete-confirm") void deleteProfile(modal.profileId);
-        }}
+        profile={
+          modal.kind === "delete-confirm"
+            ? (profiles.find((profile) => profile.id === modal.profileId) ?? null)
+            : null
+        }
+        onConfirm={deleteProfile}
         onCancel={() => setModal({ kind: "none" })}
       />
 

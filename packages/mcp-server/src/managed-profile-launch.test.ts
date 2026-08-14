@@ -182,5 +182,6 @@ function makeProfile(proxy?: ProxyConfig): Profile {
     createdAt: "2026-08-12T00:00:00.000Z",
     updatedAt: "2026-08-12T00:00:00.000Z",
     managed: true,
+    deletionPending: false,
   };
 }

@@ -598,18 +598,6 @@ async function dispatch(
         appliesOnNextLaunch: browserDriver.isRunning(input.profile_id),
       };
     }
-    case "delete_profile": {
-      const { profile_id } = ProfileIdSchema.parse(args);
-      const existing = assertProfileExists(profileManager, profile_id);
-      if (existing.managed) throw managedProfileLocked(profile_id);
-      // Close first so Chromium releases the data dir before we remove it
-      // (on Windows a live handle would otherwise block the rmSync).
-      if (browserDriver.isRunning(profile_id)) {
-        await browserDriver.close(profile_id);
-      }
-      profileManager.delete(profile_id);
-      return { deleted: profile_id };
-    }
     case "list_fingerprint_options": {
       return { devices: deviceCatalog(), locales: localeCatalog() };
     }
@@ -995,16 +983,6 @@ const TOOL_DEFINITIONS = [
         },
         fingerprint: FINGERPRINT_JSON_SCHEMA,
       },
-    },
-  },
-  {
-    name: "delete_profile",
-    description:
-      "Permanently delete a profile and its on-disk data (cookies, Chromium state, installed extensions). Closes the browser first if it's running. This cannot be undone.",
-    inputSchema: {
-      type: "object",
-      required: ["profile_id"],
-      properties: { profile_id: { type: "string" } },
     },
   },
   {

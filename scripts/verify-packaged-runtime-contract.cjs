@@ -14,7 +14,7 @@ const {
 } = require("./system-chrome-engine-fixture.cjs");
 
 const EXPECTED_PROVIDER = "mkt-browser";
-const EXPECTED_CONTRACT_VERSION = 3;
+const EXPECTED_CONTRACT_VERSION = 4;
 
 async function main() {
   if (process.platform !== "win32") {
@@ -31,10 +31,10 @@ async function main() {
   let child;
   let diagnostics = "";
   let baseUrl;
-    let token;
-    let createdProfileId;
-    let lifecycleProfileId;
-    let launchedPid;
+  let token;
+  let createdProfileId;
+  let lifecycleProfileId;
+  let launchedPid;
   let failure;
   try {
     engineFixture = await installSystemChromeEngineFixture(userData);
@@ -115,11 +115,18 @@ async function main() {
       "update_profile",
       "launch_managed_profile",
       "close_profile",
-      "delete_profile",
     ]) {
       assert.ok(toolNames.includes(required), `Missing profile-management tool: ${required}`);
     }
-    for (const forbidden of ["navigate", "click", "type", "extract", "get_cookies", "cdp_send"]) {
+    for (const forbidden of [
+      "delete_profile",
+      "navigate",
+      "click",
+      "type",
+      "extract",
+      "get_cookies",
+      "cdp_send",
+    ]) {
       assert.ok(
         !toolNames.includes(forbidden),
         `Profile token exposed forbidden tool: ${forbidden}`,
@@ -240,20 +247,12 @@ async function main() {
       `Chrome process ${launch.pid} to exit after close_profile`,
       child,
     );
-    const lifecycleDeleted = await callTool(baseUrl, token, "delete_profile", {
-      profile_id: lifecycleProfile.id,
-    });
-    assert.equal(lifecycleDeleted.deleted, lifecycleProfile.id);
     lifecycleProfileId = undefined;
-    const deleted = await callToolResult(baseUrl, token, "delete_profile", {
-      profile_id: created.id,
-    });
-    assert.equal(deleted.isError, true);
-    assert.equal(deleted.body.error?.code, "MANAGED_PROFILE_LOCKED");
 
-    const afterDelete = await callTool(baseUrl, token, "list_profiles", {});
-    assert.equal(afterDelete.profiles.length, beforeCreate.profiles.length + 1);
-    assert.ok(afterDelete.profiles.some((profile) => profile.id === created.id));
+    const afterLifecycle = await callTool(baseUrl, token, "list_profiles", {});
+    assert.equal(afterLifecycle.profiles.length, beforeCreate.profiles.length + 2);
+    assert.ok(afterLifecycle.profiles.some((profile) => profile.id === created.id));
+    assert.ok(afterLifecycle.profiles.some((profile) => profile.id === lifecycleProfile.id));
 
     process.stdout.write("Packaged MKT Browser runtime and profile lifecycle contracts passed.\n");
   } catch (error) {
@@ -286,10 +285,6 @@ async function main() {
             child,
           );
         }
-        const deleteResult = await callToolResult(baseUrl, token, "delete_profile", {
-          profile_id: lifecycleProfileId,
-        });
-        assert.equal(deleteResult.isError, false, "Cleanup delete_profile returned an MCP error.");
       } catch (error) {
         cleanupErrors.push(error);
       }

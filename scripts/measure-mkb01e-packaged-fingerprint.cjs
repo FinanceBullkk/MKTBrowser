@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const { spawn } = require("node:child_process");
 const { once } = require("node:events");
 const { existsSync } = require("node:fs");
-const { mkdir, readFile, writeFile } = require("node:fs/promises");
+const { mkdir, mkdtemp, readFile, rm, writeFile } = require("node:fs/promises");
 const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
@@ -18,8 +18,7 @@ async function main() {
   const executable = path.resolve("apps/desktop/release/win-unpacked/MKTBrowser.exe");
   assert.ok(existsSync(executable), "Build the Windows directory package before measurement.");
 
-  const userData = path.join(os.tmpdir(), "mkt-browser-mkb01e-fingerprint");
-  await mkdir(userData, { recursive: true });
+  const userData = await mkdtemp(path.join(os.tmpdir(), "mkt-browser-mkb01e-fingerprint-"));
   const port = await reservePort();
   const env = { ...process.env, MKT_BROWSER_MCP_PORT: String(port) };
   delete env.ELECTRON_RUN_AS_NODE;
@@ -45,13 +44,18 @@ async function main() {
     await waitFor(() => existsSync(tokenPath), 30_000, "MCP token", child);
     const token = (await readFile(tokenPath, "utf8")).trim();
     const baseUrl = `http://127.0.0.1:${port}`;
-    await waitFor(async () => {
-      try {
-        return (await fetch(`${baseUrl}/healthz`, { headers: auth(token) })).ok;
-      } catch {
-        return false;
-      }
-    }, 30_000, "MCP health endpoint", child);
+    await waitFor(
+      async () => {
+        try {
+          return (await fetch(`${baseUrl}/healthz`, { headers: auth(token) })).ok;
+        } catch {
+          return false;
+        }
+      },
+      30_000,
+      "MCP health endpoint",
+      child,
+    );
 
     await rpc(baseUrl, token, "initialize", {
       protocolVersion: "2024-11-05",
@@ -73,15 +77,20 @@ async function main() {
       },
     });
     profileId = created.id;
-    await waitFor(async () => {
-      try {
-        await callTool(baseUrl, token, "launch_profile", { profile_id: profileId });
-        return true;
-      } catch (error) {
-        if (!String(error.message).includes("ENGINE_UNAVAILABLE")) throw error;
-        return false;
-      }
-    }, 600_000, "browser engine readiness", child);
+    await waitFor(
+      async () => {
+        try {
+          await callTool(baseUrl, token, "launch_profile", { profile_id: profileId });
+          return true;
+        } catch (error) {
+          if (!String(error.message).includes("ENGINE_UNAVAILABLE")) throw error;
+          return false;
+        }
+      },
+      600_000,
+      "browser engine readiness",
+      child,
+    );
     profileLaunched = true;
     runtime = await callTool(baseUrl, token, "get_runtime_info", {});
 
@@ -107,7 +116,10 @@ async function main() {
     });
 
     const fingerprint = measured?.result?.value;
-    assert.ok(fingerprint && typeof fingerprint === "object", "Fingerprint evaluation returned no value.");
+    assert.ok(
+      fingerprint && typeof fingerprint === "object",
+      "Fingerprint evaluation returned no value.",
+    );
     const report = {
       label: args.label ?? null,
       measuredAt: new Date().toISOString(),
@@ -131,23 +143,31 @@ async function main() {
             try {
               await callTool(baseUrl, token, "close_profile", { profile_id: profileId });
             } catch (error) {
-              cleanupErrors.push(new Error("Failed to close the fingerprint profile.", { cause: error }));
+              cleanupErrors.push(
+                new Error("Failed to close the fingerprint profile.", { cause: error }),
+              );
             }
           }
-          try {
-            await callTool(baseUrl, token, "delete_profile", { profile_id: profileId });
-          } catch (error) {
-            cleanupErrors.push(new Error("Failed to delete the fingerprint profile.", { cause: error }));
-          }
         } catch (error) {
-          cleanupErrors.push(new Error("Failed to initialize fingerprint cleanup.", { cause: error }));
+          cleanupErrors.push(
+            new Error("Failed to initialize fingerprint cleanup.", { cause: error }),
+          );
         }
       } else {
-        cleanupErrors.push(new Error("Failed to clean up the fingerprint profile: MCP token is missing."));
+        cleanupErrors.push(
+          new Error("Failed to clean up the fingerprint profile: MCP token is missing."),
+        );
       }
     }
     child.kill();
     await Promise.race([once(child, "exit"), delay(5_000)]);
+    try {
+      await rm(userData, { recursive: true, force: true });
+    } catch (error) {
+      cleanupErrors.push(
+        new Error("Failed to remove the disposable fingerprint data root.", { cause: error }),
+      );
+    }
   }
 
   if (failure) {
@@ -165,7 +185,9 @@ function formatCleanupErrors(errors) {
 
 function describeError(error) {
   const message = error instanceof Error ? error.message : String(error);
-  return error instanceof Error && error.cause ? `${message} Cause: ${describeError(error.cause)}` : message;
+  return error instanceof Error && error.cause
+    ? `${message} Cause: ${describeError(error.cause)}`
+    : message;
 }
 
 async function callTool(baseUrl, token, name, toolArgs) {
@@ -180,7 +202,11 @@ async function callTool(baseUrl, token, name, toolArgs) {
 async function rpc(baseUrl, token, method, params) {
   const response = await fetch(`${baseUrl}/mcp`, {
     method: "POST",
-    headers: { ...auth(token), accept: "application/json, text/event-stream", "content-type": "application/json" },
+    headers: {
+      ...auth(token),
+      accept: "application/json, text/event-stream",
+      "content-type": "application/json",
+    },
     body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method, params }),
   });
   assert.equal(response.status, 200, `${method} failed with HTTP ${response.status}.`);
