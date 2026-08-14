@@ -33,13 +33,23 @@ profiles on the operator device.
   create, atomic launch, managed-profile locking, and correlated operation diagnostics. The Relay
   token is profile-management only; page, cookie, and raw-CDP tools are unavailable and no
   page-control token is issued by this build.
+- MKB-03 local-onboarding fixes are implemented but still require human retest. The per-user Windows
+  installer requests one Administrator approval for machine-wide outbound UDP rules covering the
+  stable CFT and CloakBrowser runtime paths. Every proxied profile launch verifies its own engine's
+  exact rule and all Windows firewall profiles, then fails closed before browser startup if the
+  boundary is uncertain. CloakBrowser download failure can switch to CFT in-modal; CFT remains a
+  compatibility fallback, not the primary antidetect runtime. The combined-installer manifest now
+  pins the locally verified, unpublished Relay v11 archive. The full Node 22 installer suite and a
+  fresh local NSIS build pass; operational distribution remains blocked until the immutable v11
+  object is published and the human Windows gates pass.
 - This build may be used for an owner-led technical demo with disposable profiles. It is not
   approved for real accounts, pilot distribution, or team rollout.
 - The Windows directory package was regenerated on 12 August 2026 with SHA-256
   `238d5d6fd5e373b052c484ceab90698f6dc295205a59be6573f9928b01db4f42`; Node guard 2/2,
   W02 guards 8/8, MKB-01 tests 8/8, MKB-01E tests 7/7, MKB-02 tests 18/18, Windows packaging guards
   3/3, typecheck, build, and packaged runtime/profile-lifecycle verification passed. The repository's
-  lint command remains a no-op because workspaces define no lint tasks. The packaged verifier covers
+  `yarn lint` now enforces the workspace quality contract, strict TypeScript unused/fallthrough
+  checks, and JavaScript syntax checks. The packaged verifier covers
   the restricted tool inventory, deterministic managed create/retry, correlated diagnostics,
   direct-launch/delete denial, endpoint-free proxy summaries, atomic managed launch, Windows Chrome
   launcher-PID handoff, process-confirmed close, and clean process exit. It remains unsigned.
@@ -110,8 +120,9 @@ The Windows directory package is written to:
 apps/desktop/release/win-unpacked/MKTBrowser.exe
 ```
 
-The current build command creates an unpacked technical package. W02 does not publish an installer,
-create a release, sign binaries, or update an installed copy.
+The normal build command creates an unpacked technical package. MKB-03 also provides
+`corepack yarn workspace @mktbrowser/desktop package:windows-installer`, which builds the unsigned
+combined installer after verifying the pinned Relay archive. Building does not publish or install it.
 
 The build fails before touching native modules unless it runs on Node.js 22. The packaging helper
 moves local `apps/desktop/node_modules/@mktbrowser/*` workspace links outside the package tree,
@@ -141,6 +152,12 @@ The Windows implementation uses this layout:
 
 The MCP token and profile directory contain sensitive local state. Never log, commit, or share them.
 Uninstalling the application must not delete profiles by default.
+
+On Windows, each engine executable lives at a deliberately unversioned path:
+`chromium\cft\runtime\chrome.exe` or `chromium\cloakbrowser\runtime\chrome.exe`. Runtime updates
+atomically replace the containing directory with rollback protection, so installer-managed firewall
+rules stay attached across version changes. CFT and CloakBrowser have separate rules and separate
+pre-launch verification; protection observed for one engine is never evidence for the other.
 
 The browser engine is a separately licensed dependency. It is downloaded unmodified from an
 approved official source and is not bundled in the application package. Review the exact engine
