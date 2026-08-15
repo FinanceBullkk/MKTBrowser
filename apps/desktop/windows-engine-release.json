@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "type": "mktbrowser.windows-engine-release",
+  "engineKind": "cloakbrowser",
+  "version": "146.0.7680.177.5",
+  "url": "https://github.com/CloakHQ/CloakBrowser/releases/download/chromium-v146.0.7680.177.5/cloakbrowser-windows-x64.zip",
+  "sizeBytes": 562004238,
+  "sha256": "b213795cb32c3169f766c74ce1d0275fc89d3df256de39c04da7fb4c23b7fdbe",
+  "checksumSource": "https://github.com/CloakHQ/CloakBrowser/releases/download/chromium-v146.0.7680.177.5/SHA256SUMS",
+  "verifiedAt": "2026-08-15T02:49:00.000Z"
+}
