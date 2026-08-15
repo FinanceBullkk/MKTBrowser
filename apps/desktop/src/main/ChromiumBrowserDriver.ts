@@ -60,6 +60,8 @@ interface RunningProcess {
   windowWatcher: NodeJS.Timeout;
   /** Snapshot of the proxy actually used for this process, including auth for exact comparison. */
   proxy?: ProxyConfig;
+  /** Egress observed by the launch-time proxy probe; never exposed through MCP output. */
+  observedProxyIp?: string;
 }
 
 export interface ChromiumBrowserDriverOptions {
@@ -811,6 +813,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       browserDataDir,
       windowWatcher,
       proxy: profile.proxy ? { ...profile.proxy } : undefined,
+      observedProxyIp: webrtcSpoofIp ?? undefined,
     };
     const r = record;
     this.running.set(profileId, record);
@@ -880,7 +883,12 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
 
   getRunningProfileState(profileId: ProfileId): RunningProfileState | null {
     const running = this.running.get(profileId);
-    return running ? { proxy: running.proxy ? { ...running.proxy } : undefined } : null;
+    return running
+      ? {
+          proxy: running.proxy ? { ...running.proxy } : undefined,
+          observedProxyIp: running.observedProxyIp,
+        }
+      : null;
   }
 
   async navigate(profileId: ProfileId, url: string): Promise<{ url: string }> {

@@ -13,6 +13,37 @@ test("normalizes Windows engine installs to a stable runtime path", () => {
   assert.match(runtimePath, /win32\.join\(cacheDir, "runtime", "chrome\.exe"\)/);
 });
 
+test("packaged engine bootstrap consumes only a compatibility-set pin", () => {
+  const bootstrap = source("ChromiumBootstrap.ts");
+  const main = source("index.ts");
+  const pin = source("compatibility-engine-pin.ts");
+  assert.match(bootstrap, /pinnedManifest/);
+  assert.match(bootstrap, /no verified compatibility-set engine pin/);
+  assert.match(bootstrap, /manifest\.sizeBytes/);
+  assert.match(main, /readCompatibilityEnginePin/);
+  assert.match(main, /MKT_BROWSER_ALLOW_UNPINNED_ENGINE/);
+  assert.match(main, /hasExplicitUserDataDir: app\.commandLine\.hasSwitch\("user-data-dir"\)/);
+  assert.match(bootstrap, /removeMismatchedCachedRuntime/);
+  assert.match(pin, /MKTTool.*compatibility-updater/);
+});
+
+test("locks engine selection while a signed compatibility set is active", () => {
+  const main = source("index.ts");
+  const settings = readFileSync(
+    new URL("../renderer/src/components/screens/Settings.tsx", ROOT),
+    "utf8",
+  );
+  const modal = readFileSync(
+    new URL("../renderer/src/components/onboarding/ChromiumBootstrapModal.tsx", ROOT),
+    "utf8",
+  );
+  assert.match(main, /activeCompatibilityEnginePin/);
+  assert.match(main, /switching engines independently/);
+  assert.match(settings, /Locked by compatibility set/);
+  assert.match(settings, /disabled=\{Boolean\(info\?\.compatibilityEnginePin\)\}/);
+  assert.match(modal, /!enginePinned/);
+});
+
 test("switches a failed CloakBrowser bootstrap to CFT through the settings boundary", () => {
   const main = source("index.ts");
   const modal = readFileSync(

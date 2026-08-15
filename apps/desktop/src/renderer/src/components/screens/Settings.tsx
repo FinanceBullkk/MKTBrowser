@@ -154,7 +154,11 @@ export function Settings({ onImport }: Props): JSX.Element {
         <Row
           icon={<Chrome size={16} strokeWidth={1.5} />}
           title="Browser engine"
-          desc="Applied on next app launch."
+          desc={
+            info?.compatibilityEnginePin
+              ? `Locked by compatibility set ${info.compatibilityEnginePin.sequence} at runtime ${info.compatibilityEnginePin.version}.`
+              : "Applied on next app launch."
+          }
         >
           <div className="grid gap-2 sm:grid-cols-2">
             {engineOptions.map((option) => {
@@ -163,8 +167,9 @@ export function Settings({ onImport }: Props): JSX.Element {
                 <button
                   key={option.value}
                   type="button"
+                  disabled={Boolean(info?.compatibilityEnginePin)}
                   onClick={() => void patch({ browserEngine: option.value })}
-                  className="text-left p-3 rounded-lg transition-colors"
+                  className="text-left p-3 rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                   style={{
                     boxShadow: selected
                       ? "inset 0 0 0 1px rgba(168,85,247,0.45)"

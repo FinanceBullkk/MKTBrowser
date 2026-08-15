@@ -43,6 +43,7 @@ import {
   stableWindowsRuntime,
   win32PathEquals,
 } from "./chromium-runtime-path.ts";
+import { isCachedEngineVersionAllowed } from "./compatibility-engine-pin.ts";
 
 const execFileP = promisify(execFile);
 
@@ -68,6 +69,10 @@ interface BootstrapOptions {
    * or for offline tests.
    */
   manifestUrl?: string;
+  /** Release-authority-verified engine artifact. Packaged team builds require this pin. */
+  pinnedManifest?: BrowserDownloadManifest;
+  /** Development-only escape hatch for technical builds that intentionally inspect upstream. */
+  allowUnpinnedManifest?: boolean;
 }
 
 interface BootstrapEvents {
@@ -110,6 +115,7 @@ interface BrowserDownloadManifest {
   version: string;
   url: string;
   sha256?: string;
+  sizeBytes?: number;
 }
 
 /**
@@ -134,6 +140,8 @@ export class ChromiumBootstrap extends EventEmitter {
   private readonly channel: BootstrapOptions["channel"];
   private readonly manifestUrl: string;
   private readonly engine: BrowserEngine;
+  private readonly pinnedManifest: BrowserDownloadManifest | null;
+  private readonly allowUnpinnedManifest: boolean;
 
   constructor(opts: BootstrapOptions = {}) {
     super();
@@ -143,6 +151,8 @@ export class ChromiumBootstrap extends EventEmitter {
     this.cacheDir = opts.cacheDir ?? join(app.getPath("userData"), "chromium", this.engine);
     this.channel = opts.channel ?? "Stable";
     this.manifestUrl = opts.manifestUrl ?? CFT_LATEST;
+    this.pinnedManifest = opts.pinnedManifest ?? null;
+    this.allowUnpinnedManifest = opts.allowUnpinnedManifest ?? false;
   }
 
   override on<K extends keyof BootstrapEvents>(event: K, listener: BootstrapEvents[K]): this {
@@ -345,7 +355,12 @@ export class ChromiumBootstrap extends EventEmitter {
       if (process.platform === "win32" && existsSync(stableBinary)) {
         await stat(stableBinary);
         const runtimeVersion = await this.readStableWindowsRuntimeVersion();
-        return { version: runtimeVersion ?? cur.version, binaryPath: stableBinary };
+        const cachedVersion = runtimeVersion ?? cur.version;
+        if (!isCachedEngineVersionAllowed(cachedVersion, this.pinnedManifest)) {
+          await this.removeMismatchedCachedRuntime(cur.version);
+          return null;
+        }
+        return { version: cachedVersion, binaryPath: stableBinary };
       }
       const versionDir = join(this.cacheDir, cur.version);
       const candidate = join(versionDir, cur.binaryRelative);
@@ -353,6 +368,10 @@ export class ChromiumBootstrap extends EventEmitter {
       // Quick sanity: stat must succeed. We don't re-hash on every
       // launch — a 280MB read is too expensive for a cold path.
       await stat(candidate);
+      if (!isCachedEngineVersionAllowed(cur.version, this.pinnedManifest)) {
+        await this.removeMismatchedCachedRuntime(cur.version);
+        return null;
+      }
       if (process.platform === "win32") {
         const migrated = await this.installStableWindowsRuntime(candidate, cur.version);
         return { version: cur.version, binaryPath: migrated };
@@ -360,6 +379,16 @@ export class ChromiumBootstrap extends EventEmitter {
       return { version: cur.version, binaryPath: candidate };
     } catch {
       return null;
+    }
+  }
+
+  private async removeMismatchedCachedRuntime(version: string): Promise<void> {
+    await rm(join(this.cacheDir, "current.json"), { force: true });
+    await rm(join(this.cacheDir, version), { recursive: true, force: true });
+    if (process.platform === "win32") {
+      for (const directory of ["runtime", "runtime.partial", "runtime.rollback"]) {
+        await rm(join(this.cacheDir, directory), { recursive: true, force: true });
+      }
     }
   }
 
@@ -427,6 +456,12 @@ export class ChromiumBootstrap extends EventEmitter {
   }
 
   private async fetchManifest(): Promise<BrowserDownloadManifest> {
+    if (this.pinnedManifest) return this.pinnedManifest;
+    if (!this.allowUnpinnedManifest) {
+      throw new Error(
+        "This MKT Browser build has no verified compatibility-set engine pin. Run installer repair instead of resolving an upstream latest version.",
+      );
+    }
     if (this.engine === "cloakbrowser") {
       return this.fetchCloakBrowserManifest();
     }
@@ -661,6 +696,11 @@ export class ChromiumBootstrap extends EventEmitter {
     // mid-stream. Leave the partial on disk and throw — the retry loop will
     // resume it rather than re-pull from zero.
     const finalSize = (await stat(outPath)).size;
+    if (manifest.sizeBytes && finalSize !== manifest.sizeBytes) {
+      throw new Error(
+        `download size mismatch: ${finalSize} bytes, expected ${manifest.sizeBytes} from the signed compatibility manifest`,
+      );
+    }
     if (total > 0 && finalSize !== total) {
       throw new Error(
         `download truncated: ${finalSize} of ${total} bytes (network interruption or ` +

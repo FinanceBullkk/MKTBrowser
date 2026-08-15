@@ -54,6 +54,14 @@ import { probeProxyGeo, type ProxyGeoResult } from "./proxyGeo.ts";
 import { deleteBrowserProfile } from "./profile-deletion-lifecycle.ts";
 import { WindowsLocalInstallInspector } from "./windows-local-install-inspector.ts";
 import {
+  type CompatibilityEnginePin,
+  isDisposableUnpinnedEngineRun,
+  readCompatibilityActivationBlock,
+  readCompatibilityEnginePin,
+} from "./compatibility-engine-pin.ts";
+import { COMPATIBILITY_SMOKE_SWITCH } from "./compatibility-smoke-authorization.ts";
+import { runPackagedCompatibilitySmoke } from "./compatibility-smoke-cli.ts";
+import {
   IPC,
   IPC_EVENTS,
   isIpcEventChannel,
@@ -99,6 +107,7 @@ let mcpAuthToken: string | null = null;
 let cachedSettings: AppSettings | null = null;
 let browserDriverReady = false;
 let switchToCftInFlight: Promise<ChromiumStatus> | null = null;
+let activeCompatibilityEnginePin: CompatibilityEnginePin | null = null;
 
 type IpcHandler = (event: IpcMainInvokeEvent, ...args: any[]) => unknown;
 
@@ -118,7 +127,23 @@ function sendToRenderer(channel: IpcEventChannel, payload: unknown): void {
 }
 
 function createChromiumBootstrap(engine: AppSettings["browserEngine"]): ChromiumBootstrap {
-  const bootstrap = new ChromiumBootstrap({ engine });
+  const pin = activeCompatibilityEnginePin;
+  if (pin && pin.engineKind !== engine) {
+    throw new Error(
+      `The active compatibility set pins ${pin.engineKind}, but Settings selects ${engine}. Run installer repair instead of changing the engine independently.`,
+    );
+  }
+  const bootstrap = new ChromiumBootstrap({
+    engine,
+    pinnedManifest: pin
+      ? { version: pin.version, url: pin.url, sha256: pin.sha256, sizeBytes: pin.sizeBytes }
+      : undefined,
+    allowUnpinnedManifest: isDisposableUnpinnedEngineRun({
+      isPackaged: app.isPackaged,
+      environmentEnabled: process.env.MKT_BROWSER_ALLOW_UNPINNED_ENGINE === "1",
+      hasExplicitUserDataDir: app.commandLine.hasSwitch("user-data-dir"),
+    }),
+  });
   bootstrap.on("status", (status: ChromiumStatus) => {
     if (chromiumBootstrap === bootstrap) {
       sendToRenderer(IPC_EVENTS.CHROMIUM_STATUS, status);
@@ -185,6 +210,13 @@ if (!app.commandLine.hasSwitch("user-data-dir")) {
   mkdirSync(productUserData, { recursive: true });
   app.setPath("userData", productUserData);
 }
+const compatibilityActivationBlock =
+  process.platform === "win32"
+    ? readCompatibilityActivationBlock(process.env.LOCALAPPDATA ?? "")
+    : null;
+const compatibilitySmokeAuthorizationId = app.commandLine.getSwitchValue(
+  COMPATIBILITY_SMOKE_SWITCH,
+);
 app.setAboutPanelOptions({
   applicationName: PRODUCT_NAME,
   applicationVersion: app.getVersion(),
@@ -193,6 +225,25 @@ app.setAboutPanelOptions({
 app
   .whenReady()
   .then(async () => {
+    if (compatibilitySmokeAuthorizationId) {
+      try {
+        await runPackagedCompatibilitySmoke({
+          authorizationId: compatibilitySmokeAuthorizationId,
+          localAppData: process.env.LOCALAPPDATA ?? "",
+          userData: app.getPath("userData"),
+        });
+        app.exit(0);
+      } catch (error) {
+        process.stderr.write(`Compatibility smoke failed: ${(error as Error).message}\n`);
+        app.exit(1);
+      }
+      return;
+    }
+    if (compatibilityActivationBlock) {
+      dialog.showErrorBox("MKT Browser update incomplete", compatibilityActivationBlock);
+      app.quit();
+      return;
+    }
     // macOS: explicitly set the dock icon. In packaged .app bundles macOS
     // picks the .icns automatically, but in dev (running ./node_modules/.bin/electron)
     // the dock shows the generic Electron icon unless we override it here.
@@ -279,6 +330,18 @@ app
 
     settingsStore = new SettingsStore(defaultSettingsPath(userData));
     cachedSettings = await settingsStore.load();
+    activeCompatibilityEnginePin =
+      process.platform === "win32"
+        ? readCompatibilityEnginePin(process.env.LOCALAPPDATA ?? "")
+        : null;
+    if (
+      activeCompatibilityEnginePin &&
+      cachedSettings.browserEngine !== activeCompatibilityEnginePin.engineKind
+    ) {
+      cachedSettings = await settingsStore.update({
+        browserEngine: activeCompatibilityEnginePin.engineKind,
+      });
+    }
 
     profileManager = new ProfileManager({
       dbPath: join(dataRoot, "profiles.db"),
@@ -473,6 +536,15 @@ app
     // Settings IPC
     handleIpc(IPC.SETTINGS_GET, () => settingsStore.load());
     handleIpc(IPC.SETTINGS_UPDATE, async (_e, patch: Partial<AppSettings>) => {
+      if (
+        patch.browserEngine &&
+        activeCompatibilityEnginePin &&
+        patch.browserEngine !== activeCompatibilityEnginePin.engineKind
+      ) {
+        throw new Error(
+          `Compatibility set ${activeCompatibilityEnginePin.sequence} pins ${activeCompatibilityEnginePin.engineKind}. Install another signed compatibility set instead of switching engines independently.`,
+        );
+      }
       cachedSettings = await settingsStore.update(patch);
       return cachedSettings;
     });
@@ -485,6 +557,11 @@ app
     handleIpc(IPC.CHROMIUM_RETRY, () => chromiumBootstrap.retry());
     handleIpc(IPC.CHROMIUM_SWITCH_TO_CFT, async () => {
       if (switchToCftInFlight) return switchToCftInFlight;
+      if (activeCompatibilityEnginePin && activeCompatibilityEnginePin.engineKind !== "cft") {
+        throw new Error(
+          `Compatibility set ${activeCompatibilityEnginePin.sequence} pins ${activeCompatibilityEnginePin.engineKind}; the fallback engine is locked until another signed set is installed.`,
+        );
+      }
       if (chromiumBootstrap.getEngine() !== "cloakbrowser") {
         return chromiumBootstrap.getStatus();
       }
@@ -769,6 +846,13 @@ app
       mcpAuthToken: httpTransport ? mcpAuthToken : null,
       appVersion: app.getVersion(),
       platform: process.platform,
+      compatibilityEnginePin: activeCompatibilityEnginePin
+        ? {
+            sequence: activeCompatibilityEnginePin.sequence,
+            engineKind: activeCompatibilityEnginePin.engineKind,
+            version: activeCompatibilityEnginePin.version,
+          }
+        : null,
     }));
 
     createWindow();

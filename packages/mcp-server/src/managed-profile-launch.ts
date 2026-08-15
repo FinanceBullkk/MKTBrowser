@@ -8,6 +8,8 @@ import {
 
 export interface RunningProfileState {
   proxy?: ProxyConfig;
+  /** Proxy egress observed during launch; kept internal and never returned by MCP tools. */
+  observedProxyIp?: string;
 }
 
 export interface ManagedLaunchBrowserDriver {

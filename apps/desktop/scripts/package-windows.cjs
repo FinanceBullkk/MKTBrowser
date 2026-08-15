@@ -39,6 +39,9 @@ const {
 } = require("../../../scripts/workspace-quality-contract.cjs");
 const { fetchPinnedRelay } = require("./fetch-pinned-relay.cjs");
 const { generateWindowsFirewallCommands } = require("./generate-windows-firewall-commands.cjs");
+const {
+  emitWindowsCompatibilityEvidence,
+} = require("./emit-windows-compatibility-evidence.cjs");
 
 const desktopRoot = path.resolve(__dirname, "..");
 const repoRoot = path.resolve(desktopRoot, "..", "..");
@@ -134,6 +137,14 @@ async function packageWindows({ builderArgs, label, includeRelay = false }) {
       args.push(`--config.electronDist=${localElectronDist}`);
     }
     execFileSync(process.execPath, args, { cwd: desktopRoot, stdio: "inherit" });
+    if (includeRelay) {
+      await emitWindowsCompatibilityEvidence({
+        desktopRoot,
+        outputDirectory: path.join(desktopRoot, "release", "installer"),
+        engineReleasePath: process.env.MKT_BROWSER_ENGINE_RELEASE_FILE,
+      });
+      process.stdout.write(`[${label}] emitted compatibility artifact hashes and sizes.\n`);
+    }
   } finally {
     writeFileSync(packageJsonPath, developmentPackageJson);
     try {

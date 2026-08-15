@@ -57,6 +57,11 @@ interface SystemInfo {
   mcpHttpUrl: string | null;
   appVersion: string;
   platform: NodeJS.Platform;
+  compatibilityEnginePin: {
+    sequence: number;
+    engineKind: "cft" | "cloakbrowser";
+    version: string;
+  } | null;
 }
 
 export type RunningStateChange =

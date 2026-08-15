@@ -52,6 +52,11 @@ export interface SystemInfo {
   mcpAuthToken: string | null;
   appVersion: string;
   platform: string;
+  compatibilityEnginePin: {
+    sequence: number;
+    engineKind: AppSettings["browserEngine"];
+    version: string;
+  } | null;
 }
 
 export type RunningStateChange =
