@@ -71,7 +71,7 @@ jobs:
       - name: Build combined Windows installer
         if: github.event_name == 'workflow_dispatch'
         env:
-          MKTTOOL_RELEASE_COOKIE: ${{ secrets.MKTTOOL_RELEASE_COOKIE }}
+          MKTTOOL_RELEASE_TOKEN: ${{ secrets.MKTTOOL_RELEASE_TOKEN }}
         run: yarn workspace @mktbrowser/desktop build:win
 
       - name: Upload combined Windows installer
