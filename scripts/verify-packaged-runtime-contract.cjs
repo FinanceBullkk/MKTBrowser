@@ -298,7 +298,15 @@ async function main() {
     }
     try {
       if (engineFixture) await removeSystemChromeEngineFixture(engineFixture);
-      await rm(userData, { recursive: true, force: true });
+      // Windows can release Electron helper-process handles shortly after the parent exits. Keep
+      // cleanup strict, but tolerate that bounded release window instead of reporting a false
+      // packaged-contract failure on a transient EBUSY.
+      await rm(userData, {
+        recursive: true,
+        force: true,
+        maxRetries: 10,
+        retryDelay: 200,
+      });
     } catch (error) {
       cleanupErrors.push(error);
     }
