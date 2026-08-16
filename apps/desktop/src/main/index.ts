@@ -41,6 +41,7 @@ import {
 import { ChromiumBrowserDriver } from "./ChromiumBrowserDriver.ts";
 import { ChromiumBootstrap } from "./ChromiumBootstrap.ts";
 import { describeEngineStatus } from "./engine-runtime-info.ts";
+import { applyNavigationHardening, mainWindowOptions } from "./main-window-security.ts";
 import { loadOrCreateMcpToken } from "./mcpToken.ts";
 import { PRODUCT_APP_ID, PRODUCT_NAME, resolveProductUserDataPath } from "./productIdentity.ts";
 import { ExtensionsService } from "./extensions/ExtensionsService.ts";
@@ -109,6 +110,10 @@ let browserDriverReady = false;
 let switchToCftInFlight: Promise<ChromiumStatus> | null = null;
 let activeCompatibilityEnginePin: CompatibilityEnginePin | null = null;
 
+// `any[]` rather than `unknown[]` is load-bearing here. Handlers are written with concrete
+// parameter types (`(event, id: string) => …`); those are assignable to an `any[]` rest parameter
+// but not to an `unknown[]` one, so narrowing this would reject every registered handler.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type IpcHandler = (event: IpcMainInvokeEvent, ...args: any[]) => unknown;
 
 function handleIpc(channel: IpcInvokeChannel, handler: IpcHandler): void {
@@ -160,25 +165,9 @@ function startChromiumBootstrap(bootstrap: ChromiumBootstrap): void {
 
 function createWindow(): void {
   const iconPath = resolveAppIcon();
-  mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 800,
-    minWidth: 900,
-    minHeight: 600,
-    titleBarStyle: "hiddenInset",
-    backgroundColor: "#0a0b0f",
-    icon: iconPath ?? undefined,
-    webPreferences: {
-      preload: join(__dirname, "../preload/index.cjs"),
-      sandbox: true,
-      contextIsolation: true,
-      nodeIntegration: false,
-      webSecurity: true,
-    },
-  });
+  mainWindow = new BrowserWindow(mainWindowOptions({ mainDir: __dirname, iconPath }));
 
-  mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  mainWindow.webContents.on("will-navigate", (event) => event.preventDefault());
+  applyNavigationHardening(mainWindow.webContents);
 
   if (process.env.ELECTRON_RENDERER_URL) {
     void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
