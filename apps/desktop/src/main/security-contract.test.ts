@@ -101,18 +101,23 @@ test("constructs exactly one BrowserWindow, through the audited options builder"
 });
 
 test("keeps preload and main IPC channels inside the classified inventory", () => {
-  const preload = source("apps/desktop/src/preload/index.ts");
+  const preload = source("apps/desktop/src/preload/create-mkt-browser-api.ts");
   const main = source("apps/desktop/src/main/index.ts");
   assert.deepEqual(
-    uniqueMatches(preload, /invoke\(IPC\.([A-Z0-9_]+)/g).sort(),
+    uniqueMatches(preload, /bridge\.invoke\(IPC\.([A-Z0-9_]+)/g).sort(),
     Object.keys(IPC).sort(),
   );
   assert.deepEqual(
-    uniqueMatches(preload, /subscribe\(IPC_EVENTS\.([A-Z0-9_]+)/g).sort(),
+    uniqueMatches(preload, /bridge\.subscribe\(IPC_EVENTS\.([A-Z0-9_]+)/g).sort(),
+    Object.keys(IPC_EVENTS).sort(),
+  );
+  assert.deepEqual(
+    uniqueMatches(main, /sendToRenderer\(IPC_EVENTS\.([A-Z0-9_]+)/g).sort(),
     Object.keys(IPC_EVENTS).sort(),
   );
   assert.deepEqual(Object.values(IPC).sort(), Object.keys(IPC_INVOKE_EXPOSURE).sort());
   assert.deepEqual(Object.values(IPC_EVENTS).sort(), Object.keys(IPC_EVENT_EXPOSURE).sort());
+  assert.match(main, /ipcRegistration\.assertComplete\(\)/);
   assert.equal(
     [...main.matchAll(/ipcMain\.handle\(/g)].length,
     1,

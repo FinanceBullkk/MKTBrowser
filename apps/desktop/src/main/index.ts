@@ -63,10 +63,13 @@ import {
 import { COMPATIBILITY_SMOKE_SWITCH } from "./compatibility-smoke-authorization.ts";
 import { runPackagedCompatibilitySmoke } from "./compatibility-smoke-cli.ts";
 import {
+  createIpcRuntimeRegistration,
+  type IpcRuntimeHandler,
+} from "./ipc-runtime-registration.ts";
+import {
   IPC,
   IPC_EVENTS,
   isIpcEventChannel,
-  isIpcInvokeChannel,
   type IpcEventChannel,
   type IpcInvokeChannel,
 } from "../shared/ipc-exposure-policy.ts";
@@ -110,20 +113,16 @@ let browserDriverReady = false;
 let switchToCftInFlight: Promise<ChromiumStatus> | null = null;
 let activeCompatibilityEnginePin: CompatibilityEnginePin | null = null;
 
-// `any[]` rather than `unknown[]` is load-bearing here. Handlers are written with concrete
-// parameter types (`(event, id: string) => …`); those are assignable to an `any[]` rest parameter
-// but not to an `unknown[]` one, so narrowing this would reject every registered handler.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type IpcHandler = (event: IpcMainInvokeEvent, ...args: any[]) => unknown;
+const ipcRegistration = createIpcRuntimeRegistration<IpcMainInvokeEvent>({
+  register: (channel, handler) => ipcMain.handle(channel, handler),
+  isTrustedSender: (event) => Boolean(mainWindow && event.sender === mainWindow.webContents),
+});
 
-function handleIpc(channel: IpcInvokeChannel, handler: IpcHandler): void {
-  if (!isIpcInvokeChannel(channel)) throw new Error(`Unclassified IPC channel: ${channel}`);
-  ipcMain.handle(channel, (event, ...args) => {
-    if (!mainWindow || event.sender !== mainWindow.webContents) {
-      throw new Error(`Rejected IPC sender for ${channel}.`);
-    }
-    return handler(event, ...args);
-  });
+function handleIpc(
+  channel: IpcInvokeChannel,
+  handler: IpcRuntimeHandler<IpcMainInvokeEvent>,
+): void {
+  ipcRegistration.handle(channel, handler);
 }
 
 function sendToRenderer(channel: IpcEventChannel, payload: unknown): void {
@@ -843,6 +842,7 @@ app
           }
         : null,
     }));
+    ipcRegistration.assertComplete();
 
     createWindow();
 
