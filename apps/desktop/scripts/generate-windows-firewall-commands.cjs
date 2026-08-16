@@ -14,6 +14,7 @@ function buildEncodedFirewallCommands(script) {
   const payload = gzipSync(Buffer.from(script, "utf8")).toString("base64");
   return {
     checkProfiles: encodeWrapper(payload, "CheckProfiles"),
+    checkOwner: encodeWrapper(payload, "CheckOwner"),
     install: encodeWrapper(payload, "Install"),
     uninstall: encodeWrapper(payload, "Uninstall"),
     verify: encodeWrapper(payload, "Verify"),
@@ -22,7 +23,7 @@ function buildEncodedFirewallCommands(script) {
 }
 
 function encodeWrapper(payload, mode) {
-  const requiresPaths = mode === "Install" || mode === "Verify";
+  const requiresPaths = ["CheckOwner", "Install", "Uninstall", "Verify"].includes(mode);
   const invoke = requiresPaths
     ? "$root=[Environment]::GetFolderPath('LocalApplicationData');" +
       `& ([ScriptBlock]::Create($s)) -Mode ${mode} ` +
@@ -47,6 +48,7 @@ function generateWindowsFirewallCommands() {
     generatedIncludePath,
     [
       `!define MKT_BROWSER_FIREWALL_CHECK_PROFILES_COMMAND "${commands.checkProfiles}"`,
+      `!define MKT_BROWSER_FIREWALL_CHECK_OWNER_COMMAND "${commands.checkOwner}"`,
       `!define MKT_BROWSER_FIREWALL_INSTALL_COMMAND "${commands.install}"`,
       `!define MKT_BROWSER_FIREWALL_UNINSTALL_COMMAND "${commands.uninstall}"`,
       `!define MKT_BROWSER_FIREWALL_VERIFY_COMMAND "${commands.verify}"`,

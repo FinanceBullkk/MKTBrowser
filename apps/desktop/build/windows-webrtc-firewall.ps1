@@ -1,9 +1,10 @@
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet("CheckProfiles", "Install", "Uninstall", "Verify", "VerifyAbsent")]
+  [ValidateSet("CheckProfiles", "CheckOwner", "Install", "Uninstall", "Verify", "VerifyAbsent")]
   [string]$Mode,
   [string]$CftPath,
-  [string]$CloakBrowserPath
+  [string]$CloakBrowserPath,
+  [string]$OwnedRuleInventoryPath
 )
 
 $ErrorActionPreference = "Stop"
@@ -33,14 +34,30 @@ function Assert-FirewallProfiles($Policy = $null) {
   }
 }
 
+function Owned-Rules {
+  if (-not [string]::IsNullOrWhiteSpace($OwnedRuleInventoryPath)) {
+    if ($Mode -ne "CheckOwner") { throw "inventory-not-allowed" }
+    $inventory = Get-Content -LiteralPath $OwnedRuleInventoryPath -Raw | ConvertFrom-Json
+    return @($inventory.Rules)
+  }
+  $policy = New-Object -ComObject HNetCfg.FwPolicy2
+  return @($policy.Rules | Where-Object { $_.Grouping -eq $group })
+}
+
+function Assert-FirewallOwnership([string]$Cft, [string]$Cloak) {
+  foreach ($rule in @(Owned-Rules)) {
+    if ([string]::IsNullOrWhiteSpace($rule.ApplicationName)) { throw "different-user-owner" }
+    $program = [IO.Path]::GetFullPath($rule.ApplicationName)
+    if (-not $program.Equals($Cft, [StringComparison]::OrdinalIgnoreCase) -and
+        -not $program.Equals($Cloak, [StringComparison]::OrdinalIgnoreCase)) {
+      throw "different-user-owner"
+    }
+  }
+}
+
 try {
   if ($Mode -eq "CheckProfiles") {
     Assert-FirewallProfiles
-    exit 0
-  }
-
-  if ($Mode -eq "Uninstall") {
-    Get-NetFirewallRule -Group $group -ErrorAction SilentlyContinue | Remove-NetFirewallRule
     exit 0
   }
 
@@ -58,6 +75,14 @@ try {
   if (-not $cft.EndsWith("\chromium\cft\runtime\chrome.exe", [StringComparison]::OrdinalIgnoreCase) -or
       -not $cloak.EndsWith("\chromium\cloakbrowser\runtime\chrome.exe", [StringComparison]::OrdinalIgnoreCase)) {
     throw "unexpected-runtime-path"
+  }
+  Assert-FirewallOwnership $cft $cloak
+
+  if ($Mode -eq "CheckOwner") { exit 0 }
+
+  if ($Mode -eq "Uninstall") {
+    Get-NetFirewallRule -Group $group -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+    exit 0
   }
 
   $candidates = @(
@@ -106,6 +131,7 @@ try {
     "rule-invalid" { exit 14 }
     "firewall-profile-disabled" { exit 15 }
     "rule-still-present" { exit 16 }
+    "different-user-owner" { exit 17 }
     default { exit 29 }
   }
 }
