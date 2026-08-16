@@ -297,8 +297,14 @@ class BufferedReader {
   private readonly onData: (chunk: Buffer) => void;
   private readonly onClose: () => void;
   private readonly onError: (e: Error) => void;
+  // Declared as a field rather than a constructor parameter property: parameter properties are the
+  // one TypeScript construct `node --experimental-strip-types` cannot handle, and that is how the
+  // desktop test scripts load main-process modules. This file was the only one in src/main using
+  // one, which is why it could not be unit-tested at all.
+  private readonly sock: Socket;
 
-  constructor(private readonly sock: Socket) {
+  constructor(sock: Socket) {
+    this.sock = sock;
     this.onData = (chunk: Buffer) => {
       if (this.detached) return;
       this.buf = Buffer.concat([this.buf, chunk]);
