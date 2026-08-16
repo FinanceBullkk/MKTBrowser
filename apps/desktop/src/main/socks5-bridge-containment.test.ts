@@ -92,8 +92,8 @@ async function recordingUpstream(
       if (stage === "request") {
         if (buf.length < 5) return;
         const atyp = buf[3] ?? 0;
-        let address = "";
-        let offset = 4;
+        let address: string;
+        let offset: number;
         if (atyp === ATYP_IPV4) {
           if (buf.length < 10) return;
           address = Array.from(buf.subarray(4, 8)).join(".");
