@@ -251,6 +251,7 @@ export class ChromiumBootstrap extends EventEmitter {
             `corrupted or truncated. It has been cleared; please retry. If it ` +
             `keeps failing, add MKT Browser to your antivirus exclusions or switch ` +
             `the engine to Chrome for Testing in Settings. (${(e as Error).message})`,
+          { cause: e },
         );
       }
       await rm(zipPath, { force: true });

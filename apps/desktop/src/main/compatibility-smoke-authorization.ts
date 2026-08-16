@@ -54,7 +54,9 @@ export function claimCompatibilitySmokeAuthorization(options: {
     assertMatchingSmokeMarker(options.localAppData, authorization);
     return { authorization, consumedPath };
   } catch (error) {
-    throw new Error(`Compatibility smoke authorization rejected: ${(error as Error).message}`);
+    throw new Error(`Compatibility smoke authorization rejected: ${(error as Error).message}`, {
+      cause: error,
+    });
   }
 }
 

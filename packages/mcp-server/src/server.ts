@@ -66,6 +66,9 @@ const BLOCKED_URL_SCHEMES = ["file:", "chrome:", "devtools:", "view-source:"];
 function normalizeUrlForScan(s: string): string {
   return s
     .replace(/[\t\n\r]/g, "") // GURL strips these globally
+    // The control characters are the point: GURL strips every leading byte <= 0x20 before
+    // resolving a scheme, so a scanner that skips them is bypassed by "\x00file:///".
+    // eslint-disable-next-line no-control-regex
     .replace(/^[\x00-\x20]+/, "") // strip ALL leading control chars, not just whitespace
     .toLowerCase();
 }

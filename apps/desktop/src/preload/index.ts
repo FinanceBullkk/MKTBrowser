@@ -68,6 +68,9 @@ export type RunningStateChange =
   | { kind: "launched"; profileId: ProfileId }
   | { kind: "closed"; profileId: ProfileId; reason: "user-close" | "external-exit" };
 
+// Returns `Promise<any>` so each call site can bind its own result type without a cast. The typed
+// surface callers actually use is the exported API below; this is the untyped seam beneath it.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function invoke(channel: IpcInvokeChannel, ...args: unknown[]): Promise<any> {
   return ipcRenderer.invoke(channel, ...args);
 }

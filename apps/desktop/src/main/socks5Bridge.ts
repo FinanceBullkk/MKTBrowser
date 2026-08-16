@@ -234,7 +234,6 @@ async function connectViaHttpConnect(
     throw new Error(`upstream HTTP CONNECT failed: ${statusLine.trim()}`);
   }
   // Drain the rest of the headers — terminator is an empty line.
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     const line = await readLine(reader);
     if (line === "") break;
@@ -369,7 +368,6 @@ class BufferedReader {
 
 async function readLine(reader: BufferedReader): Promise<string> {
   const out: number[] = [];
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     const b = await reader.read(1);
     const ch = b[0] ?? 0;

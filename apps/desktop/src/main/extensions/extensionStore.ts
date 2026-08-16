@@ -130,7 +130,7 @@ export async function sweepOrphans(
   let removed = 0;
   if (!existsSync(storeRoot)) return { removed };
   const live = sharedRefKeys(allRefs);
-  let idDirs: string[] = [];
+  let idDirs: string[];
   try {
     idDirs = (await readdir(storeRoot, { withFileTypes: true }))
       .filter((e) => e.isDirectory())
@@ -152,7 +152,7 @@ export async function sweepOrphans(
       removed++;
       continue;
     }
-    let versions: string[] = [];
+    let versions: string[];
     try {
       versions = (await readdir(join(storeRoot, idDir), { withFileTypes: true }))
         .filter((e) => e.isDirectory())

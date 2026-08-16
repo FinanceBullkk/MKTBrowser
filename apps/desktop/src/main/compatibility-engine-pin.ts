@@ -60,7 +60,9 @@ export function readCompatibilityEnginePin(localAppData: string): CompatibilityE
     return value as CompatibilityEnginePin;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw new Error(`The active compatibility engine pin is invalid: ${(error as Error).message}`);
+    throw new Error(`The active compatibility engine pin is invalid: ${(error as Error).message}`, {
+      cause: error,
+    });
   }
 }
 
