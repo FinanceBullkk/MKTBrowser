@@ -36,6 +36,7 @@ import { CdpSession } from "@mktbrowser/cdp-driver";
 import type { ChromiumBootstrap } from "./ChromiumBootstrap";
 import { startBridgeForProfile, stopBridgeForProfile } from "./socks5Bridge";
 import { probeProxyGeo } from "./proxyGeo";
+import { resolveProxyGeoLaunch } from "./proxyGeoLaunch.ts";
 import { companionDir } from "./extensions/companion";
 import { resolveLoadDir } from "./extensions/extensionStore.ts";
 import { sanitizeStartUrl } from "./startPage";
@@ -247,24 +248,34 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     if (profile.proxy) {
       try {
         const geo = await probeProxyGeo(profile.proxy, { timeoutMs: 4000 });
-        webrtcSpoofIp = geo.ip;
-        if (typeof geo.latitude === "number" && typeof geo.longitude === "number") {
-          geoCoords = { latitude: geo.latitude, longitude: geo.longitude };
-        }
+        const previousTimezone = fp.timezone;
+        const decision = resolveProxyGeoLaunch(fp, geo);
+        fp = decision.fingerprint;
+        webrtcSpoofIp = decision.webrtcSpoofIp;
+        geoCoords = decision.geoCoords;
         // Cache the resolved country on the profile so the GUI flag chip
         // matches the proxy's egress (Luxembourg proxy → LU flag, not the
         // fingerprint's timezone-derived country).
         if (geo.country) {
           this.profileManager.setProxyCountry(profileId, geo.country.toLowerCase());
         }
-        if (geo.timezone && geo.timezone !== fp.timezone) {
+        if (decision.fingerprint.timezone !== previousTimezone) {
           console.log(
-            `[mkt-browser] aligning fingerprint timezone ${fp.timezone} → ${geo.timezone} (proxy geo)`,
+            `[mkt-browser] aligning fingerprint timezone ${previousTimezone} → ${decision.fingerprint.timezone} (proxy geo)`,
           );
-          fp = { ...fp, timezone: geo.timezone };
         }
       } catch {
-        console.warn("[mkt-browser] proxy geo probe failed; continuing with verified containment.");
+        // Do not leave a country cached from an older proxy or a prior route.
+        // The fallback remains leak-safe because a null spoof IP selects the
+        // WebRTC kill switch below.
+        this.profileManager.setProxyCountry(profileId, null);
+        const decision = resolveProxyGeoLaunch(fp, null);
+        fp = decision.fingerprint;
+        webrtcSpoofIp = decision.webrtcSpoofIp;
+        geoCoords = decision.geoCoords;
+        console.warn(
+          `[mkt-browser] ${decision.diagnosticCode}: continuing with verified containment and WebRTC disabled.`,
+        );
       }
     }
     // No-proxy: fp.timezone is left as the profile configured it (issue #13).
