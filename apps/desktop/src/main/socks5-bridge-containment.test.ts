@@ -59,12 +59,12 @@ async function recordingUpstream(
     let authenticated = !opts.requireAuth;
     let buf = Buffer.alloc(0);
 
-    sock.on("data", (chunk) => {
+    sock.on("data", (chunk: Buffer) => {
       buf = Buffer.concat([buf, chunk]);
 
       if (stage === "greeting") {
         if (buf.length < 2) return;
-        const nMethods = buf[1];
+        const nMethods = buf[1] ?? 0;
         if (buf.length < 2 + nMethods) return;
         buf = buf.subarray(2 + nMethods);
         const method = opts.requireAuth ? 0x02 : 0x00;
@@ -74,9 +74,9 @@ async function recordingUpstream(
 
       if (stage === "auth") {
         if (buf.length < 2) return;
-        const uLen = buf[1];
+        const uLen = buf[1] ?? 0;
         if (buf.length < 2 + uLen + 1) return;
-        const pLen = buf[2 + uLen];
+        const pLen = buf[2 + uLen] ?? 0;
         if (buf.length < 3 + uLen + pLen) return;
         buf = buf.subarray(3 + uLen + pLen);
         if (opts.rejectAuth) {
@@ -91,7 +91,7 @@ async function recordingUpstream(
 
       if (stage === "request") {
         if (buf.length < 5) return;
-        const atyp = buf[3];
+        const atyp = buf[3] ?? 0;
         let address = "";
         let offset = 4;
         if (atyp === ATYP_IPV4) {
@@ -99,7 +99,7 @@ async function recordingUpstream(
           address = Array.from(buf.subarray(4, 8)).join(".");
           offset = 8;
         } else if (atyp === ATYP_DOMAIN) {
-          const len = buf[4];
+          const len = buf[4] ?? 0;
           if (buf.length < 5 + len + 2) return;
           address = buf.subarray(5, 5 + len).toString("utf8");
           offset = 5 + len;
@@ -209,6 +209,7 @@ test("H32: the bridge passes the hostname upstream instead of resolving it local
 
     assert.equal(upstream.requests.length, 1);
     const seen = upstream.requests[0];
+    assert.ok(seen, "upstream recorded no request");
 
     /**
      * The whole point. `localhost` resolves everywhere, so a bridge doing local DNS would still have
@@ -245,8 +246,10 @@ test("H32: a hostname that cannot resolve locally still reaches the upstream", a
     if (result.ok) result.socket.destroy();
 
     assert.equal(upstream.requests.length, 1);
-    assert.equal(upstream.requests[0].atyp, ATYP_DOMAIN);
-    assert.equal(upstream.requests[0].address, "no-such-host.test");
+    const seen = upstream.requests[0];
+    assert.ok(seen, "upstream recorded no request");
+    assert.equal(seen.atyp, ATYP_DOMAIN);
+    assert.equal(seen.address, "no-such-host.test");
   } finally {
     await stopBridgeForProfile(profileId);
     await upstream.close();
