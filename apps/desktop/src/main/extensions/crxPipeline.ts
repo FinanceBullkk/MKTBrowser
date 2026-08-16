@@ -1,22 +1,14 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, createPublicKey, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import extract from "extract-zip";
 import type { ExtensionConfig } from "@mktbrowser/types";
+import { unwrapVerifiedCrx } from "./crx-signature-verification.ts";
 import { storeEntryDir } from "./extensionStore.ts";
 
 const MAX_UNPACKED_BYTES = 150 * 1024 * 1024; // ~150 MB cap per extension
-
-interface CrxUnwrapResult {
-  /** Path to the inner zip (or the original path when the input wasn't a CRX). */
-  zipPath: string;
-  /** The developer's DER public key, if recoverable from the CRX header. The
-   *  Chrome Web Store ID is SHA-256(this)[:16]; injecting it as manifest `key`
-   *  makes the unpacked extension load under its genuine store ID. */
-  publicKey?: Buffer;
-}
 
 export interface UnpackToStoreInput {
   /** Absolute path to a .crx file, .zip file, or an unpacked extension folder. */
@@ -25,6 +17,8 @@ export interface UnpackToStoreInput {
   storeRoot: string;
   /** How the extension was obtained (for the stored ExtensionConfig). */
   origin: ExtensionConfig["source"];
+  /** Required for Web Store downloads; prevents substitution with another signed extension. */
+  expectedId?: string;
 }
 
 /**
@@ -34,13 +28,11 @@ export interface UnpackToStoreInput {
  * number of profiles via --load-extension.
  *
  * Identity:
- *  - Web Store / CRX with a recoverable developer key → the genuine store ID,
- *    and the key is injected into the stored manifest.json so Chromium loads the
- *    extension under that real ID (looks like a normal install; not anomalous).
+ *  - A CRX2/CRX3 publisher signature must verify before its key becomes the
+ *    genuine store ID. Web Store installs must also match the requested ID.
  *  - Keyless folder/zip → a stable content-hash ID (shareable + dedupable).
  *  - If a manifest already carries a `key`, that ID is used as-is.
- * Key recovery failure NEVER blocks the install — it degrades to the
- * content-hash ID.
+ * Invalid CRX signatures and conflicting manifest keys fail closed.
  *
  * Atomic + concurrent-safe: everything happens in a temp staging dir and is
  * renamed into the final entry only once validated. If the target entry already
@@ -48,8 +40,11 @@ export interface UnpackToStoreInput {
  * the stage is discarded and the existing entry reused.
  */
 export async function unpackToStore(input: UnpackToStoreInput): Promise<ExtensionConfig> {
-  const { source, storeRoot, origin } = input;
+  const { source, storeRoot, origin, expectedId } = input;
   if (!existsSync(source)) throw new Error(`Extension source not found: ${source}`);
+  if (origin === "web-store" && !/^[a-p]{32}$/.test(expectedId ?? "")) {
+    throw new Error("A valid expected Web Store extension ID is required.");
+  }
 
   await mkdir(storeRoot, { recursive: true });
   const staging = join(storeRoot, `.staging-${randomUUID()}`);
@@ -61,7 +56,10 @@ export async function unpackToStore(input: UnpackToStoreInput): Promise<Extensio
     if (info.isDirectory()) {
       await cp(source, staging, { recursive: true });
     } else {
-      const unwrapped = await crxToZip(source, staging);
+      const unwrapped = await unwrapVerifiedCrx(source, staging);
+      if (origin === "web-store" && !unwrapped.isCrx) {
+        throw new Error("Web Store download was not a signed CRX package.");
+      }
       publicKey = unwrapped.publicKey;
       await extract(unwrapped.zipPath, { dir: staging });
       if (unwrapped.zipPath !== source) await rm(unwrapped.zipPath, { force: true });
@@ -92,22 +90,26 @@ export async function unpackToStore(input: UnpackToStoreInput): Promise<Extensio
       );
     }
 
-    // Determine the extension identity, preferring the genuine store key.
+    // Determine the extension identity, preferring a verified CRX publisher key.
     let id: string;
-    if (manifest.key) {
-      // Manifest already pins the key → already the genuine store ID.
-      id = computeExtensionId({ key: manifest.key });
-    } else if (publicKey) {
-      // Recovered the dev key from the CRX header → inject it so Chromium loads
-      // under the real store ID, and key our entry by that ID.
+    if (publicKey) {
+      // The verified publisher key is authoritative and becomes Chromium's ID.
       const keyB64 = publicKey.toString("base64");
       id = computeExtensionId({ key: keyB64 });
+      if (manifest.key && computeExtensionId({ key: manifest.key }) !== id) {
+        throw new Error("CRX publisher key does not match the manifest key.");
+      }
       manifest.key = keyB64;
       await writeFile(manifestPath, JSON.stringify(manifest, null, 2), "utf8");
+    } else if (manifest.key) {
+      // A local unpacked extension may carry its own Chromium identity key.
+      id = computeExtensionId({ key: manifest.key });
     } else {
-      // Keyless (folder/zip, or a CRX whose key we couldn't parse) → stable
-      // content-hash ID. Install still succeeds; just no store-ID benefit.
+      // Keyless local folder/ZIP → stable content-hash ID.
       id = await contentHashId(root);
+    }
+    if (expectedId && id !== expectedId) {
+      throw new Error(`Signed CRX ID ${id} does not match requested Web Store ID ${expectedId}.`);
     }
     const version = manifest.version ?? "";
     const name = await resolveName(manifest, root);
@@ -148,126 +150,6 @@ export async function unpackToStore(input: UnpackToStoreInput): Promise<Extensio
   }
 }
 
-/** Strip the CRX2/CRX3 header off a .crx, writing the inner zip to `outDir`. */
-async function crxToZip(crxPath: string, outDir: string): Promise<CrxUnwrapResult> {
-  const buf = await readFile(crxPath);
-  if (buf.length < 16 || buf.toString("latin1", 0, 4) !== "Cr24") {
-    // Not a CRX — maybe a plain zip mislabeled. Use as-is.
-    return { zipPath: crxPath };
-  }
-  const version = buf.readUInt32LE(4);
-  let zipStart: number;
-  let publicKey: Buffer | undefined;
-  if (version === 3) {
-    const headerLen = buf.readUInt32LE(8);
-    zipStart = 12 + headerLen;
-    // The CRX3 header is a `CrxFileHeader` protobuf carrying the dev public key.
-    publicKey = extractCrx3PublicKey(buf.subarray(12, 12 + headerLen));
-  } else if (version === 2) {
-    const pubKeyLen = buf.readUInt32LE(8);
-    const sigLen = buf.readUInt32LE(12);
-    zipStart = 16 + pubKeyLen + sigLen;
-    if (pubKeyLen > 0 && 16 + pubKeyLen <= buf.length) {
-      publicKey = Buffer.from(buf.subarray(16, 16 + pubKeyLen));
-    }
-  } else {
-    throw new Error(`Unsupported CRX version ${version}.`);
-  }
-  if (zipStart <= 0 || zipStart >= buf.length) {
-    throw new Error("Corrupt CRX: invalid zip offset.");
-  }
-  const zipPath = join(outDir, `${randomUUID()}.zip`);
-  await writeFile(zipPath, buf.subarray(zipStart));
-  return { zipPath, publicKey };
-}
-
-/**
- * Pull the developer public key out of a CRX3 `CrxFileHeader` protobuf:
- *   CrxFileHeader {
- *     repeated AsymmetricKeyProof sha256_with_rsa   = 2;
- *     repeated AsymmetricKeyProof sha256_with_ecdsa = 3;
- *     optional bytes signed_header_data             = 10000;  // SignedData
- *   }
- *   AsymmetricKeyProof { bytes public_key = 1; bytes signature = 2; }
- *   SignedData         { bytes crx_id     = 1; }              // 16-byte ID
- *
- * Store CRX3 files carry MULTIPLE proofs (the extension's own key plus Google's
- * "verified contents" key), so the FIRST proof is not necessarily the right one.
- * The canonical ID lives in `signed_header_data.crx_id`; we return the proof
- * whose SHA-256(public_key)[:16] matches that id. Minimal length-delimited
- * reader, no proto dependency. Returns undefined on any malformed/ambiguous
- * input (no matching proof, no crx_id) so the install degrades to a content-hash
- * ID rather than ever injecting a WRONG key.
- */
-function extractCrx3PublicKey(header: Buffer): Buffer | undefined {
-  try {
-    const signed = firstField(header, 10000);
-    const crxId = signed ? firstField(signed, 1) : undefined;
-    if (!crxId || crxId.length !== 16) return undefined;
-    const proofs = [...collectFields(header, 2), ...collectFields(header, 3)];
-    for (const proof of proofs) {
-      const pk = firstField(proof, 1);
-      if (!pk || pk.length === 0) continue;
-      const digest = createHash("sha256").update(pk).digest().subarray(0, 16);
-      if (digest.equals(crxId)) return Buffer.from(pk);
-    }
-  } catch {
-    return undefined;
-  }
-  return undefined;
-}
-
-/** All length-delimited (wire type 2) sub-messages for `field` in `msg`. */
-function collectFields(msg: Buffer, field: number): Buffer[] {
-  const out: Buffer[] = [];
-  let i = 0;
-  while (i < msg.length) {
-    const [tag, t1] = readVarint(msg, i);
-    i = t1;
-    const f = tag >>> 3;
-    const wire = tag & 0x7;
-    if (wire !== 2) {
-      i = skipField(msg, i, wire);
-      continue;
-    }
-    const [len, t2] = readVarint(msg, i);
-    i = t2;
-    if (f === field) out.push(msg.subarray(i, i + len));
-    i += len;
-  }
-  return out;
-}
-
-/** First length-delimited sub-field (`field`, wire type 2) of `msg`. */
-function firstField(msg: Buffer, field: number): Buffer | undefined {
-  return collectFields(msg, field)[0];
-}
-
-/** Decode a base-128 varint at `pos`; returns [value, nextPos]. */
-function readVarint(buf: Buffer, pos: number): [number, number] {
-  let result = 0;
-  let shift = 0;
-  let i = pos;
-  for (;;) {
-    if (i >= buf.length) throw new Error("varint overrun");
-    const byte = buf[i] ?? 0;
-    result += (byte & 0x7f) * Math.pow(2, shift);
-    i++;
-    if ((byte & 0x80) === 0) break;
-    shift += 7;
-    if (shift > 49) throw new Error("varint too long");
-  }
-  return [result, i];
-}
-
-/** Advance past a non-length-delimited field given its wire type. */
-function skipField(buf: Buffer, pos: number, wire: number): number {
-  if (wire === 0) return readVarint(buf, pos)[1]; // varint
-  if (wire === 5) return pos + 4; // 32-bit
-  if (wire === 1) return pos + 8; // 64-bit
-  throw new Error(`unsupported wire type ${wire}`);
-}
-
 /**
  * Compute the Chromium extension ID. With a manifest `key`, it's the SHA-256 of
  * the DER public key; otherwise it's the SHA-256 of the absolute install path
@@ -278,6 +160,11 @@ export function computeExtensionId(opts: { key?: string; absPath?: string }): st
   let digestInput: Buffer;
   if (opts.key) {
     digestInput = Buffer.from(opts.key, "base64");
+    try {
+      createPublicKey({ key: digestInput, format: "der", type: "spki" });
+    } catch {
+      throw new Error("Invalid extension public key in manifest.");
+    }
   } else {
     digestInput = Buffer.from(opts.absPath ?? "", "utf8");
   }

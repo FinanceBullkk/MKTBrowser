@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { readdir, readFile, rm, stat } from "node:fs/promises";
-import { join, resolve, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { ExtensionConfig } from "@mktbrowser/types";
 
 /** Don't reclaim a staging dir younger than this — it may be a live install. */
@@ -18,7 +18,28 @@ const STALE_STAGING_MS = 5 * 60 * 1000;
 
 /** Absolute directory of a shared store entry, keyed by extension id + version. */
 export function storeEntryDir(storeRoot: string, id: string, version: string): string {
-  return join(storeRoot, id, version || "0");
+  if (!/^[a-p]{32}$/.test(id)) throw new Error(`Unsafe extension ID: ${id}`);
+  const normalizedVersion = version || "0";
+  const parts = normalizedVersion.split(".");
+  const versionSafe =
+    parts.length >= 1 &&
+    parts.length <= 4 &&
+    parts.every(
+      (part) => /^(0|[1-9]\d*)$/.test(part) && Number(part) >= 0 && Number(part) <= 65_535,
+    );
+  if (!versionSafe) throw new Error(`Unsafe extension version: ${version}`);
+  return join(storeRoot, id, normalizedVersion);
+}
+
+/** Resolve a legacy extension path and refuse absolute or traversal references. */
+export function resolveProfileExtensionDir(profileDataDir: string, extensionDir: string): string {
+  const base = resolve(profileDataDir);
+  const candidate = resolve(base, extensionDir);
+  const rel = relative(base, candidate);
+  if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    throw new Error(`Extension path is outside the profile data directory: ${extensionDir}`);
+  }
+  return candidate;
 }
 
 /** Icons above this are ignored — a real extension icon is a few KB, so this
@@ -90,7 +111,7 @@ export function resolveLoadDir(
   storeRoot: string,
 ): string {
   if (ext.scope === "shared") return storeEntryDir(storeRoot, ext.id, ext.version);
-  return join(profileDataDir, ext.dir);
+  return resolveProfileExtensionDir(profileDataDir, ext.dir);
 }
 
 /** Set of "id\0version" keys for every SHARED reference across all profiles. */
