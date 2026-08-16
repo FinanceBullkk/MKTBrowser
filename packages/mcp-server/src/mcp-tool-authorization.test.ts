@@ -54,6 +54,8 @@ const ALLOWED_TO_RELAY = Object.keys(MCP_TOOL_EXPOSURE).filter((name) =>
 interface Harness {
   client: Client;
   touched: string[];
+  driverCalls: Array<{ method: string; args: unknown[] }>;
+  profileManager: ProfileManager;
   profileId: string;
   dispose: () => Promise<void>;
 }
@@ -62,13 +64,18 @@ interface Harness {
  * Wrap the shipped driver so any call through it is recorded. Not a stand-in for the logic under
  * test — the authorization path is entirely real; this only observes whether it was escaped.
  */
-function recordingDriver(inner: BrowserDriver, touched: string[]): BrowserDriver {
+function recordingDriver(
+  inner: BrowserDriver,
+  touched: string[],
+  driverCalls: Array<{ method: string; args: unknown[] }>,
+): BrowserDriver {
   return new Proxy(inner, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
       if (typeof value !== "function") return value;
       return (...args: unknown[]) => {
         touched.push(String(prop));
+        driverCalls.push({ method: String(prop), args });
         return (value as (...a: unknown[]) => unknown).apply(target, args);
       };
     },
@@ -82,7 +89,12 @@ async function harness(accessPolicy: McpToolAccessPolicy): Promise<Harness> {
     profilesRoot: join(root, "profiles"),
   });
   const touched: string[] = [];
-  const browserDriver = recordingDriver(new MockBrowserDriver(profileManager), touched);
+  const driverCalls: Array<{ method: string; args: unknown[] }> = [];
+  const browserDriver = recordingDriver(
+    new MockBrowserDriver(profileManager),
+    touched,
+    driverCalls,
+  );
 
   // A real profile, so a permitted call actually reaches the driver instead of failing lookup.
   const profile = profileManager.create({ name: "audit-profile" });
@@ -96,6 +108,8 @@ async function harness(accessPolicy: McpToolAccessPolicy): Promise<Harness> {
   return {
     client,
     touched,
+    driverCalls,
+    profileManager,
     profileId: profile.id,
     dispose: async () => {
       await client.close();
@@ -112,7 +126,12 @@ async function refused(client: Client, name: string, profileId = "p1"): Promise<
   try {
     const result = (await client.callTool({
       name,
-      arguments: { profile_id: profileId, url: "https://example.invalid/", selector: "body", text: "x" },
+      arguments: {
+        profile_id: profileId,
+        url: "https://example.invalid/",
+        selector: "body",
+        text: "x",
+      },
     })) as {
       isError?: boolean;
     };
@@ -125,8 +144,14 @@ async function refused(client: Client, name: string, profileId = "p1"): Promise<
 test("the inventory under test is the full 24 tools, split into both groups", async () => {
   // Guards every assertion below against a vacuous pass if the policy or table is emptied.
   assert.equal(Object.keys(MCP_TOOL_EXPOSURE).length, 24);
-  assert.ok(DENIED_TO_RELAY.length >= 15, `expected many denied tools, got ${DENIED_TO_RELAY.length}`);
-  assert.ok(ALLOWED_TO_RELAY.length >= 5, `expected several allowed tools, got ${ALLOWED_TO_RELAY.length}`);
+  assert.ok(
+    DENIED_TO_RELAY.length >= 15,
+    `expected many denied tools, got ${DENIED_TO_RELAY.length}`,
+  );
+  assert.ok(
+    ALLOWED_TO_RELAY.length >= 5,
+    `expected several allowed tools, got ${ALLOWED_TO_RELAY.length}`,
+  );
   for (const critical of ["evaluate_js", "cdp_send", "get_cookies", "set_cookies", "navigate"]) {
     assert.ok(DENIED_TO_RELAY.includes(critical), `${critical} must be denied to the Relay token`);
   }
@@ -200,7 +225,11 @@ test("H22: tool-name matching is exact, not case- or whitespace-tolerant", async
       "navigate ",
     ];
     for (const variant of variants) {
-      assert.equal(await refused(h.client, variant), true, `${JSON.stringify(variant)} must be refused`);
+      assert.equal(
+        await refused(h.client, variant),
+        true,
+        `${JSON.stringify(variant)} must be refused`,
+      );
     }
     assert.deepEqual(h.touched, [], `a name variant reached the driver: ${h.touched.join(", ")}`);
   } finally {
@@ -226,6 +255,95 @@ test("H23: an unclassified tool is denied even under the most permissive policy"
   try {
     assert.equal(isMcpToolAllowed("future_unclassified_tool", FULL_LOCAL_ACCESS_POLICY), false);
     assert.equal(await refused(h.client, "future_unclassified_tool"), true);
+  } finally {
+    await h.dispose();
+  }
+});
+
+test("H24: raw cdp_send always enters the driver through safe mode", async () => {
+  const previous = process.env.MKT_BROWSER_MCP_ALLOW_RAW_CDP;
+  process.env.MKT_BROWSER_MCP_ALLOW_RAW_CDP = "1";
+  let h: Harness | undefined;
+  try {
+    h = await harness(FULL_LOCAL_ACCESS_POLICY);
+    const launched = await h.client.callTool({
+      name: "launch_profile",
+      arguments: { profile_id: h.profileId },
+    });
+    assert.notEqual(launched.isError, true);
+    h.touched.length = 0;
+    h.driverCalls.length = 0;
+
+    const result = await h.client.callTool({
+      name: "cdp_send",
+      arguments: {
+        profile_id: h.profileId,
+        method: "Runtime.evaluate",
+        params: { expression: "1 + 1" },
+      },
+    });
+
+    assert.notEqual(result.isError, true);
+    assert.deepEqual(h.touched, ["isRunning", "cdpSend"]);
+    const cdpCall = h.driverCalls.find((call) => call.method === "cdpSend");
+    assert.ok(cdpCall);
+    assert.deepEqual(cdpCall.args[4], { safe: true });
+  } finally {
+    await h?.dispose();
+    if (previous === undefined) delete process.env.MKT_BROWSER_MCP_ALLOW_RAW_CDP;
+    else process.env.MKT_BROWSER_MCP_ALLOW_RAW_CDP = previous;
+  }
+});
+
+test("H25: managed launch cannot remove its required proxy or replace the fingerprint", async () => {
+  const h = await harness(PROFILE_MANAGEMENT_ACCESS_POLICY);
+  try {
+    const managed = h.profileManager.createIdempotent(
+      { name: "managed-audit-profile" },
+      { externalRef: "account-1", requestId: "request-1", requestHash: "request-hash-1" },
+    ).profile;
+    const originalFingerprint = structuredClone(managed.fingerprint);
+    const proxy = {
+      type: "http" as const,
+      host: "proxy.example",
+      port: 8080,
+      username: "operator",
+      password: "secret",
+    };
+
+    h.touched.length = 0;
+    h.driverCalls.length = 0;
+    const launched = await h.client.callTool({
+      name: "launch_managed_profile",
+      arguments: {
+        profile_id: managed.id,
+        proxy,
+        fingerprint: null,
+        disable_proxy: true,
+        disable_fingerprint: true,
+      },
+    });
+
+    assert.notEqual(launched.isError, true);
+    const stored = h.profileManager.get(managed.id);
+    assert.ok(stored);
+    assert.deepEqual(stored.proxy, proxy);
+    assert.deepEqual(stored.fingerprint, originalFingerprint);
+    assert.equal(h.driverCalls.filter((call) => call.method === "launch").length, 1);
+
+    for (const invalidProxy of [undefined, null]) {
+      h.touched.length = 0;
+      h.driverCalls.length = 0;
+      const rejected = await h.client.callTool({
+        name: "launch_managed_profile",
+        arguments: { profile_id: managed.id, proxy: invalidProxy },
+      });
+      assert.equal(rejected.isError, true);
+      assert.equal(
+        h.driverCalls.some((call) => call.method === "launch"),
+        false,
+      );
+    }
   } finally {
     await h.dispose();
   }

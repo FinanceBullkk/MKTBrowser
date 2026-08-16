@@ -11,6 +11,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "lint": "node ../../node_modules/typescript/bin/tsc --noEmit -p tsconfig.json --noUnusedLocals --noUnusedParameters --noFallthroughCasesInSwitch",
+    "test:safe": "node ../../packages/profile-manager/node_modules/tsx/dist/cli.mjs --test src/cdp-safe-mode.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
