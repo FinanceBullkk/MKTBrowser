@@ -187,6 +187,17 @@ license and checksum before operational use.
 - [MKB-W02 Windows internal clean break](docs/mkb-w02-windows-internal-clean-break.md)
 - [Deferred MKB-07 Apple Silicon verification runbook](docs/mkb-00-apple-silicon-verification.md)
 
+### Change history
+
+This repository keeps no changelog of its own. Behaviour changes, including ones that affect an
+operator's identity, are recorded in the MKTTool repository's `docs/project-changelog.md`, which
+covers the product as a whole — MKTTool is the console, this is its execution layer, and a change
+here usually lands with a matching change there.
+
+Note when checking whether a build is affected by something recorded there: this repository *is*
+versioned and tagged (`v0.3.1` at the time of writing), while MKTTool is not, so a changelog entry
+naming a build range is naming **these** tags.
+
 ## Upstream and license
 
 The fetch-only `upstream` remote points to
