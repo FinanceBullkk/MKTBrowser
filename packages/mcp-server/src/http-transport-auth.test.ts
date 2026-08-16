@@ -26,7 +26,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createServer } from "node:net";
-import { request as httpRequest } from "node:http";
+import { request as httpRequest, type ClientRequest, type IncomingMessage } from "node:http";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -109,7 +109,12 @@ const bearer = (token: string): Record<string, string> => ({ authorization: `Bea
 function rawRequest(
   port: number,
   path: string,
-  opts: { method?: string; headers?: Record<string, string>; body?: string } = {},
+  opts: {
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string;
+    timeoutMs?: number;
+  } = {},
 ): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
     const req = httpRequest(
@@ -122,9 +127,58 @@ function rawRequest(
       },
     );
     req.once("error", reject);
+    if (opts.timeoutMs) {
+      req.setTimeout(opts.timeoutMs, () => req.destroy(new Error("request timed out")));
+    }
     if (opts.body !== undefined) req.write(opts.body);
     req.end();
   });
+}
+
+interface SseConnection {
+  status: number;
+  close: () => Promise<void>;
+}
+
+/** Open one SSE response without waiting for its intentionally-never-ending body. */
+function openSse(port: number): Promise<SseConnection> {
+  return new Promise((resolve, reject) => {
+    const req: ClientRequest = httpRequest(
+      {
+        host: "127.0.0.1",
+        port,
+        path: "/sse",
+        headers: { ...bearer(TOKEN), host: `127.0.0.1:${port}` },
+      },
+      (res: IncomingMessage) => {
+        res.once("error", reject);
+        resolve({
+          status: res.statusCode ?? 0,
+          close: async () => {
+            if (res.destroyed) return;
+            await new Promise<void>((closed) => {
+              res.once("close", closed);
+              res.destroy();
+              req.destroy();
+            });
+          },
+        });
+      },
+    );
+    req.once("error", reject);
+    req.end();
+  });
+}
+
+/** Wait for the server-side close event rather than racing a replacement request against the TCP teardown. */
+async function waitForSseState(origin: string, connected: boolean): Promise<void> {
+  const deadline = Date.now() + 1_000;
+  while (Date.now() < deadline) {
+    const health = await call(origin, "/healthz", { headers: bearer(TOKEN) });
+    if (JSON.parse(health.body).connected === connected) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.fail(`SSE connection state did not become ${String(connected)}`);
 }
 
 test("H26: a request with no Authorization header is rejected", async () => {
@@ -169,10 +223,7 @@ test("H26: near-miss tokens are all rejected", async () => {
     // OBSERVATION, not a finding: a trailing space is stripped by the HTTP parser as optional
     // whitespace (RFC 7230 §3.2), so it never reaches `authOk` and is genuinely the same
     // credential. The hypothesis that it would be a distinct near-miss was wrong.
-    assert.equal(
-      (await call(f.origin, "/healthz", { headers: bearer(`${TOKEN} `) })).status,
-      200,
-    );
+    assert.equal((await call(f.origin, "/healthz", { headers: bearer(`${TOKEN} `) })).status, 200);
   } finally {
     await f.dispose();
   }
@@ -324,17 +375,42 @@ test("H26 fail-open: an empty-string token counts as no token", async () => {
 });
 
 /**
- * H28 (second `GET /sse` takes the single transport slot) is **NOT closed**.
+ * H28 is covered below with an owned SSE socket fixture.
  *
  * `handle()` assigns `this.sseTransport = transport` for every `GET /sse` without closing the
- * previous one, so two authenticated local clients contend for one slot — confirmed by reading
- * `HttpTransport.ts:184-186`, which is evidence but not proof.
+ * previous one, so two authenticated local clients previously contended for one slot.
  *
- * An executable test was written and withdrawn: holding two live SSE connections kept the runner's
- * event loop alive and the suite hung rather than failing. The phase's own rule applies — a test
- * that needs a retry or a forced exit is worse than none, because it teaches people to re-run. It
- * needs a harness that owns socket teardown deterministically, which is a fixture task rather than
- * a test task.
+ * The fixture owns both response sockets and closes them explicitly, so the test has no retry or
+ * forced-exit path.
  *
- * Recorded here so the gap is visible at the place someone would look for it.
+ * The active transport remains usable after the rejected second connection closes.
  */
+test("H28: a second SSE client is rejected without replacing the active stream", async () => {
+  const f = await startTransport(TOKEN);
+  let first: SseConnection | undefined;
+  let replacement: SseConnection | undefined;
+  try {
+    first = await openSse(f.port);
+    assert.equal(first.status, 200);
+
+    const second = await rawRequest(f.port, "/sse", {
+      headers: { ...bearer(TOKEN), host: `127.0.0.1:${f.port}` },
+      timeoutMs: 750,
+    });
+    assert.equal(second.status, 409);
+
+    const healthWhileOpen = await call(f.origin, "/healthz", { headers: bearer(TOKEN) });
+    assert.equal(JSON.parse(healthWhileOpen.body).connected, true);
+
+    await first.close();
+    first = undefined;
+    await waitForSseState(f.origin, false);
+
+    replacement = await openSse(f.port);
+    assert.equal(replacement.status, 200);
+  } finally {
+    await replacement?.close();
+    await first?.close();
+    await f.dispose();
+  }
+});
