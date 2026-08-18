@@ -2,7 +2,7 @@ import { useEffect, useState, type JSX } from "react";
 import { AlertTriangle, Download, Loader2 } from "lucide-react";
 import { Button } from "../atoms/Button";
 import { Cube } from "../atoms/Cube";
-import type { ChromiumStatus } from "../../types";
+import type { ChromiumStatus, SystemInfo } from "../../types";
 
 /**
  * Blocks the UI until the patched Chromium binary is present. Shown:
@@ -15,10 +15,12 @@ import type { ChromiumStatus } from "../../types";
  */
 export function ChromiumBootstrapModal(): JSX.Element | null {
   const [status, setStatus] = useState<ChromiumStatus | null>(null);
+  const [info, setInfo] = useState<SystemInfo | null>(null);
 
   useEffect(() => {
     if (!window.mktBrowser) return;
     void window.mktBrowser.chromium.status().then(setStatus);
+    void window.mktBrowser.system.info().then(setInfo);
     return window.mktBrowser.chromium.onStatus(setStatus);
   }, []);
 
@@ -45,7 +47,7 @@ export function ChromiumBootstrapModal(): JSX.Element | null {
           </div>
         </div>
 
-        <Body status={status} />
+        <Body status={status} enginePinned={Boolean(info?.compatibilityEnginePin)} />
       </div>
     </div>
   );
@@ -89,7 +91,13 @@ function subtitleFor(status: ChromiumStatus): string {
   }
 }
 
-function Body({ status }: { status: ChromiumStatus }): JSX.Element {
+function Body({
+  status,
+  enginePinned,
+}: {
+  status: ChromiumStatus;
+  enginePinned: boolean;
+}): JSX.Element {
   if (status.kind === "missing") {
     return (
       <div className="flex items-center gap-2 text-[12px] text-slate-400">
@@ -200,7 +208,7 @@ function Body({ status }: { status: ChromiumStatus }): JSX.Element {
           >
             Retry download
           </Button>
-          {status.engine === "cloakbrowser" ? (
+          {status.engine === "cloakbrowser" && !enginePinned ? (
             <>
               <Button
                 variant="secondary"

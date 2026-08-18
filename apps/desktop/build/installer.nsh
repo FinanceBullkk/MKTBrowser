@@ -27,6 +27,17 @@
 !macroend
 
 Function MktBrowserInspectInstallConflicts
+  nsExec::ExecToStack 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${MKT_BROWSER_FIREWALL_CHECK_OWNER_COMMAND}'
+  Pop $0
+  Pop $1
+  ${If} $0 == 17
+    StrCpy $1 "MKT Browser is already installed for another Windows user on this PC. Safe action: sign in as that user and uninstall MKT Browser first; existing firewall protection was not changed."
+    Return
+  ${ElseIf} $0 != 0
+    StrCpy $1 "Existing MKT Browser firewall ownership could not be verified safely (code $0). No firewall rule was changed."
+    Return
+  ${EndIf}
+
   InitPluginsDir
   File /oname=$PLUGINSDIR\windows-install-conflict-detection.ps1 "${PROJECT_DIR}\build\windows-install-conflict-detection.ps1"
   nsExec::ExecToStack 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-install-conflict-detection.ps1" -ExpectedBrowserPath "$INSTDIR\${APP_FILENAME}.exe" -ExpectedRelayPath "$LOCALAPPDATA\MKTTool-Relay\MKTTool-Relay.exe" -StartupDirectory "$SMSTARTUP" -RepairOwnedShortcuts'
@@ -104,6 +115,12 @@ FunctionEnd
   ${If} ${Errors}
     MessageBox MB_ICONSTOP "Administrator approval is required to install WebRTC protection. MKT Browser was not installed."
     Abort
+  ${ElseIf} $0 == 17
+    MessageBox MB_ICONSTOP "MKT Browser was installed concurrently for another Windows user. Existing firewall protection was not changed. Sign in as that user and uninstall MKT Browser before retrying."
+    Abort
+  ${ElseIf} $0 != 0
+    MessageBox MB_ICONSTOP "WebRTC protection installation failed (code $0). MKT Browser was not installed."
+    Abort
   ${EndIf}
   nsExec::ExecToStack 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${MKT_BROWSER_FIREWALL_VERIFY_COMMAND}'
   Pop $0
@@ -154,6 +171,12 @@ FunctionEnd
   ExecShellWait "runas" "powershell.exe" "-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${MKT_BROWSER_FIREWALL_UNINSTALL_COMMAND}" SW_HIDE $0
   ${If} ${Errors}
     MessageBox MB_ICONSTOP "Administrator approval is required to remove MKT Browser WebRTC protection. Uninstall was stopped."
+    Abort
+  ${ElseIf} $0 == 17
+    MessageBox MB_ICONSTOP "These WebRTC protection rules belong to another Windows user's MKT Browser installation. Uninstall was stopped without changing them."
+    Abort
+  ${ElseIf} $0 != 0
+    MessageBox MB_ICONSTOP "MKT Browser WebRTC protection removal failed (code $0). Uninstall was stopped."
     Abort
   ${EndIf}
   nsExec::ExecToStack 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${MKT_BROWSER_FIREWALL_VERIFY_ABSENT_COMMAND}'

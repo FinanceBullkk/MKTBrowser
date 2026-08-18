@@ -41,6 +41,7 @@ import {
 import { ChromiumBrowserDriver } from "./ChromiumBrowserDriver.ts";
 import { ChromiumBootstrap } from "./ChromiumBootstrap.ts";
 import { describeEngineStatus } from "./engine-runtime-info.ts";
+import { applyNavigationHardening, mainWindowOptions } from "./main-window-security.ts";
 import { loadOrCreateMcpToken } from "./mcpToken.ts";
 import { PRODUCT_APP_ID, PRODUCT_NAME, resolveProductUserDataPath } from "./productIdentity.ts";
 import { ExtensionsService } from "./extensions/ExtensionsService.ts";
@@ -54,10 +55,21 @@ import { probeProxyGeo, type ProxyGeoResult } from "./proxyGeo.ts";
 import { deleteBrowserProfile } from "./profile-deletion-lifecycle.ts";
 import { WindowsLocalInstallInspector } from "./windows-local-install-inspector.ts";
 import {
+  type CompatibilityEnginePin,
+  isDisposableUnpinnedEngineRun,
+  readCompatibilityActivationBlock,
+  readCompatibilityEnginePin,
+} from "./compatibility-engine-pin.ts";
+import { COMPATIBILITY_SMOKE_SWITCH } from "./compatibility-smoke-authorization.ts";
+import { runPackagedCompatibilitySmoke } from "./compatibility-smoke-cli.ts";
+import {
+  createIpcRuntimeRegistration,
+  type IpcRuntimeHandler,
+} from "./ipc-runtime-registration.ts";
+import {
   IPC,
   IPC_EVENTS,
   isIpcEventChannel,
-  isIpcInvokeChannel,
   type IpcEventChannel,
   type IpcInvokeChannel,
 } from "../shared/ipc-exposure-policy.ts";
@@ -99,17 +111,18 @@ let mcpAuthToken: string | null = null;
 let cachedSettings: AppSettings | null = null;
 let browserDriverReady = false;
 let switchToCftInFlight: Promise<ChromiumStatus> | null = null;
+let activeCompatibilityEnginePin: CompatibilityEnginePin | null = null;
 
-type IpcHandler = (event: IpcMainInvokeEvent, ...args: any[]) => unknown;
+const ipcRegistration = createIpcRuntimeRegistration<IpcMainInvokeEvent>({
+  register: (channel, handler) => ipcMain.handle(channel, handler),
+  isTrustedSender: (event) => Boolean(mainWindow && event.sender === mainWindow.webContents),
+});
 
-function handleIpc(channel: IpcInvokeChannel, handler: IpcHandler): void {
-  if (!isIpcInvokeChannel(channel)) throw new Error(`Unclassified IPC channel: ${channel}`);
-  ipcMain.handle(channel, (event, ...args) => {
-    if (!mainWindow || event.sender !== mainWindow.webContents) {
-      throw new Error(`Rejected IPC sender for ${channel}.`);
-    }
-    return handler(event, ...args);
-  });
+function handleIpc(
+  channel: IpcInvokeChannel,
+  handler: IpcRuntimeHandler<IpcMainInvokeEvent>,
+): void {
+  ipcRegistration.handle(channel, handler);
 }
 
 function sendToRenderer(channel: IpcEventChannel, payload: unknown): void {
@@ -118,7 +131,23 @@ function sendToRenderer(channel: IpcEventChannel, payload: unknown): void {
 }
 
 function createChromiumBootstrap(engine: AppSettings["browserEngine"]): ChromiumBootstrap {
-  const bootstrap = new ChromiumBootstrap({ engine });
+  const pin = activeCompatibilityEnginePin;
+  if (pin && pin.engineKind !== engine) {
+    throw new Error(
+      `The active compatibility set pins ${pin.engineKind}, but Settings selects ${engine}. Run installer repair instead of changing the engine independently.`,
+    );
+  }
+  const bootstrap = new ChromiumBootstrap({
+    engine,
+    pinnedManifest: pin
+      ? { version: pin.version, url: pin.url, sha256: pin.sha256, sizeBytes: pin.sizeBytes }
+      : undefined,
+    allowUnpinnedManifest: isDisposableUnpinnedEngineRun({
+      isPackaged: app.isPackaged,
+      environmentEnabled: process.env.MKT_BROWSER_ALLOW_UNPINNED_ENGINE === "1",
+      hasExplicitUserDataDir: app.commandLine.hasSwitch("user-data-dir"),
+    }),
+  });
   bootstrap.on("status", (status: ChromiumStatus) => {
     if (chromiumBootstrap === bootstrap) {
       sendToRenderer(IPC_EVENTS.CHROMIUM_STATUS, status);
@@ -135,25 +164,9 @@ function startChromiumBootstrap(bootstrap: ChromiumBootstrap): void {
 
 function createWindow(): void {
   const iconPath = resolveAppIcon();
-  mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 800,
-    minWidth: 900,
-    minHeight: 600,
-    titleBarStyle: "hiddenInset",
-    backgroundColor: "#0a0b0f",
-    icon: iconPath ?? undefined,
-    webPreferences: {
-      preload: join(__dirname, "../preload/index.cjs"),
-      sandbox: true,
-      contextIsolation: true,
-      nodeIntegration: false,
-      webSecurity: true,
-    },
-  });
+  mainWindow = new BrowserWindow(mainWindowOptions({ mainDir: __dirname, iconPath }));
 
-  mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  mainWindow.webContents.on("will-navigate", (event) => event.preventDefault());
+  applyNavigationHardening(mainWindow.webContents);
 
   if (process.env.ELECTRON_RENDERER_URL) {
     void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
@@ -185,6 +198,13 @@ if (!app.commandLine.hasSwitch("user-data-dir")) {
   mkdirSync(productUserData, { recursive: true });
   app.setPath("userData", productUserData);
 }
+const compatibilityActivationBlock =
+  process.platform === "win32"
+    ? readCompatibilityActivationBlock(process.env.LOCALAPPDATA ?? "")
+    : null;
+const compatibilitySmokeAuthorizationId = app.commandLine.getSwitchValue(
+  COMPATIBILITY_SMOKE_SWITCH,
+);
 app.setAboutPanelOptions({
   applicationName: PRODUCT_NAME,
   applicationVersion: app.getVersion(),
@@ -193,6 +213,25 @@ app.setAboutPanelOptions({
 app
   .whenReady()
   .then(async () => {
+    if (compatibilitySmokeAuthorizationId) {
+      try {
+        await runPackagedCompatibilitySmoke({
+          authorizationId: compatibilitySmokeAuthorizationId,
+          localAppData: process.env.LOCALAPPDATA ?? "",
+          userData: app.getPath("userData"),
+        });
+        app.exit(0);
+      } catch (error) {
+        process.stderr.write(`Compatibility smoke failed: ${(error as Error).message}\n`);
+        app.exit(1);
+      }
+      return;
+    }
+    if (compatibilityActivationBlock) {
+      dialog.showErrorBox("MKT Browser update incomplete", compatibilityActivationBlock);
+      app.quit();
+      return;
+    }
     // macOS: explicitly set the dock icon. In packaged .app bundles macOS
     // picks the .icns automatically, but in dev (running ./node_modules/.bin/electron)
     // the dock shows the generic Electron icon unless we override it here.
@@ -279,6 +318,18 @@ app
 
     settingsStore = new SettingsStore(defaultSettingsPath(userData));
     cachedSettings = await settingsStore.load();
+    activeCompatibilityEnginePin =
+      process.platform === "win32"
+        ? readCompatibilityEnginePin(process.env.LOCALAPPDATA ?? "")
+        : null;
+    if (
+      activeCompatibilityEnginePin &&
+      cachedSettings.browserEngine !== activeCompatibilityEnginePin.engineKind
+    ) {
+      cachedSettings = await settingsStore.update({
+        browserEngine: activeCompatibilityEnginePin.engineKind,
+      });
+    }
 
     profileManager = new ProfileManager({
       dbPath: join(dataRoot, "profiles.db"),
@@ -473,6 +524,15 @@ app
     // Settings IPC
     handleIpc(IPC.SETTINGS_GET, () => settingsStore.load());
     handleIpc(IPC.SETTINGS_UPDATE, async (_e, patch: Partial<AppSettings>) => {
+      if (
+        patch.browserEngine &&
+        activeCompatibilityEnginePin &&
+        patch.browserEngine !== activeCompatibilityEnginePin.engineKind
+      ) {
+        throw new Error(
+          `Compatibility set ${activeCompatibilityEnginePin.sequence} pins ${activeCompatibilityEnginePin.engineKind}. Install another signed compatibility set instead of switching engines independently.`,
+        );
+      }
       cachedSettings = await settingsStore.update(patch);
       return cachedSettings;
     });
@@ -485,6 +545,11 @@ app
     handleIpc(IPC.CHROMIUM_RETRY, () => chromiumBootstrap.retry());
     handleIpc(IPC.CHROMIUM_SWITCH_TO_CFT, async () => {
       if (switchToCftInFlight) return switchToCftInFlight;
+      if (activeCompatibilityEnginePin && activeCompatibilityEnginePin.engineKind !== "cft") {
+        throw new Error(
+          `Compatibility set ${activeCompatibilityEnginePin.sequence} pins ${activeCompatibilityEnginePin.engineKind}; the fallback engine is locked until another signed set is installed.`,
+        );
+      }
       if (chromiumBootstrap.getEngine() !== "cloakbrowser") {
         return chromiumBootstrap.getStatus();
       }
@@ -769,7 +834,15 @@ app
       mcpAuthToken: httpTransport ? mcpAuthToken : null,
       appVersion: app.getVersion(),
       platform: process.platform,
+      compatibilityEnginePin: activeCompatibilityEnginePin
+        ? {
+            sequence: activeCompatibilityEnginePin.sequence,
+            engineKind: activeCompatibilityEnginePin.engineKind,
+            version: activeCompatibilityEnginePin.version,
+          }
+        : null,
     }));
+    ipcRegistration.assertComplete();
 
     createWindow();
 

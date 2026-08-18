@@ -7,6 +7,8 @@ import { ExtensionsSection } from "./ExtensionsSection";
 import { EmojiField } from "./EmojiField";
 import { BrowserSection } from "./BrowserSection";
 import { parseProxyString } from "../../lib/parseProxy";
+import { confirm } from "../atoms/Modal";
+import { shouldConfirmProxyRemoval } from "../../lib/proxyRemovalSafety";
 import {
   Field,
   Input,
@@ -246,7 +248,22 @@ export function ProfileEditSheet({ profile, onSaved }: Props): JSX.Element {
                 <input
                   type="checkbox"
                   checked={form.proxyEnabled}
-                  onChange={(e) => update("proxyEnabled", e.target.checked)}
+                  onChange={(e) => {
+                    const nextEnabled = e.target.checked;
+                    if (shouldConfirmProxyRemoval(profile.proxy, nextEnabled)) {
+                      void confirm({
+                        title: "Remove this profile's proxy?",
+                        body: "The profile keeps its cookies and fingerprint, but future launches will use the host IP directly. Remove the proxy only if that identity change is intentional.",
+                        confirmLabel: "Remove proxy",
+                        cancelLabel: "Keep proxy",
+                        destructive: true,
+                      }).then((accepted) => {
+                        if (accepted) update("proxyEnabled", false);
+                      });
+                      return;
+                    }
+                    update("proxyEnabled", nextEnabled);
+                  }}
                   className="w-3.5 h-3.5 rounded accent-purple-500"
                 />
                 Use proxy

@@ -12,6 +12,7 @@ import {
   PROFILE_MANAGEMENT_ACCESS_POLICY,
   isMcpToolAllowed,
 } from "../../../../packages/mcp-server/src/tool-exposure-policy.ts";
+import { applyNavigationHardening, mainWindowOptions } from "./main-window-security.ts";
 
 const REPO_ROOT = new URL("../../../../", import.meta.url);
 
@@ -28,35 +29,95 @@ test("uses a supported Electron line consistently", () => {
   assert.match(builder, new RegExp(`^electronVersion: ${electron.replace(/^\^/, "")}$`, "m"));
 });
 
-test("sandboxes the renderer and applies a restrictive CSP", () => {
-  const main = source("apps/desktop/src/main/index.ts");
-  assert.match(main, /sandbox:\s*true/);
-  assert.match(main, /contextIsolation:\s*true/);
-  assert.match(main, /nodeIntegration:\s*false/);
-  assert.match(main, /webSecurity:\s*true/);
-  assert.match(main, /preload\/index\.cjs/);
-  assert.match(main, /setWindowOpenHandler\(\(\) => \(\{ action: "deny" \}\)\)/);
-  assert.match(main, /will-navigate/);
+test("sandboxes the renderer", () => {
+  // Asserts the object Electron is actually handed, not that a string appears in a file. The
+  // previous version regex-matched index.ts, which would have passed with the options sitting in
+  // dead code or overridden a line later.
+  const options = mainWindowOptions({ mainDir: "/app/out/main", iconPath: null });
+  const prefs = options.webPreferences;
 
+  assert.ok(prefs, "The main window must declare webPreferences.");
+  assert.equal(prefs.sandbox, true);
+  assert.equal(prefs.contextIsolation, true);
+  assert.equal(prefs.nodeIntegration, false);
+  assert.equal(prefs.webSecurity, true);
+  assert.match(String(prefs.preload).replaceAll("\\", "/"), /\/preload\/index\.cjs$/);
+
+  // Nothing may re-enable Node in the renderer through a side door.
+  assert.equal(prefs.nodeIntegrationInWorker ?? false, false);
+  assert.equal(prefs.nodeIntegrationInSubFrames ?? false, false);
+  assert.equal(prefs.allowRunningInsecureContent ?? false, false);
+  assert.equal(prefs.experimentalFeatures ?? false, false);
+});
+
+test("refuses renderer-initiated navigation and window opening", () => {
+  // Drives the real hardening function with a recording stub and checks the resulting behavior,
+  // rather than matching the source text of the call.
+  const listeners = new Map<string, (event: { preventDefault: () => void }) => void>();
+  let windowOpenHandler: (() => { action: string }) | null = null;
+
+  applyNavigationHardening({
+    setWindowOpenHandler(handler: () => { action: string }) {
+      windowOpenHandler = handler;
+    },
+    on(channel: string, listener: (event: { preventDefault: () => void }) => void) {
+      listeners.set(channel, listener);
+    },
+    // The stub only implements the surface applyNavigationHardening touches.
+  } as unknown as Parameters<typeof applyNavigationHardening>[0]);
+
+  assert.ok(windowOpenHandler, "A window-open handler must be installed.");
+  assert.deepEqual((windowOpenHandler as () => { action: string })(), { action: "deny" });
+
+  const willNavigate = listeners.get("will-navigate");
+  assert.ok(willNavigate, "A will-navigate listener must be installed.");
+  let prevented = false;
+  willNavigate({
+    preventDefault() {
+      prevented = true;
+    },
+  });
+  assert.equal(prevented, true, "will-navigate must be cancelled.");
+});
+
+test("applies a restrictive CSP", () => {
   const html = source("apps/desktop/src/renderer/index.html");
   for (const directive of ["default-src 'self'", "object-src 'none'", "base-uri 'none'"]) {
     assert.ok(html.includes(directive), `CSP is missing ${directive}`);
   }
 });
 
+test("constructs exactly one BrowserWindow, through the audited options builder", () => {
+  // The structural assertions above describe one window. This is what stops a second window being
+  // added later with its own inline, unaudited webPreferences.
+  const main = source("apps/desktop/src/main/index.ts");
+  assert.equal(
+    [...main.matchAll(/new BrowserWindow\(/g)].length,
+    1,
+    "Only one BrowserWindow may be constructed.",
+  );
+  assert.match(main, /new BrowserWindow\(mainWindowOptions\(/);
+  assert.doesNotMatch(main, /webPreferences:/);
+});
+
 test("keeps preload and main IPC channels inside the classified inventory", () => {
-  const preload = source("apps/desktop/src/preload/index.ts");
+  const preload = source("apps/desktop/src/preload/create-mkt-browser-api.ts");
   const main = source("apps/desktop/src/main/index.ts");
   assert.deepEqual(
-    uniqueMatches(preload, /invoke\(IPC\.([A-Z0-9_]+)/g).sort(),
+    uniqueMatches(preload, /bridge\.invoke\(IPC\.([A-Z0-9_]+)/g).sort(),
     Object.keys(IPC).sort(),
   );
   assert.deepEqual(
-    uniqueMatches(preload, /subscribe\(IPC_EVENTS\.([A-Z0-9_]+)/g).sort(),
+    uniqueMatches(preload, /bridge\.subscribe\(IPC_EVENTS\.([A-Z0-9_]+)/g).sort(),
+    Object.keys(IPC_EVENTS).sort(),
+  );
+  assert.deepEqual(
+    uniqueMatches(main, /sendToRenderer\(IPC_EVENTS\.([A-Z0-9_]+)/g).sort(),
     Object.keys(IPC_EVENTS).sort(),
   );
   assert.deepEqual(Object.values(IPC).sort(), Object.keys(IPC_INVOKE_EXPOSURE).sort());
   assert.deepEqual(Object.values(IPC_EVENTS).sort(), Object.keys(IPC_EVENT_EXPOSURE).sort());
+  assert.match(main, /ipcRegistration\.assertComplete\(\)/);
   assert.equal(
     [...main.matchAll(/ipcMain\.handle\(/g)].length,
     1,

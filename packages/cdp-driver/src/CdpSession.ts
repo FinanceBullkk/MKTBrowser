@@ -385,12 +385,18 @@ export class CdpSession {
     const dot = method.indexOf(".");
     const domain = dot > 0 ? method.slice(0, dot) : "";
     const isEnable = dot > 0 && method.slice(dot + 1) === "enable";
+    const enabledAtConnect = this.connectEnabledDomains.has(domain);
+
+    if (isEnable && !enabledAtConnect && !SAFE_PAIRED_DISABLE_DOMAINS.has(domain)) {
+      throw new Error(
+        `Refusing ${method} in safe mode: ${domain} is not approved for temporary enable/disable. ` +
+          `Raw CDP safe mode only enables domains with a reviewed paired disable.`,
+      );
+    }
+
     // A "tracked" enable is one the safe layer is responsible for undoing:
     // an allowlisted domain that wasn't already enabled at connect.
-    const tracked =
-      isEnable &&
-      SAFE_PAIRED_DISABLE_DOMAINS.has(domain) &&
-      !this.connectEnabledDomains.has(domain);
+    const tracked = isEnable && SAFE_PAIRED_DISABLE_DOMAINS.has(domain) && !enabledAtConnect;
 
     if (tracked && this.opts.engine === "cloakbrowser" && CLOAK_RISKY_ENABLE_DOMAINS.has(domain)) {
       throw new Error(

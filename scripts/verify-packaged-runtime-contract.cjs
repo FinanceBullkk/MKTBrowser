@@ -298,7 +298,15 @@ async function main() {
     }
     try {
       if (engineFixture) await removeSystemChromeEngineFixture(engineFixture);
-      await rm(userData, { recursive: true, force: true });
+      // Windows can release Electron helper-process handles shortly after the parent exits. Keep
+      // cleanup strict, but tolerate that bounded release window instead of reporting a false
+      // packaged-contract failure on a transient EBUSY.
+      await rm(userData, {
+        recursive: true,
+        force: true,
+        maxRetries: 10,
+        retryDelay: 200,
+      });
     } catch (error) {
       cleanupErrors.push(error);
     }
@@ -313,8 +321,27 @@ async function main() {
 
 async function callTool(baseUrl, token, name, toolArgs) {
   const result = await callToolResult(baseUrl, token, name, toolArgs);
-  assert.equal(result.isError, false, `${name} returned an MCP tool error.`);
+  // The body carries the tool's own diagnostics, and this runs on a CI machine nobody can attach a
+  // debugger to. Asserting without it reduced a real failure to "launch_profile returned an MCP
+  // tool error" with nothing to act on, so the run had to be repeated just to learn what broke.
+  assert.equal(
+    result.isError,
+    false,
+    `${name} returned an MCP tool error: ${describeToolBody(result.body)}`,
+  );
   return result.body;
+}
+
+/** Bounded so a large diagnostic payload stays readable in a CI log instead of flooding it. */
+function describeToolBody(body) {
+  let text;
+  try {
+    text = JSON.stringify(body);
+  } catch {
+    text = String(body);
+  }
+  if (typeof text !== "string") return String(body);
+  return text.length > 2000 ? `${text.slice(0, 2000)}… (truncated)` : text;
 }
 
 async function listTools(baseUrl, token) {
@@ -336,7 +363,11 @@ async function callToolResult(baseUrl, token, name, toolArgs) {
     params: { name, arguments: toolArgs },
   });
   const text = response.result?.content?.find((item) => item.type === "text")?.text;
-  assert.equal(typeof text, "string", `${name} returned no text body.`);
+  assert.equal(
+    typeof text,
+    "string",
+    `${name} returned no text body: ${describeToolBody(response.result)}`,
+  );
   return { body: JSON.parse(text), isError: response.result?.isError === true };
 }
 

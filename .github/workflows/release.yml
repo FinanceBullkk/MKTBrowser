@@ -44,20 +44,13 @@ jobs:
       - name: Lint
         run: yarn lint
 
-      - name: W01 and W02 guards
-        run: yarn workspace @mktbrowser/desktop test:w02
-
-      - name: MKB-01 compatibility tests
-        run: yarn workspace @mktbrowser/desktop test:mkb01
-
-      - name: MKB-01E security guards
-        run: yarn workspace @mktbrowser/desktop test:mkb01e
-
-      - name: MKB-02 managed-mode guards
-        run: yarn workspace @mktbrowser/desktop test:mkb02
-
-      - name: Windows packaging guards
-        run: yarn workspace @mktbrowser/desktop test:packaging
+      # One aggregate step rather than one step per suite. Listing suites individually here meant CI
+      # silently lagged the repository: MKB-03 (permanent profile deletion, engine pinning), the
+      # settings-store suite, and the workspace-quality contract test all existed and passed locally
+      # while never running on any push. `test:installer` is the single place suites are registered,
+      # so a new suite is covered by CI the moment it is added there.
+      - name: Installer and runtime guard suites
+        run: yarn test:installer
 
       - name: Typecheck
         run: yarn typecheck
@@ -71,7 +64,13 @@ jobs:
       - name: Build combined Windows installer
         if: github.event_name == 'workflow_dispatch'
         env:
-          MKTTOOL_RELEASE_COOKIE: ${{ secrets.MKTTOOL_RELEASE_COOKIE }}
+          MKTTOOL_RELEASE_TOKEN: ${{ secrets.MKTTOOL_RELEASE_TOKEN }}
+          # Named explicitly rather than defaulted: packaging must never fall back to resolving an
+          # engine "latest", because a different Chromium moves the measured fingerprint of every
+          # profile at once.
+          # Absolute: the packaging script runs with the desktop workspace as its working
+          # directory, so a repo-relative path would resolve one level too deep.
+          MKT_BROWSER_ENGINE_RELEASE_FILE: ${{ github.workspace }}/apps/desktop/windows-engine-release.json
         run: yarn workspace @mktbrowser/desktop build:win
 
       - name: Upload combined Windows installer

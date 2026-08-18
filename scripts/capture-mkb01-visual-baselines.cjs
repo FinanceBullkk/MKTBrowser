@@ -98,7 +98,10 @@ async function waitForTarget(port, child) {
       const targets = await fetch(`http://127.0.0.1:${port}/json/list`).then((r) => r.json());
       const target = targets.find((item) => item.type === "page");
       if (target?.webSocketDebuggerUrl) return target;
-    } catch {}
+    } catch {
+      // DevTools is not listening yet. Every failure before the deadline is expected; the
+      // throw below is what reports an endpoint that never came up.
+    }
     await delay(200);
   }
   throw new Error("Timed out waiting for the Electron renderer DevTools target.");

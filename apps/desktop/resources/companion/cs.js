@@ -25,7 +25,7 @@
         JSON.stringify({ id: id, n: Date.now() }),
       );
       return true;
-    } catch (e) {
+    } catch {
       return false;
     }
   }

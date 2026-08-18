@@ -42,9 +42,11 @@ profiles on the operator device.
   pins the locally verified, unpublished Relay v12 archive, which accepts Browser contract v4. The
   installer also persists its conflict detector for runtime setup checks; contract v4 advertises
   `local-install-ready-v1` only after expected process, fixed-port, MultiZen-process, and startup
-  ownership pass. The complete Node 22 installer suite passes 97/97, packaging contracts pass 24/24,
+  ownership pass. The supported topology is one Windows operating-system user per PC; a foreign
+  per-user installation is rejected before firewall mutation, and cross-user operation is not a
+  release gate. The complete Node 22 installer suite passes 97/97, packaging contracts pass 24/24,
   and typecheck, lint, and the production Electron bundle pass. Operational distribution remains
-  blocked until the immutable v12 object is published and the human Windows gates pass.
+  blocked until the immutable v12 object is published and the remaining human Windows gates pass.
 - MKB-03 Browser profile deletion is implemented as a separate in-app lifecycle. Contract version
   `4` removes `delete_profile` from MCP, and profile schema version `3` records incomplete deletion
   for crash-safe retry. The operator must type `DELETE <full profile id>`; active launch/close work
@@ -186,6 +188,17 @@ license and checksum before operational use.
 - [MKB-W01 Windows product isolation](docs/mkb-w01-windows-product-isolation.md)
 - [MKB-W02 Windows internal clean break](docs/mkb-w02-windows-internal-clean-break.md)
 - [Deferred MKB-07 Apple Silicon verification runbook](docs/mkb-00-apple-silicon-verification.md)
+
+### Change history
+
+This repository keeps no changelog of its own. Behaviour changes, including ones that affect an
+operator's identity, are recorded in the MKTTool repository's `docs/project-changelog.md`, which
+covers the product as a whole — MKTTool is the console, this is its execution layer, and a change
+here usually lands with a matching change there.
+
+Note when checking whether a build is affected by something recorded there: this repository *is*
+versioned and tagged (`v0.3.1` at the time of writing), while MKTTool is not, so a changelog entry
+naming a build range is naming **these** tags.
 
 ## Upstream and license
 

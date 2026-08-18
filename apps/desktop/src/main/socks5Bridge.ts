@@ -156,6 +156,18 @@ async function handleSocksClient(client: Socket, upstream: ProxyConfig): Promise
   const portBuf = await reader.read(2);
   const targetPort = portBuf.readUInt16BE(0);
 
+  // The host string is interpolated into the upstream HTTP CONNECT request head, which is joined
+  // with CRLF. A name carrying CR or LF would append attacker-chosen lines to the request the
+  // operator's real proxy receives — header injection on the bridge→proxy hop. Chromium never emits
+  // such a name, but this listener accepts unauthenticated connections from any local process, so
+  // the guard belongs here rather than in the caller. Rejected for both upstream types: a hostname
+  // outside this character set is never legitimate.
+  if (!isForwardableHost(targetHost)) {
+    client.write(replyBuffer(0x08)); // address type not supported
+    client.end();
+    return;
+  }
+
   // 3. Open the upstream tunnel.
   let upstreamSock: Socket;
   try {
@@ -190,6 +202,18 @@ async function handleSocksClient(client: Socket, upstream: ProxyConfig): Promise
   client.once("close", cleanup);
   upstreamSock.once("error", cleanup);
   upstreamSock.once("close", cleanup);
+}
+
+/**
+ * Hostnames and IP literals only — the characters that may legitimately appear in a SOCKS5
+ * destination. Deliberately an allowlist rather than a CR/LF denylist: the value crosses into an
+ * HTTP request head, and every future separator someone invents is excluded by default this way.
+ * Bracketed IPv6 literals are permitted because this module produces them itself for ATYP 0x04.
+ */
+function isForwardableHost(host: string): boolean {
+  if (host.length === 0 || host.length > 255) return false;
+  if (host.startsWith("[") && host.endsWith("]")) return /^\[[0-9a-fA-F:]+\]$/.test(host);
+  return /^[A-Za-z0-9._-]+$/.test(host);
 }
 
 function replyBuffer(status: number): Buffer {
@@ -234,7 +258,6 @@ async function connectViaHttpConnect(
     throw new Error(`upstream HTTP CONNECT failed: ${statusLine.trim()}`);
   }
   // Drain the rest of the headers — terminator is an empty line.
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     const line = await readLine(reader);
     if (line === "") break;
@@ -298,8 +321,14 @@ class BufferedReader {
   private readonly onData: (chunk: Buffer) => void;
   private readonly onClose: () => void;
   private readonly onError: (e: Error) => void;
+  // Declared as a field rather than a constructor parameter property: parameter properties are the
+  // one TypeScript construct `node --experimental-strip-types` cannot handle, and that is how the
+  // desktop test scripts load main-process modules. This file was the only one in src/main using
+  // one, which is why it could not be unit-tested at all.
+  private readonly sock: Socket;
 
-  constructor(private readonly sock: Socket) {
+  constructor(sock: Socket) {
+    this.sock = sock;
     this.onData = (chunk: Buffer) => {
       if (this.detached) return;
       this.buf = Buffer.concat([this.buf, chunk]);
@@ -369,7 +398,6 @@ class BufferedReader {
 
 async function readLine(reader: BufferedReader): Promise<string> {
   const out: number[] = [];
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     const b = await reader.read(1);
     const ch = b[0] ?? 0;

@@ -1,9 +1,8 @@
 import { rm, stat } from "node:fs/promises";
-import { join } from "node:path";
 import type { ProfileManager } from "@mktbrowser/profile-manager";
 import type { ExtensionConfig, Profile } from "@mktbrowser/types";
 import { unpackToStore } from "./crxPipeline.ts";
-import { gcEntry } from "./extensionStore.ts";
+import { gcEntry, resolveProfileExtensionDir } from "./extensionStore.ts";
 import { downloadCrxById, parseExtensionId } from "./webstoreDownload.ts";
 
 /**
@@ -105,6 +104,7 @@ export class ExtensionsService {
         source: crxPath,
         storeRoot: this.storeRoot,
         origin: "web-store",
+        expectedId: id,
       });
     } finally {
       await rm(crxPath, { force: true }).catch(() => {});
@@ -187,7 +187,8 @@ export class ExtensionsService {
       const allRefs = this.pm.allExtensionRefs().map((r) => r.ext);
       await gcEntry(this.storeRoot, cfg.id, cfg.version, allRefs);
     } else if (cfg.dir) {
-      await rm(join(profile.dataDir, cfg.dir), { recursive: true, force: true }).catch(() => {});
+      const ownedDir = resolveProfileExtensionDir(profile.dataDir, cfg.dir);
+      await rm(ownedDir, { recursive: true, force: true }).catch(() => {});
     }
   }
 }

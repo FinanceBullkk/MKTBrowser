@@ -3,7 +3,8 @@ param(
     [Parameter(Mandatory = $true)][string]$ExpectedRelayPath,
     [Parameter(Mandatory = $true)][string]$StartupDirectory,
     [switch]$RepairOwnedShortcuts,
-    [switch]$RuntimeInspection
+    [switch]$RuntimeInspection,
+    [string]$InventoryPath
 )
 
 $ErrorActionPreference = "Stop"
@@ -40,12 +41,19 @@ function Assert-Named-Processes(
     [string]$ExpectedPath,
     [bool]$AllowExpectedPath,
     [int]$Code,
-    [string]$Label
+    [string]$Label,
+    [object]$Inventory
 ) {
-    $processName = [IO.Path]::GetFileNameWithoutExtension($ExecutableName)
-    $processes = @(Get-Process -Name $processName -ErrorAction SilentlyContinue)
+    if ($null -ne $Inventory) {
+        $processes = @($Inventory.Processes | Where-Object {
+            [IO.Path]::GetFileName($_.Path) -ieq $ExecutableName
+        })
+    } else {
+        $processName = [IO.Path]::GetFileNameWithoutExtension($ExecutableName)
+        $processes = @(Get-Process -Name $processName -ErrorAction SilentlyContinue)
+    }
     foreach ($process in $processes) {
-        $executablePath = Process-Path $process.Id
+        $executablePath = if ($null -ne $Inventory) { $process.Path } else { Process-Path $process.Id }
         if ([string]::IsNullOrWhiteSpace($executablePath)) {
             Stop-With $Code "$Label is running, but its executable ownership could not be verified. Safe action: close it in Task Manager, then retry."
         }
@@ -58,7 +66,18 @@ function Assert-Named-Processes(
     }
 }
 
-function Tcp-Listeners {
+function Has-Named-Process([string]$ExecutableName, [object]$Inventory) {
+    if ($null -ne $Inventory) {
+        return @($Inventory.Processes | Where-Object {
+            [IO.Path]::GetFileName($_.Path) -ieq $ExecutableName
+        }).Count -gt 0
+    }
+    $processName = [IO.Path]::GetFileNameWithoutExtension($ExecutableName)
+    return @(Get-Process -Name $processName -ErrorAction SilentlyContinue).Count -gt 0
+}
+
+function Tcp-Listeners([object]$Inventory) {
+    if ($null -ne $Inventory) { return @($Inventory.Listeners) }
     if ([string]::IsNullOrWhiteSpace($env:SystemRoot)) {
         throw "SystemRoot is unavailable."
     }
@@ -96,14 +115,19 @@ function Assert-Listener(
 ) {
     $listeners = @($Listeners | Where-Object { $_.LocalPort -eq $Port })
     foreach ($listener in $listeners) {
-        $ownerPath = Process-Path $listener.OwningProcess
+        $ownerPath = if ($null -ne $listener.OwnerPath) {
+            $listener.OwnerPath
+        } else {
+            Process-Path $listener.OwningProcess
+        }
         if (-not $ownerPath -or -not $AllowExpectedPath -or -not (Same-Path $ownerPath $ExpectedPath)) {
             Stop-With $Code "Port $Port is already used by an unverified process, so the $Label layer cannot start safely. Safe action: identify and close that listener, then retry."
         }
     }
 }
 
-function Shortcut-Targets([string]$Directory) {
+function Shortcut-Targets([string]$Directory, [object]$Inventory) {
+    if ($null -ne $Inventory) { return @($Inventory.Shortcuts) }
     if (-not (Test-Path -LiteralPath $Directory)) { return @() }
     $shell = New-Object -ComObject WScript.Shell
     try {
@@ -154,19 +178,28 @@ function Repair-OwnedShortcuts([object[]]$Duplicates, [string]$Label) {
 }
 
 try {
+    $inventory = $null
+    if (-not [string]::IsNullOrWhiteSpace($InventoryPath)) {
+        $inventory = Get-Content -LiteralPath $InventoryPath -Raw | ConvertFrom-Json
+        if ($null -eq $inventory.Processes -or
+            $null -eq $inventory.Listeners -or
+            $null -eq $inventory.Shortcuts) {
+            throw "invalid inventory"
+        }
+    }
     $allowExpectedBrowser = $RuntimeInspection.IsPresent
-    Assert-Named-Processes "MKTBrowser.exe" $ExpectedBrowserPath $allowExpectedBrowser 20 "MKT Browser"
-    Assert-Named-Processes "MKTTool-Relay.exe" $ExpectedRelayPath $true 21 "MKTTool Relay"
+    Assert-Named-Processes "MKTBrowser.exe" $ExpectedBrowserPath $allowExpectedBrowser 20 "MKT Browser" $inventory
+    Assert-Named-Processes "MKTTool-Relay.exe" $ExpectedRelayPath $true 21 "MKTTool Relay" $inventory
 
-    if (@(Get-Process -Name "MultiZen" -ErrorAction SilentlyContinue).Count -gt 0) {
+    if (Has-Named-Process "MultiZen.exe" $inventory) {
         Stop-With 24 "MultiZen is running. Safe action: close MultiZen first; its profiles and data will be preserved."
     }
 
-    $listeners = @(Tcp-Listeners)
+    $listeners = @(Tcp-Listeners $inventory)
     Assert-Listener $listeners 47821 $ExpectedRelayPath $true 22 "Relay"
     Assert-Listener $listeners 47822 $ExpectedBrowserPath $allowExpectedBrowser 23 "Browser MCP"
 
-    $shortcuts = Shortcut-Targets $StartupDirectory
+    $shortcuts = Shortcut-Targets $StartupDirectory $inventory
     $browserDuplicates = @(Assert-Shortcuts $shortcuts "MKTBrowser.exe" $ExpectedBrowserPath (Join-Path $StartupDirectory "MKT Browser.lnk") 25 "MKT Browser")
     $relayDuplicates = @(Assert-Shortcuts $shortcuts "MKTTool-Relay.exe" $ExpectedRelayPath (Join-Path $StartupDirectory "MKTTool Relay.lnk") 26 "MKTTool Relay")
 

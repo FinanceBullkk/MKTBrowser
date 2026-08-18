@@ -181,9 +181,36 @@ export class HttpTransport {
         res.writeHead(503).end("mcp not started");
         return;
       }
+      if (this.sseTransport) {
+        res.writeHead(409).end("an SSE stream is already open");
+        return;
+      }
       const transport = new SSEServerTransport("/messages", res);
       this.sseTransport = transport;
-      await this.sseServer.connect(transport);
+      const release = (): void => {
+        if (this.sseTransport === transport) this.sseTransport = null;
+      };
+      // The SDK owns the transport's onclose callback. Observe the response
+      // itself so the slot is released when the client disconnects, allowing a
+      // later client to reconnect without replacing a live stream.
+      res.once("close", release);
+      try {
+        await this.sseServer.connect(transport);
+        const sdkOnClose = transport.onclose;
+        transport.onclose = () => {
+          try {
+            sdkOnClose?.();
+          } finally {
+            release();
+          }
+        };
+      } catch (e) {
+        release();
+        await transport.close().catch(() => {});
+        if (!res.headersSent) {
+          res.writeHead(500).end((e as Error).message);
+        }
+      }
       // SSE keeps the response open
       return;
     }

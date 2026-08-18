@@ -36,6 +36,7 @@ test("keeps per-user install and elevates only the firewall transaction", () => 
   assert.match(installer, /ExecShellWait "runas"/);
   for (const commandName of [
     "CHECK_PROFILES",
+    "CHECK_OWNER",
     "INSTALL",
     "UNINSTALL",
     "VERIFY",
@@ -44,7 +45,7 @@ test("keeps per-user install and elevates only the firewall transaction", () => 
     assert.match(installer, new RegExp(`MKT_BROWSER_FIREWALL_${commandName}_COMMAND`));
   }
   assert.doesNotMatch(installer, /SetEnvironmentVariable/);
-  assert.equal(elevatedCommands.length, 5);
+  assert.equal(elevatedCommands.length, 6);
   for (const command of elevatedCommands) {
     assert.equal(embeddedScript(command), firewall);
     assert.match(command, /GzipStream/);
@@ -64,6 +65,8 @@ test("keeps per-user install and elevates only the firewall transaction", () => 
   assert.match(firewall, /\(\$rule\.Profiles -band 7\) -ne 7/);
   assert.match(firewall, /firewall-profile-disabled/);
   assert.match(firewall, /HNetCfg\.FwPolicy2/);
+  assert.match(firewall, /Assert-FirewallOwnership/);
+  assert.match(firewall, /different-user-owner/);
   assert.match(installer, /verification failed \(code \$0\)/);
   assert.match(installer, /Windows Security > Firewall & network protection/);
 });
@@ -75,7 +78,11 @@ test("removes only owned stale rules after verification and on uninstall", () =>
   const staleCleanupAt = firewall.lastIndexOf("Get-NetFirewallRule -Group $group");
   assert.ok(finalVerificationAt >= 0 && staleCleanupAt > finalVerificationAt);
   assert.match(Buffer.from(encodedCommands.install, "base64").toString("utf16le"), /-Mode Install/);
-  assert.match(Buffer.from(encodedCommands.uninstall, "base64").toString("utf16le"), /-Mode Uninstall/);
+  assert.match(Buffer.from(encodedCommands.checkOwner, "base64").toString("utf16le"), /-Mode CheckOwner/);
+  assert.match(
+    Buffer.from(encodedCommands.uninstall, "base64").toString("utf16le"),
+    /-Mode Uninstall[\s\S]*chromium[\s\S]*cft/,
+  );
   assert.match(Buffer.from(encodedCommands.verify, "base64").toString("utf16le"), /-Mode Verify/);
   assert.match(
     Buffer.from(encodedCommands.verifyAbsent, "base64").toString("utf16le"),
@@ -88,6 +95,20 @@ test("removes only owned stale rules after verification and on uninstall", () =>
       uninstallMacro.indexOf("windows-relay-cleanup.ps1"),
   );
   assert.match(installer, /pre-launch check refuses to run without the exact firewall rules/);
+});
+
+test("rejects another Windows user's firewall ownership before any mutation", () => {
+  const ownerCheckAt = firewall.indexOf("Assert-FirewallOwnership $cft $cloak");
+  const firstMutationAt = Math.min(
+    firewall.indexOf("Remove-NetFirewallRule"),
+    firewall.indexOf("New-NetFirewallRule"),
+  );
+  const preflight = installer.match(/Function MktBrowserInspectInstallConflicts[\s\S]*?FunctionEnd/)?.[0];
+  assert.ok(preflight);
+  assert.ok(ownerCheckAt >= 0 && firstMutationAt > ownerCheckAt);
+  assert.match(preflight, /MKT_BROWSER_FIREWALL_CHECK_OWNER_COMMAND/);
+  assert.match(preflight, /already installed for another Windows user/);
+  assert.match(installer, /\$0 == 17[\s\S]*firewall protection was not changed/);
 });
 
 test("runs Relay uninstall cleanup from a parser-safe script file", () => {

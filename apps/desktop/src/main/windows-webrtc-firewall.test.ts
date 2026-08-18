@@ -63,3 +63,86 @@ test("does not apply the Windows firewall boundary on other platforms", async ()
   });
   assert.equal(called, false);
 });
+
+/**
+ * The runtime-identity guard had no coverage: disabling the `chrome.exe` / expected-suffix check
+ * left all three tests above green. It is the check that ties the firewall rule to the binary the
+ * browser will actually launch. Without it, protection can be verified against one executable while
+ * a different one starts — the operator believes WebRTC is contained and it is not, which is an IP
+ * leak rather than a crash.
+ *
+ * Each case asserts the probe was **never run**: refusing after asking PowerShell would still have
+ * consulted the firewall about the wrong program.
+ *
+ * Paths are written with forward slashes and normalised by the module under test, which uses
+ * `win32.normalize`. Backslash literals do not survive this file's editing pipeline intact.
+ */
+const RUNTIME_CFT = "C:/MKTTool/MKTBrowser/chromium/cft/runtime/chrome.exe";
+
+async function probeWasRun(engine: "cft" | "cloakbrowser", binaryPath: string): Promise<boolean> {
+  let probed = false;
+  try {
+    await assertWindowsWebRtcFirewallProtection({
+      platform: "win32",
+      engine,
+      binaryPath,
+      execFile: async () => {
+        probed = true;
+        return { stdout: '{"protected":true}', stderr: "" };
+      },
+    });
+  } catch {
+    /* rejection is the expected outcome for the refusal cases */
+  }
+  return probed;
+}
+
+test("refuses a binary that is not chrome.exe, without probing the firewall", async () => {
+  for (const binaryPath of [
+    "C:/MKTTool/MKTBrowser/chromium/cft/runtime/notchrome.exe",
+    "C:/MKTTool/MKTBrowser/chromium/cft/runtime/chrome.com",
+    "C:/MKTTool/MKTBrowser/chromium/cft/runtime/chrome.exe.bak",
+    "C:/MKTTool/MKTBrowser/chromium/cft/runtime/",
+  ]) {
+    await assert.rejects(
+      assertWindowsWebRtcFirewallProtection({
+        platform: "win32",
+        engine: "cft",
+        binaryPath,
+        execFile: async () => ({ stdout: '{"protected":true}', stderr: "" }),
+      }),
+      /WebRTC protection/,
+      binaryPath,
+    );
+    assert.equal(await probeWasRun("cft", binaryPath), false, `firewall probed for ${binaryPath}`);
+  }
+});
+
+test("refuses a chrome.exe outside the expected engine runtime path", async () => {
+  /**
+   * The more interesting half: the file is genuinely named chrome.exe, so a name-only check passes.
+   * Only the expected-suffix comparison separates this engine's own runtime from any other Chromium
+   * on the machine, including one an attacker placed and one belonging to the *other* engine.
+   */
+  for (const binaryPath of [
+    "C:/Program Files/Google/Chrome/Application/chrome.exe",
+    "C:/MKTTool/MKTBrowser/chromium/cloakbrowser/runtime/chrome.exe",
+    "C:/Temp/chrome.exe",
+  ]) {
+    await assert.rejects(
+      assertWindowsWebRtcFirewallProtection({
+        platform: "win32",
+        engine: "cft",
+        binaryPath,
+        execFile: async () => ({ stdout: '{"protected":true}', stderr: "" }),
+      }),
+      /WebRTC protection/,
+      binaryPath,
+    );
+    assert.equal(await probeWasRun("cft", binaryPath), false, `firewall probed for ${binaryPath}`);
+  }
+
+  // Differential: the engine's own runtime is accepted, so the rejections above are attributable to
+  // the path rather than to the fixture.
+  assert.equal(await probeWasRun("cft", RUNTIME_CFT), true);
+});

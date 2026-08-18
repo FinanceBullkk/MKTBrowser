@@ -54,6 +54,10 @@ test("keeps desktop packaging metadata aligned with the product identity", () =>
     new URL("../../scripts/fetch-pinned-relay.cjs", import.meta.url),
     "utf8",
   );
+  const releaseWorkflow = readFileSync(
+    new URL("../../../../.github/workflows/release.yml", import.meta.url),
+    "utf8",
+  );
   const installerIncludeBytes = readFileSync(new URL("../../build/installer.nsh", import.meta.url));
   const installerInclude = installerIncludeBytes.toString("ascii");
   const relayCleanup = readFileSync(
@@ -108,6 +112,13 @@ test("keeps desktop packaging metadata aligned with the product identity", () =>
   // someone to paste a full-privilege credential into CI.
   assert.match(relayFetcher, /headers\.Authorization = `Bearer \$\{releaseToken\}`/);
   assert.doesNotMatch(relayFetcher, /MKTTOOL_RELEASE_COOKIE/);
+
+  // The fetcher reading the right variable is only half of it. CI shipped a stale
+  // `MKTTOOL_RELEASE_COOKIE` env line that nothing read, so the installer job ran with no
+  // Authorization header and the pinned Relay download failed closed — a break nobody saw because
+  // that job only runs on workflow_dispatch. Pin the name the workflow actually passes.
+  assert.match(releaseWorkflow, /MKTTOOL_RELEASE_TOKEN: \$\{\{ secrets\.MKTTOOL_RELEASE_TOKEN \}\}/);
+  assert.doesNotMatch(releaseWorkflow, /MKTTOOL_RELEASE_COOKIE/);
   assert.match(installerInclude, /install-relay\.ps1/);
   assert.match(installerInclude, /MKT Browser\.lnk/);
   assert.match(installerInclude, /"Publisher" "Techieslab"/);
