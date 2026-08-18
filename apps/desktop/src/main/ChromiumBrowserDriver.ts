@@ -577,7 +577,22 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     // all within one budget. Guarantees the profile is actually drivable before
     // launch() resolves, so an MCP navigate/extract right after launch can't
     // race a not-yet-ready CDP endpoint.
-    await waitForCdpSessionReady(port, session, 15000);
+    //
+    // The budget is wider under the packaged-contract verifier, and only there. 15s is measured
+    // against a developer machine where the engine is warm and the CPU is not shared. A GitHub
+    // Windows runner is neither, and on 19 August 2026 it lost the race at the first stage —
+    // Chromium had not opened the DevTools port at all. The identical commit passed on rerun, which
+    // is the worst outcome available: a check that is red often enough to be re-run is a check that
+    // teaches people to re-run rather than read, and that habit is what this repository keeps paying
+    // to remove.
+    //
+    // Widening it for everyone would be the wrong trade — the tight budget is what stops a real
+    // launch regression on an operator's machine from being absorbed as a slow start. So the wider
+    // number is scoped to the one process that already identifies itself, using the flag this file
+    // reads a few hundred lines above for the same purpose.
+    const readinessBudgetMs =
+      process.env.MKT_BROWSER_PACKAGED_CONTRACT_VERIFY === "1" ? 60_000 : 15_000;
+    await waitForCdpSessionReady(port, session, readinessBudgetMs);
     const trackedPid = selectPrimaryBrowserPid(
       await findBrowserProcessesUsingDataDir(browserDataDir),
       child.pid,
