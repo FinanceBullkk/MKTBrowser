@@ -70,38 +70,50 @@ type WindowWatcherShutdownReason =
   | { reason: "ZERO-PAGES"; targetTypes: Array<string | null> }
   | { reason: "CDP-UNREACHABLE"; errorCode: string };
 
-type ProfileShutdownReason =
+type ProfileLifecycleLogReason =
   | WindowWatcherShutdownReason["reason"]
   | "CLOSE-REQUESTED"
   | "CHILD-EXIT"
   | "Browser.close"
   | "SIGTERM"
-  | "SIGKILL";
+  | "SIGKILL"
+  | "BOOTSTRAP-START"
+  | "BOOTSTRAP-TARGET-START"
+  | "BOOTSTRAP-PROBE-START"
+  | "BOOTSTRAP-PROBE-DONE"
+  | "BOOTSTRAP-PROBE-FAILED"
+  | "BOOTSTRAP-TARGET-DONE"
+  | "BOOTSTRAP-DONE"
+  | "BOOTSTRAP-FAILED";
 
-interface ProfileShutdownDetails {
+interface ProfileLifecycleLogDetails {
   targetTypes?: Array<string | null>;
   errorCode?: string;
   exitCode?: number | null;
   signal?: NodeJS.Signals | null;
+  isRoot?: boolean;
+  targetType?: "page" | "iframe";
 }
 
-function writeProfileShutdownLog(
+type ProfileLifecycleLogContext = Pick<RunningProcess, "pid" | "port" | "startedAt">;
+
+function writeProfileLifecycleLog(
   profileId: ProfileId,
-  r: RunningProcess,
-  reason: ProfileShutdownReason,
-  details: ProfileShutdownDetails = {},
+  context: ProfileLifecycleLogContext,
+  reason: ProfileLifecycleLogReason,
+  details: ProfileLifecycleLogDetails = {},
 ): void {
   try {
     const nowMs = Date.now();
-    const elapsedSeconds = Number(((nowMs - Date.parse(r.startedAt)) / 1000).toFixed(3));
-    // Persist before shutdown escalation can kill the licensed engine and retain its seat.
+    const elapsedSeconds = Number(((nowMs - Date.parse(context.startedAt)) / 1000).toFixed(3));
+    // Persist before a hung launch or shutdown escalation can erase the last useful breadcrumb.
     appendFileSync(
       join(app.getPath("userData"), "profile-shutdown.log"),
       `${JSON.stringify({
         timestamp: new Date(nowMs).toISOString(),
         profileId,
-        pid: r.pid,
-        port: r.port,
+        pid: context.pid,
+        port: context.port,
         elapsedSeconds,
         reason,
         ...details,
@@ -685,6 +697,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       await findBrowserProcessesUsingDataDir(browserDataDir),
       child.pid,
     );
+    const launchLogContext: ProfileLifecycleLogContext = { pid: trackedPid, port, startedAt };
 
     // Apply per-target emulation: timezone, locale, Sec-CH-UA via
     // userAgentMetadata (works on stock Chromium — no patches needed!),
@@ -718,8 +731,18 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     // patching produces inconsistent values that detection vendors flag.
     const fingerprintScript =
       engine === "cloakbrowser" ? null : buildFingerprintPreloadScript(fp, { includeWebGl: true });
+    // Launch can hang before the window watcher exists, so durable stage pairs reveal the exact
+    // CDP await.
+    writeProfileLifecycleLog(profileId, launchLogContext, "BOOTSTRAP-START");
     await session
       .bootstrapTargets(async (send, ctx) => {
+        const targetDetails = { isRoot: ctx.isRoot, targetType: ctx.type };
+        writeProfileLifecycleLog(
+          profileId,
+          launchLogContext,
+          "BOOTSTRAP-TARGET-START",
+          targetDetails,
+        );
         // 1. WebRTC kill-switch / spoof when proxy is on.
         //    CloakBrowser handles WebRTC natively (webrtcScript is null).
         if (useProxy && webrtcScript) {
@@ -831,6 +854,12 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
         // Diagnostic: capture what the page actually sees AFTER overrides.
         // Logs once per session — if browserscan reports "Different browser
         // name", these values tell us whether our override landed.
+        writeProfileLifecycleLog(
+          profileId,
+          launchLogContext,
+          "BOOTSTRAP-PROBE-START",
+          targetDetails,
+        );
         try {
           const probe = await send<{
             result?: { value?: string };
@@ -850,16 +879,38 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
             })`,
             returnByValue: true,
           });
+          writeProfileLifecycleLog(
+            profileId,
+            launchLogContext,
+            "BOOTSTRAP-PROBE-DONE",
+            targetDetails,
+          );
           const value = probe?.result?.value;
           if (value) console.log("[mkt-browser] post-bootstrap probe:", value);
         } catch (e) {
+          writeProfileLifecycleLog(profileId, launchLogContext, "BOOTSTRAP-PROBE-FAILED", {
+            ...targetDetails,
+            errorCode: fetchErrorCode(e),
+          });
           // Non-fatal — diagnostic only.
           void e;
         }
+        writeProfileLifecycleLog(
+          profileId,
+          launchLogContext,
+          "BOOTSTRAP-TARGET-DONE",
+          targetDetails,
+        );
       })
-      .catch((e: unknown) => {
-        console.error("[mkt-browser] CDP bootstrap failed:", e);
-      });
+      .then(
+        () => writeProfileLifecycleLog(profileId, launchLogContext, "BOOTSTRAP-DONE"),
+        (e: unknown) => {
+          writeProfileLifecycleLog(profileId, launchLogContext, "BOOTSTRAP-FAILED", {
+            errorCode: fetchErrorCode(e),
+          });
+          console.error("[mkt-browser] CDP bootstrap failed:", e);
+        },
+      );
 
     // Wire the companion's "Add to MKT Browser" channel for this profile — scoped
     // to Web Store pages only (the host polls a DOM attribute there, never on
@@ -890,7 +941,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     const windowWatcher = createWindowWatcher(port, startedAt, (shutdownReason) => {
       if (signalledClose) return;
       signalledClose = true;
-      writeProfileShutdownLog(profileId, r, shutdownReason.reason, shutdownReason);
+      writeProfileLifecycleLog(profileId, r, shutdownReason.reason, shutdownReason);
       // Window closed but the process lingers (mac app lifecycle) — tell the GUI
       // we're terminating so the card stops showing "Stop" while it winds down.
       this.emit("running-changed", { kind: "closing", profileId });
@@ -921,7 +972,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       // Windows Chrome can hand off from a short-lived launcher to the real browser process.
       // Ignore that launcher exit while the tracked browser PID is still alive.
       if (record.pid !== child.pid && isPidAlive(record.pid)) return;
-      writeProfileShutdownLog(profileId, record, "CHILD-EXIT", { exitCode, signal });
+      writeProfileLifecycleLog(profileId, record, "CHILD-EXIT", { exitCode, signal });
       this.finishExternalClose(profileId, record);
     });
 
@@ -942,7 +993,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     const r = this.running.get(profileId);
     if (!r) return;
     this.closing.add(profileId);
-    writeProfileShutdownLog(profileId, r, "CLOSE-REQUESTED");
+    writeProfileLifecycleLog(profileId, r, "CLOSE-REQUESTED");
     console.log(`[mkt-browser] close() profile=${profileId} pid=${r.pid}`);
     // Signal the terminating phase up front (covers MCP/external callers that
     // don't drive the button's local "Stopping…" state).
@@ -1429,7 +1480,7 @@ async function gracefulShutdown(profileId: ProfileId, r: RunningProcess): Promis
   // 1. Graceful CDP close (⌘Q equivalent — flushes session-restore). The
   //    websocket disconnects mid-call; timeout-bounded so a stuck send can
   //    never block the signal escalation below.
-  writeProfileShutdownLog(profileId, r, "Browser.close");
+  writeProfileLifecycleLog(profileId, r, "Browser.close");
   await withTimeout(r.session.closeBrowser(), 3000);
   // Chromium needs ~500ms–2s to flush session-restore on macOS; 4s is margin.
   if (await waitForPidDeath(pid, 4000)) {
@@ -1441,7 +1492,7 @@ async function gracefulShutdown(profileId: ProfileId, r: RunningProcess): Promis
 
   // 2. SIGTERM by PID (not r.child.kill — don't trust the child flags).
   console.log(`[mkt-browser] shutdown pid=${pid}: Browser.close didn't exit in 4s → SIGTERM`);
-  writeProfileShutdownLog(profileId, r, "SIGTERM");
+  writeProfileLifecycleLog(profileId, r, "SIGTERM");
   killPid(pid, "SIGTERM");
   if (await waitForPidDeath(pid, 2000)) return;
 
@@ -1449,7 +1500,7 @@ async function gracefulShutdown(profileId: ProfileId, r: RunningProcess): Promis
   //    genuinely gone before returning, so close() never reports a false
   //    "closed" while Chromium is still on screen.
   console.log(`[mkt-browser] shutdown pid=${pid}: SIGTERM didn't exit in 2s → SIGKILL`);
-  writeProfileShutdownLog(profileId, r, "SIGKILL");
+  writeProfileLifecycleLog(profileId, r, "SIGKILL");
   killPid(pid, "SIGKILL");
   await waitForPidDeath(pid, 2000);
 }
