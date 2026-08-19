@@ -28,7 +28,7 @@ import {
   compatibilityUpdaterRoot,
   readCompatibilityEnginePin,
 } from "./compatibility-engine-pin.ts";
-import { resolveCloakBrowserProManifest } from "./cloakbrowser-pro-channel.ts";
+import { resolveLicensedEngineDescriptor } from "./resolve-licensed-engine-descriptor.ts";
 
 export interface LicensedEnginePinActivation {
   version: string;
@@ -37,61 +37,13 @@ export interface LicensedEnginePinActivation {
   pinPath: string;
 }
 
-/**
- * Byte size of the archive, and proof the URL is still fetchable.
- *
- * Both matter. `sizeBytes` is required by the pin's shape, and the licensed
- * archive URL is a presigned storage link with an expiry — writing a pin that
- * points at a dead URL would strand the machine, because the stale runtime is
- * cleared BEFORE the replacement is downloaded. Checking liveness here keeps
- * that failure on this side of the deletion.
- */
-async function headArchive(url: string): Promise<number> {
-  const res = await fetch(url, { headers: { range: "bytes=0-0" } });
-  if (res.status !== 206 && res.status !== 200) {
-    throw new Error(
-      `The licensed archive URL answered HTTP ${res.status}. Not writing a pin that would strand this machine.`,
-    );
-  }
-  // A ranged response reports the full size in content-range's total; a plain
-  // 200 means the server ignored the range and content-length is the whole file.
-  const total = res.headers.get("content-range")?.split("/")[1];
-  const size = Number.parseInt(total ?? res.headers.get("content-length") ?? "", 10);
-  if (!Number.isSafeInteger(size) || size <= 0) {
-    throw new Error("The licensed archive URL reported no usable size; refusing to write a pin.");
-  }
-  void res.body?.cancel();
-  return size;
-}
-
 export async function activateLicensedEnginePin(options: {
   licenseKey: string;
   localAppData: string;
 }): Promise<LicensedEnginePinActivation> {
-  const key = options.licenseKey.trim();
-  if (!key) throw new Error("A CloakBrowser licence key is required to activate an engine pin.");
-
-  const manifest = await resolveCloakBrowserProManifest(key);
-
-  // The pin carries a URL and a digest, and nothing else. An endpoint that
-  // served the archive directly would need its Authorization header replayed
-  // at download time, which the pinned path has no way to carry — fail loudly
-  // rather than write a pin that cannot be fetched.
-  if (Object.keys(manifest.headers).length > 0) {
-    throw new Error(
-      "The licensed endpoint returned a header-authenticated URL, which a pin cannot carry.",
-    );
-  }
-  if (new URL(manifest.url).protocol !== "https:") {
-    throw new Error("The licensed archive URL is not https.");
-  }
-  if (!manifest.sha256 || !/^[0-9a-f]{64}$/.test(manifest.sha256)) {
-    throw new Error(
-      "The licensed channel published no SHA-256 for this build; refusing to pin an unverifiable archive.",
-    );
-  }
-
-  const sizeBytes = await headArchive(manifest.url);
+  // Keeps the URL: the pin is fetched once, immediately, by the convergence
+  // that this activation triggers. Its expiry never outlives that fetch.
+  const engine = await resolveLicensedEngineDescriptor(options.licenseKey);
 
   const root = compatibilityUpdaterRoot(options.localAppData);
   const previous = existsSync(root) ? readCompatibilityEnginePin(options.localAppData) : null;
@@ -101,10 +53,10 @@ export async function activateLicensedEnginePin(options: {
     schemaVersion: 1 as const,
     sequence,
     engineKind: "cloakbrowser" as const,
-    version: manifest.version,
-    url: manifest.url,
-    sha256: manifest.sha256,
-    sizeBytes,
+    version: engine.version,
+    url: engine.url,
+    sha256: engine.sha256,
+    sizeBytes: engine.sizeBytes,
   };
 
   mkdirSync(root, { recursive: true });
@@ -116,7 +68,7 @@ export async function activateLicensedEnginePin(options: {
   writeFileSync(staging, `${JSON.stringify(pin, null, 2)}\n`, "utf8");
   renameSync(staging, pinPath);
 
-  return { version: manifest.version, sequence, sizeBytes, pinPath };
+  return { version: engine.version, sequence, sizeBytes: engine.sizeBytes, pinPath };
 }
 
 /**

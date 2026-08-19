@@ -72,17 +72,38 @@ async function describeFile(filePath) {
 
 function readEngineRelease(filePath) {
   const value = JSON.parse(readFileSync(filePath, "utf8"));
-  if (
-    (value.engineKind !== "cft" && value.engineKind !== "cloakbrowser") ||
-    typeof value.version !== "string" ||
-    !value.version ||
-    typeof value.url !== "string" ||
-    new URL(value.url).protocol !== "https:" ||
-    !Number.isSafeInteger(value.sizeBytes) ||
-    value.sizeBytes <= 0 ||
-    typeof value.sha256 !== "string" ||
-    !/^[0-9a-f]{64}$/.test(value.sha256)
-  ) {
+  const identityIsSound =
+    (value.engineKind === "cft" || value.engineKind === "cloakbrowser") &&
+    typeof value.version === "string" &&
+    value.version &&
+    Number.isSafeInteger(value.sizeBytes) &&
+    value.sizeBytes > 0 &&
+    typeof value.sha256 === "string" &&
+    /^[0-9a-f]{64}$/.test(value.sha256);
+  if (!identityIsSound) {
+    throw new Error("The pinned Windows engine release file is invalid.");
+  }
+
+  // A licensed engine is identified, not located. Its archive URL is presigned
+  // and expires, so signing one into a durable artifact would record something
+  // untrue by the time anyone read it — and it would buy nothing anyway,
+  // because the binary enforces its own licence at launch, so no URL lets a
+  // machine without a key use the engine. The digest is what carries weight.
+  if (value.source === "licensed-channel") {
+    if (value.engineKind !== "cloakbrowser") {
+      throw new Error("Only a CloakBrowser engine release may come from the licensed channel.");
+    }
+    if (value.url !== undefined) {
+      throw new Error(
+        "A licensed engine release must not carry a URL: presigned links expire and cannot be signed over.",
+      );
+    }
+    return value;
+  }
+
+  // Everything else is publicly fetchable and must say where from, so the
+  // record stays enough on its own to re-obtain and re-verify the archive.
+  if (typeof value.url !== "string" || new URL(value.url).protocol !== "https:") {
     throw new Error("The pinned Windows engine release file is invalid.");
   }
   return value;
