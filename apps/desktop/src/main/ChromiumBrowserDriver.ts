@@ -392,6 +392,48 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     // automated testing" infobar by entering IsGpuTest() exit branch in
     // chrome/browser/ui/startup/infobar_utils.cc. CloakBrowser doesn't
     // need this — and putting it in gpu-test mode crashes the binary.
+    // ── DNS coherence and leak prevention ───────────────────────────
+    // Applies to EVERY profile, not only proxied ones. These flags lived
+    // inside the proxy branch until browserscan measured a profile without
+    // one: the IP read as VNPT in Ho Chi Minh City while the resolvers
+    // answering for it sat abroad, because Chrome's automatic DoH upgrade had
+    // never been switched off on that path. A persona claiming to be a
+    // Vietnamese home connection whose DNS resolves through Cloudflare is
+    // incoherent in the same way a Windows UA with an Apple GPU is, and it
+    // costs one line to not be.
+    //
+    // For a proxied profile the SOCKS5 bridge already carries the hostname
+    // upstream, so URL-load DNS resolves at the egress. For a profile with no
+    // proxy, disabling DoH is what sends resolution back to the connection's
+    // own resolver — the one the IP implies.
+    //
+    // What still leaks bypassing --proxy-server (per Chromium net/docs):
+    //   • DoH (DNS-over-HTTPS) — talks straight to Cloudflare/Google
+    //   • DNS prefetcher / predictor
+    //   • Background networking (component updater, GCM, safe-browsing)
+    //   • Domain Reliability beacons
+    //
+    // Disabling these via features+switches plugs every leak we can
+    // close without source-patching Chromium. We deliberately do NOT
+    // use --host-resolver-rules: it triggers the "unsupported flag"
+    // infobar (visible to the user, even though JS can't probe it),
+    // and a SOCKS5 upstream makes it redundant anyway. Real anti-
+    // detect products (Multilogin Mimic) solve the residual leak
+    // with a custom DNS-resolver source patch — a Phase-1 item for
+    // an approved source-patched Chromium build, not the vanilla fallback.
+    args.push(
+      "--disable-features=DnsOverHttps,DnsOverHttpsUpgrade,EncryptedClientHello,AsyncDns,DnsHttpsSvcb,DnsHttpsSvcbAlpn,NetworkPrediction",
+    );
+    args.push("--dns-over-https-mode=off");
+    args.push("--dns-prefetch-disable");
+    args.push("--disable-async-dns");
+    args.push("--no-prerender");
+    args.push("--no-pings");
+    args.push("--disable-background-networking");
+    args.push("--disable-component-update");
+    args.push("--disable-domain-reliability");
+    args.push("--disable-client-side-phishing-detection");
+
     if (engine === "cft") {
       args.push("--test-type=gpu");
     }
@@ -432,38 +474,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       // expose their real IP.
       args.push("--force-webrtc-ip-handling-policy=disable_non_proxied_udp");
       args.push("--enforce-webrtc-ip-permission-check");
-      // ── DNS leak prevention ─────────────────────────────────────────
-      // Chromium does *remote* DNS for socks5:// proxies natively — our
-      // local SOCKS5 bridge gets the hostname (not an IP) and forwards
-      // it to the upstream proxy, which resolves remotely. So URL-load
-      // DNS is already covered.
-      //
-      // What still leaks bypassing --proxy-server (per Chromium net/docs):
-      //   • DoH (DNS-over-HTTPS) — talks straight to Cloudflare/Google
-      //   • DNS prefetcher / predictor
-      //   • Background networking (component updater, GCM, safe-browsing)
-      //   • Domain Reliability beacons
-      //
-      // Disabling these via features+switches plugs every leak we can
-      // close without source-patching Chromium. We deliberately do NOT
-      // use --host-resolver-rules: it triggers the "unsupported flag"
-      // infobar (visible to the user, even though JS can't probe it),
-      // and a SOCKS5 upstream makes it redundant anyway. Real anti-
-      // detect products (Multilogin Mimic) solve the residual leak
-      // with a custom DNS-resolver source patch — a Phase-1 item for
-      // an approved source-patched Chromium build, not the vanilla fallback.
-      args.push(
-        "--disable-features=DnsOverHttps,DnsOverHttpsUpgrade,EncryptedClientHello,AsyncDns,DnsHttpsSvcb,DnsHttpsSvcbAlpn,NetworkPrediction",
-      );
-      args.push("--dns-over-https-mode=off");
-      args.push("--dns-prefetch-disable");
-      args.push("--disable-async-dns");
-      args.push("--no-prerender");
-      args.push("--no-pings");
-      args.push("--disable-background-networking");
-      args.push("--disable-component-update");
-      args.push("--disable-domain-reliability");
-      args.push("--disable-client-side-phishing-detection");
+
     }
 
     // Browser extensions: load this profile's enabled extensions plus the
