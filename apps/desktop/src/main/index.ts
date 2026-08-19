@@ -30,6 +30,7 @@ import {
   type ActivityLog,
 } from "@mktbrowser/mcp-server";
 import { SettingsStore, defaultSettingsPath, type AppSettings } from "@mktbrowser/settings-store";
+import { activateLicensedEnginePin } from "./activate-licensed-engine-pin.ts";
 import {
   MKT_BROWSER_MCP_PORT_ENV,
   mktBrowserMcpBaseUrl,
@@ -546,6 +547,22 @@ app
     // Chromium bootstrap IPC
     handleIpc(IPC.CHROMIUM_STATUS, () => chromiumBootstrap.getStatus());
     handleIpc(IPC.CHROMIUM_RETRY, () => chromiumBootstrap.retry());
+    // Deliberate engine upgrade. The pin is what the bootstrap obeys, so
+    // activating means writing a new pin and letting the existing convergence
+    // path clear the stale runtime and install the pinned build. Never on a
+    // timer: a new Chromium moves the measured fingerprint of every profile at
+    // once, which is the whole reason the pin exists.
+    handleIpc(IPC.CHROMIUM_ACTIVATE_LATEST, async () => {
+      if (process.platform !== "win32") {
+        throw new Error("Engine activation is Windows-only for now.");
+      }
+      await activateLicensedEnginePin({
+        licenseKey: cachedSettings?.cloakBrowserLicenseKey ?? "",
+        localAppData: process.env.LOCALAPPDATA ?? "",
+      });
+      activeCompatibilityEnginePin = readCompatibilityEnginePin(process.env.LOCALAPPDATA ?? "");
+      return chromiumBootstrap.retry();
+    });
     handleIpc(IPC.CHROMIUM_SWITCH_TO_CFT, async () => {
       if (switchToCftInFlight) return switchToCftInFlight;
       if (activeCompatibilityEnginePin && activeCompatibilityEnginePin.engineKind !== "cft") {

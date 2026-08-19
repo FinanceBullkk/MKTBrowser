@@ -34,6 +34,12 @@ export function Settings({ onImport }: Props): JSX.Element {
   // key took effect (146 keyless vs a current major). Already exposed on the
   // chromium channel, so no new IPC surface is needed here.
   const [engineStatus, setEngineStatus] = useState<ChromiumStatus | null>(null);
+  // Upgrading is a deliberate act, not a background one: a new Chromium moves
+  // the measured fingerprint of every profile at once, so it is guarded by an
+  // explicit confirm rather than a single click.
+  const [confirmUpgrade, setConfirmUpgrade] = useState(false);
+  const [upgrading, setUpgrading] = useState(false);
+  const [upgradeError, setUpgradeError] = useState<string | null>(null);
   useEffect(() => {
     if (!window.mktBrowser) return;
     void window.mktBrowser.settings.get().then((s) => {
@@ -49,6 +55,19 @@ export function Settings({ onImport }: Props): JSX.Element {
     if (!settings) return;
     const next = await window.mktBrowser.settings.update(p);
     setSettings(next);
+  }
+
+  async function activateLatestEngine(): Promise<void> {
+    setUpgrading(true);
+    setUpgradeError(null);
+    try {
+      setEngineStatus(await window.mktBrowser.chromium.activateLatest());
+    } catch (error) {
+      setUpgradeError((error as Error).message);
+    } finally {
+      setUpgrading(false);
+      setConfirmUpgrade(false);
+    }
   }
 
   async function saveLicence(): Promise<void> {
@@ -286,6 +305,34 @@ export function Settings({ onImport }: Props): JSX.Element {
               </>
             )}
           </div>
+          {settings.cloakBrowserLicenseKey ? (
+            <div className="text-[11px] mt-2">
+              <button
+                type="button"
+                disabled={upgrading}
+                onClick={() => {
+                  if (confirmUpgrade) void activateLatestEngine();
+                  else setConfirmUpgrade(true);
+                }}
+                className="px-2 py-1 rounded-md text-purple-300 hover:text-purple-200 disabled:text-slate-600 disabled:cursor-not-allowed transition-colors"
+                style={{ boxShadow: "inset 0 0 0 1px rgba(168,85,247,0.25)" }}
+              >
+                {upgrading
+                  ? "Downloading…"
+                  : confirmUpgrade
+                    ? "Confirm — rotate every profile"
+                    : "Update engine"}
+              </button>
+              <span className="text-slate-500 ml-2">
+                {confirmUpgrade
+                  ? "Every profile reports different hardware afterwards. Do this before accounts exist, or during a planned migration — never underneath a running one."
+                  : "Pins the newest licensed build and downloads it. The current engine is removed first."}
+              </span>
+              {upgradeError ? (
+                <div className="text-rose-300 mt-1">{upgradeError}</div>
+              ) : null}
+            </div>
+          ) : null}
         </Row>
 
         <Row
