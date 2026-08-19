@@ -9,6 +9,7 @@ import {
   MKT_BROWSER_PROFILE_SCHEMA_VERSION,
 } from "../../../../packages/types/src/index.ts";
 import { describeEngineStatus } from "./engine-runtime-info.ts";
+import { waitForCdpSessionReady } from "./cdpReadiness.ts";
 import { resolveRuntimeCapabilities } from "../../../../packages/mcp-server/src/runtime-capabilities.ts";
 
 const REPO_ROOT = new URL("../../../../", import.meta.url);
@@ -159,6 +160,66 @@ test("reports the installed release, not the MCP contract constant", () => {
       `createMktBrowserMcpServer at offset ${site.index} does not pass appVersion: app.getVersion()`,
     );
   }
+});
+
+test("bounds a CDP readiness fetch that never settles", async () => {
+  const budgetMs = 30;
+  const startedAt = Date.now();
+
+  await assert.rejects(
+    waitForCdpSessionReady(9222, { connect: async () => {} }, budgetMs, {
+      fetch: () => new Promise(() => {}),
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    }),
+    /within 30ms/,
+  );
+
+  assert.ok(Date.now() - startedAt < 500, "hung fetch escaped the readiness budget");
+});
+
+test("bounds a CDP connect that never settles", async () => {
+  const budgetMs = 30;
+  const startedAt = Date.now();
+
+  await assert.rejects(
+    waitForCdpSessionReady(9222, { connect: () => new Promise(() => {}) }, budgetMs, {
+      fetch: async (url) => ({
+        ok: true,
+        json: async () => (url.endsWith("/json/list") ? [{ type: "page" }] : {}),
+      }),
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    }),
+    /within 30ms/,
+  );
+
+  assert.ok(Date.now() - startedAt < 500, "hung connect escaped the readiness budget");
+});
+
+test("keeps browser ownership until failed launches and shutdown sweeps finish", () => {
+  const driver = source("apps/desktop/src/main/ChromiumBrowserDriver.ts");
+
+  assert.match(driver, /launchingProcesses = new Map<ProfileId, LaunchingProcess>/);
+  assert.match(driver, /await this\.cleanupFailedLaunch\(profileId, error\)/);
+  assert.match(driver, /pending\.childExit = \{ exitCode: code, signal \}/);
+  assert.match(driver, /writeProfileLifecycleLog\(profileId, pending, "CHILD-EXIT", childExit\)/);
+  assert.match(driver, /if \(await terminateBrowserProcess\(profileId, pending\)\)/);
+  assert.match(driver, /record\.windowWatcher\.stop\(\)/);
+  assert.match(driver, /await terminateBrowserProcess\(profileId, record\)/);
+  assert.match(driver, /this\.running\.delete\(profileId\)/);
+  assert.match(driver, /shutdownSource: "data-dir-sweep"/);
+  assert.match(driver, /"SHUTDOWN-COMPLETE" : "SHUTDOWN-FAILED"/);
+  assert.match(driver, /const traceTarget = tracingInitialBootstrap/);
+});
+
+test("serializes window watcher polls and requires process death for CDP-unreachable close", () => {
+  const driver = source("apps/desktop/src/main/ChromiumBrowserDriver.ts");
+
+  assert.doesNotMatch(driver, /setInterval\(async/);
+  assert.match(driver, /timer = setTimeout\(\(\) => void poll\(\), 1000\)/);
+  assert.match(driver, /const fetchTimeout = setTimeout\(\(\) => controller\.abort\(\), 1000\)/);
+  assert.match(driver, /A failed poll cannot prove the page count stayed at zero/);
+  assert.match(driver, /\(\) => isPidAlive\(record\.pid\)/);
+  assert.match(driver, /Date\.now\(\) - unreachableSinceMs > 1500 && !isProcessAlive\(\)/);
 });
 
 function source(relativePath: string): string {

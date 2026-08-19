@@ -52,3 +52,56 @@ test("safe mode refuses a CloakBrowser-sensitive enable before sending it", asyn
   );
   assert.deepEqual(calls, []);
 });
+
+test("connect retries with a fresh client when Page.enable fails", async () => {
+  let factoryCalls = 0;
+  let failedClientClosed = false;
+  const session = new CdpSession({
+    port: 9222,
+    clientFactory: async () => {
+      factoryCalls += 1;
+      if (factoryCalls === 1) {
+        return {
+          Page: { enable: async () => Promise.reject(new Error("enable failed")) },
+          close: async () => {
+            failedClientClosed = true;
+          },
+        } as never;
+      }
+      return {
+        Page: { enable: async () => {} },
+        close: async () => {},
+      } as never;
+    },
+  });
+
+  await assert.rejects(session.connect(), /enable failed/);
+  await session.connect();
+
+  assert.equal(factoryCalls, 2);
+  assert.equal(failedClientClosed, true);
+});
+
+test("close invalidates and disposes a connection that completes late", async () => {
+  let resolveClient: ((client: never) => void) | undefined;
+  let clientClosed = false;
+  const session = new CdpSession({
+    port: 9222,
+    clientFactory: () =>
+      new Promise((resolve) => {
+        resolveClient = resolve;
+      }),
+  });
+
+  const connecting = session.connect();
+  await session.close();
+  resolveClient?.({
+    Page: { enable: async () => {} },
+    close: async () => {
+      clientClosed = true;
+    },
+  } as never);
+
+  await assert.rejects(connecting, /closed while connecting/);
+  assert.equal(clientClosed, true);
+});
