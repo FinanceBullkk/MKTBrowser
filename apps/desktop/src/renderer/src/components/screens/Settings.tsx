@@ -7,11 +7,12 @@ import {
   DownloadCloud,
   Eye,
   EyeOff,
+  KeyRound,
   Sparkles,
   Zap,
 } from "lucide-react";
 import { Pill } from "../atoms";
-import type { AppSettings, SystemInfo } from "../../types";
+import type { AppSettings, ChromiumStatus, SystemInfo } from "../../types";
 
 interface Props {
   onImport: () => void;
@@ -23,16 +24,39 @@ export function Settings({ onImport }: Props): JSX.Element {
   const [copied, setCopied] = useState(false);
   const [tokenCopied, setTokenCopied] = useState(false);
   const [tokenShown, setTokenShown] = useState(false);
+  // The licence key is edited as a draft rather than patched per keystroke:
+  // every patch writes settings.json, and a 35-character key would mean 35
+  // writes. Saved explicitly instead.
+  const [licenceDraft, setLicenceDraft] = useState("");
+  const [licenceShown, setLicenceShown] = useState(false);
+  const [licenceSaved, setLicenceSaved] = useState(false);
+  // Which engine build is actually live — the only honest confirmation that a
+  // key took effect (146 keyless vs a current major). Already exposed on the
+  // chromium channel, so no new IPC surface is needed here.
+  const [engineStatus, setEngineStatus] = useState<ChromiumStatus | null>(null);
   useEffect(() => {
     if (!window.mktBrowser) return;
-    void window.mktBrowser.settings.get().then(setSettings);
+    void window.mktBrowser.settings.get().then((s) => {
+      setSettings(s);
+      setLicenceDraft(s.cloakBrowserLicenseKey);
+    });
     void window.mktBrowser.system.info().then(setInfo);
+    void window.mktBrowser.chromium.status().then(setEngineStatus);
+    return window.mktBrowser.chromium.onStatus(setEngineStatus);
   }, []);
 
   async function patch(p: Partial<AppSettings>): Promise<void> {
     if (!settings) return;
     const next = await window.mktBrowser.settings.update(p);
     setSettings(next);
+  }
+
+  async function saveLicence(): Promise<void> {
+    const trimmed = licenceDraft.trim();
+    await patch({ cloakBrowserLicenseKey: trimmed });
+    setLicenceDraft(trimmed);
+    setLicenceSaved(true);
+    window.setTimeout(() => setLicenceSaved(false), 1800);
   }
 
   function copyMcpUrl(): void {
@@ -187,6 +211,80 @@ export function Settings({ onImport }: Props): JSX.Element {
                 </button>
               );
             })}
+          </div>
+        </Row>
+
+        <Row
+          icon={<KeyRound size={16} strokeWidth={1.5} />}
+          title="CloakBrowser licence"
+          desc={
+            <>
+              Without a key, CloakBrowser stays on the last openly published build (146, May 2026).
+              A browser that lags several Chrome majors behind stable is itself unusual enough to
+              stand out. A free key is one browser at a time and needs no card — sign in at{" "}
+              <span className="mono text-slate-400">cloakbrowser.dev/free</span>. Applied on next
+              app launch.
+            </>
+          }
+        >
+          <div
+            className="flex items-center gap-2"
+            style={{
+              padding: "8px 12px",
+              borderRadius: 10,
+              background: "rgba(255,255,255,0.03)",
+              boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.06)",
+            }}
+          >
+            <input
+              type={licenceShown ? "text" : "password"}
+              value={licenceDraft}
+              onChange={(e) => setLicenceDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void saveLicence();
+              }}
+              placeholder="Paste your CloakBrowser key"
+              spellCheck={false}
+              autoComplete="off"
+              className="flex-1 bg-transparent outline-none mono text-[12px] text-slate-300 placeholder:text-slate-600"
+            />
+            <button
+              type="button"
+              onClick={() => setLicenceShown((v) => !v)}
+              className="text-slate-400 hover:text-slate-200 transition-colors"
+              aria-label={licenceShown ? "Hide licence key" : "Reveal licence key"}
+            >
+              {licenceShown ? <EyeOff size={13} /> : <Eye size={13} />}
+            </button>
+            <button
+              type="button"
+              onClick={() => void saveLicence()}
+              disabled={licenceDraft.trim() === settings.cloakBrowserLicenseKey}
+              className="text-[11px] px-2 py-1 rounded-md text-purple-300 hover:text-purple-200 disabled:text-slate-600 disabled:cursor-not-allowed transition-colors"
+              style={{ boxShadow: "inset 0 0 0 1px rgba(168,85,247,0.25)" }}
+            >
+              {licenceSaved ? "Saved" : "Save"}
+            </button>
+          </div>
+          <div className="text-[11px] mt-2 flex items-center gap-2">
+            {settings.cloakBrowserLicenseKey ? (
+              <>
+                <Pill kind="running">key set</Pill>
+                <span className="text-slate-500">
+                  Engine{" "}
+                  <span className="mono text-slate-400">
+                    {engineStatus?.kind === "ready" ? engineStatus.version : "—"}
+                  </span>
+                  . If a profile refuses to open, the reason is reported on launch — an invalid key,
+                  or the free plan&apos;s one-browser-at-a-time limit.
+                </span>
+              </>
+            ) : (
+              <>
+                <Pill kind="idle">no key</Pill>
+                <span className="text-slate-500">Running the older keyless build.</span>
+              </>
+            )}
           </div>
         </Row>
 
