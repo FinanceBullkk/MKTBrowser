@@ -242,6 +242,13 @@ export interface MktBrowserMcpServerOptions {
   runtimeCapabilities?: RuntimeCapabilityProvider;
   /** Capability filter resolved from the authenticated transport token. */
   accessPolicy?: McpToolAccessPolicy;
+  /**
+   * The running application's version, for `get_runtime_info`. The desktop app supplies
+   * `app.getVersion()`. Without it this falls back to the MCP protocol constant, which tracks the
+   * contract and NOT the release — a caller asking "which build am I on?" would get the wrong
+   * answer, which is how an installed 0.3.6 spent an evening reporting itself as 0.3.1.
+   */
+  appVersion?: string;
 }
 
 export interface MktBrowserMcpServer {
@@ -441,7 +448,7 @@ export function buildMcpInstructions(accessPolicy: McpToolAccessPolicy): string 
 }
 
 export function createMktBrowserMcpServer(opts: MktBrowserMcpServerOptions): MktBrowserMcpServer {
-  const { profileManager, browserDriver, engineInfo, runtimeCapabilities } = opts;
+  const { profileManager, browserDriver, engineInfo, runtimeCapabilities, appVersion } = opts;
   const activityLog = opts.activityLog ?? new ActivityLog();
   const accessPolicy = opts.accessPolicy ?? FULL_LOCAL_ACCESS_POLICY;
   assertMcpToolInventory(TOOL_DEFINITIONS.map((tool) => tool.name));
@@ -482,9 +489,10 @@ export function createMktBrowserMcpServer(opts: MktBrowserMcpServerOptions): Mkt
         browserDriver,
         engineInfo,
         runtimeCapabilities,
+        appVersion,
       });
       activityLog.finish(event, "ok", summarize(result), startedAt);
-      return ok(withOperationDiagnostic(result, args, "complete", startedAt, engineInfo));
+      return ok(withOperationDiagnostic(result, args, "complete", startedAt, engineInfo, appVersion));
     } catch (e) {
       // The code is the contract; the message is for the local activity log only.
       const message = toErrorMessage(e);
@@ -493,7 +501,7 @@ export function createMktBrowserMcpServer(opts: MktBrowserMcpServerOptions): Mkt
       return err(
         code,
         message,
-        operationDiagnostic(args, failureStage(name, code), startedAt, engineInfo, code),
+        operationDiagnostic(args, failureStage(name, code), startedAt, engineInfo, code, appVersion),
       );
     }
   });
@@ -506,6 +514,7 @@ interface DispatchDeps {
   browserDriver: BrowserDriver;
   engineInfo?: () => MktBrowserEngineInfo;
   runtimeCapabilities?: MktBrowserMcpServerOptions["runtimeCapabilities"];
+  appVersion?: string;
 }
 
 const UNKNOWN_ENGINE: MktBrowserEngineInfo = { kind: "unknown", version: null, status: "unknown" };
@@ -515,7 +524,7 @@ const UNKNOWN_ENGINE: MktBrowserEngineInfo = { kind: "unknown", version: null, s
  * tell a healthy device from one whose engine is still downloading, and must never infer a
  * capability from the version number alone.
  */
-function buildRuntimeIdentity(engineInfo?: () => MktBrowserEngineInfo) {
+function buildRuntimeIdentity(engineInfo?: () => MktBrowserEngineInfo, appVersion?: string) {
   let engine = UNKNOWN_ENGINE;
   try {
     engine = engineInfo?.() ?? UNKNOWN_ENGINE;
@@ -526,7 +535,7 @@ function buildRuntimeIdentity(engineInfo?: () => MktBrowserEngineInfo) {
 
   return {
     provider: MKT_BROWSER_MCP_SERVER_NAME,
-    appVersion: MKT_BROWSER_MCP_SERVER_VERSION,
+    appVersion: appVersion ?? MKT_BROWSER_MCP_SERVER_VERSION,
     contractVersion: MKT_BROWSER_CONTRACT_VERSION,
     profileSchemaVersion: MKT_BROWSER_PROFILE_SCHEMA_VERSION,
     engine,
@@ -536,9 +545,10 @@ function buildRuntimeIdentity(engineInfo?: () => MktBrowserEngineInfo) {
 async function buildRuntimeInfo(
   engineInfo?: () => MktBrowserEngineInfo,
   runtimeCapabilities?: MktBrowserMcpServerOptions["runtimeCapabilities"],
+  appVersion?: string,
 ): Promise<MktBrowserRuntimeInfo> {
   const capabilities = await resolveRuntimeCapabilities(runtimeCapabilities);
-  return { ...buildRuntimeIdentity(engineInfo), capabilities };
+  return { ...buildRuntimeIdentity(engineInfo, appVersion), capabilities };
 }
 
 async function dispatch(
@@ -549,7 +559,7 @@ async function dispatch(
   const { profileManager, browserDriver } = deps;
   switch (name) {
     case "get_runtime_info": {
-      return await buildRuntimeInfo(deps.engineInfo, deps.runtimeCapabilities);
+      return await buildRuntimeInfo(deps.engineInfo, deps.runtimeCapabilities, deps.appVersion);
     }
     case "list_profiles": {
       const profiles = profileManager.list().map((p) => ({
@@ -1278,8 +1288,9 @@ function withOperationDiagnostic(
   stage: string,
   startedAt: number,
   engineInfo?: () => MktBrowserEngineInfo,
+  appVersion?: string,
 ): unknown {
-  const diagnostic = operationDiagnostic(args, stage, startedAt, engineInfo);
+  const diagnostic = operationDiagnostic(args, stage, startedAt, engineInfo, undefined, appVersion);
   if (!diagnostic) return result;
   if (result && typeof result === "object" && !Array.isArray(result)) {
     return { ...(result as Record<string, unknown>), diagnostic };
@@ -1293,11 +1304,12 @@ function operationDiagnostic(
   startedAt: number,
   engineInfo?: () => MktBrowserEngineInfo,
   code?: MktBrowserOperationDiagnostic["code"],
+  appVersion?: string,
 ): MktBrowserOperationDiagnostic | undefined {
   const operationId = args.operation_id;
   if (typeof operationId !== "string" || operationId === "") return undefined;
 
-  const runtime = buildRuntimeIdentity(engineInfo);
+  const runtime = buildRuntimeIdentity(engineInfo, appVersion);
   const requestId = args.request_id;
   return {
     operationId,

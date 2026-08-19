@@ -442,6 +442,10 @@ app
       engineInfo: () =>
         describeEngineStatus(chromiumBootstrap.getEngine(), chromiumBootstrap.getStatus()),
       runtimeCapabilities,
+      // The release the operator installed — not the MCP contract constant. These drifted apart
+      // and `get_runtime_info` spent an evening answering 0.3.1 on a 0.3.6 install, which is the
+      // one question the call exists to answer.
+      appVersion: app.getVersion(),
     });
     activityLog = mcp.activityLog;
 
@@ -489,6 +493,7 @@ app
               engineInfo: () =>
                 describeEngineStatus(chromiumBootstrap.getEngine(), chromiumBootstrap.getStatus()),
               runtimeCapabilities,
+              appVersion: app.getVersion(),
             }).server,
         );
       } catch (e) {

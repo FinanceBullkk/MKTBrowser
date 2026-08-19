@@ -136,6 +136,31 @@ test("exposes get_runtime_info and classifies failures by code, not by message",
   assert.match(driver, /throw proxyRejected\(/);
 });
 
+test("reports the installed release, not the MCP contract constant", () => {
+  // These are two different numbers and they drift. MKT_BROWSER_MCP_SERVER_VERSION tracks the
+  // wire contract and moved last at 0.3.1; the desktop release is on its own cadence. While
+  // `get_runtime_info` returned the constant, a 0.3.6 install answered "0.3.1" to the one question
+  // an operator asks after installing — did the new build actually land — and the answer looked
+  // like a failed install every time.
+  const server = source("packages/mcp-server/src/server.ts");
+  assert.match(server, /appVersion\?: string;/);
+  assert.match(server, /appVersion: appVersion \?\? MKT_BROWSER_MCP_SERVER_VERSION,/);
+
+  // The fallback only exists for standalone/mock runs. The desktop app has a real version and
+  // must pass it at every construction site, or the constant silently becomes the answer again.
+  const desktop = source("apps/desktop/src/main/index.ts");
+  const sites = [...desktop.matchAll(/createMktBrowserMcpServer\(\{/g)];
+  assert.ok(sites.length > 0, "no createMktBrowserMcpServer call found to check");
+  for (const site of sites) {
+    const optionsBlock = desktop.slice(site.index, site.index + 800);
+    assert.match(
+      optionsBlock,
+      /appVersion: app\.getVersion\(\),/,
+      `createMktBrowserMcpServer at offset ${site.index} does not pass appVersion: app.getVersion()`,
+    );
+  }
+});
+
 function source(relativePath: string): string {
   return readFileSync(new URL(relativePath, REPO_ROOT), "utf8");
 }
