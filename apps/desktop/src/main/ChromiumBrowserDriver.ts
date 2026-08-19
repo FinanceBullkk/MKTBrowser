@@ -763,26 +763,10 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
             console.error("[mkt-browser] setUserAgentOverride failed:", e);
           }
         } else {
-          // CloakBrowser: we skip the CDP UA/timezone overrides above because
-          // those have native --fingerprint-* patches that a CDP layer would
-          // contradict. LOCALE is the exception: CloakBrowser ships NO native
-          // locale switch (its --fingerprint-* set has timezone but no
-          // locale/language — verified against the binary), and macOS ignores
-          // --lang, so nothing otherwise sets the renderer's ICU default locale
-          // and Intl.*.resolvedOptions().locale leaks the host locale (e.g. a
-          // th-TH persona reports en-US). Because there is no native locale
-          // value here, this CDP override fills a gap rather than shadowing a
-          // patch — no cross-layer disagreement. (--lang is stock Chromium, not
-          // a fingerprint patch; CFT already ships this exact override.)
-          // navigator.language(s) come from --accept-lang and stay untouched.
-          try {
-            await send("Emulation.setLocaleOverride", { locale: fp.locale });
-          } catch (e) {
-            const msg = (e as Error).message;
-            if (!/already in effect/i.test(msg)) {
-              console.error("[mkt-browser] setLocaleOverride (cloakbrowser) failed:", e);
-            }
-          }
+          // CloakBrowser: no CDP Emulation.* layer at all. UA, timezone and —
+          // since the 151 measurement above — locale each have a native
+          // --fingerprint-* patch, and a CDP override on top would be a second
+          // source of truth that can disagree with the patch under a scanner.
         }
         // Diagnostic: capture what the page actually sees AFTER overrides.
         // Logs once per session — if browserscan reports "Different browser
@@ -1201,11 +1185,13 @@ function buildCloakBrowserFingerprintArgs(profileId: ProfileId, fp: FingerprintC
   const args = [
     `--fingerprint=${fingerprintSeed(profileId, fp)}`,
     `--fingerprint-platform=${cloakBrowserPlatform(fp)}`,
-    // NOTE: CloakBrowser has NO --fingerprint-locale switch (verified against
-    // the binary — its --fingerprint-* set covers timezone/platform/screen/etc
-    // but not locale/language). Locale is applied via CDP
-    // Emulation.setLocaleOverride in the bootstrap step instead; passing a
-    // --fingerprint-locale here would be silently ignored.
+    // Measured on CloakBrowser 151 (19 Aug 2026): `--fingerprint-locale=de-DE`
+    // makes the page report navigator.language AND
+    // Intl.DateTimeFormat().resolvedOptions().locale as de-DE. An earlier note
+    // here claimed the switch did not exist and routed locale through CDP
+    // Emulation.setLocaleOverride; the switch is in 151's table (and in 146's),
+    // so the native patch drives it and the CDP layer is gone.
+    `--fingerprint-locale=${fp.locale}`,
     `--fingerprint-timezone=${fp.timezone}`,
     `--fingerprint-screen-width=${fp.screen.width}`,
     `--fingerprint-screen-height=${fp.screen.height}`,
@@ -1232,6 +1218,7 @@ function buildCloakBrowserFingerprintArgs(profileId: ProfileId, fp: FingerprintC
   // 146: height 1080 with `-taskbar-height=22` yields availHeight 1058, and
   // `=0` yields 1080 — the switch is honoured exactly.
   args.push(`--fingerprint-taskbar-height=${cloakBrowserTaskbarHeight(fp)}`);
+  args.push(`--fingerprint-storage-quota=${cloakBrowserStorageQuotaMib(profileId, fp)}`);
   return args;
 }
 
@@ -1256,6 +1243,39 @@ function cloakBrowserTaskbarHeight(fp: FingerprintConfig): number {
   if (platform === "macos") return 25;
   if (platform === "linux") return 0;
   return 48;
+}
+
+/**
+ * `navigator.storage.estimate().quota`, expressed in MiB — the unit
+ * `--fingerprint-storage-quota` takes. Measured on CloakBrowser 146: `=8192`
+ * makes the page report exactly 8,589,934,592 bytes and `=131072` reports
+ * 137,438,953,472, i.e. what JavaScript sees is `value * 1024 ** 2`.
+ *
+ * Left unset, every profile on a host reports the SAME quota, because the
+ * value is derived from the host volume's real free space (559,109,800 bytes
+ * on this machine). That is a perfect join column: it survives separate
+ * proxies, separate cookies and separate canvas noise, so one flagged account
+ * can point at every sibling sharing the machine. Seeding it per profile is
+ * what removes the join.
+ *
+ * Known cost, taken deliberately: MiB granularity means the reported quota is
+ * always an exact multiple of 1,048,576, while a real Chrome computes a
+ * fraction of free disk and lands on arbitrary byte counts. That trades an
+ * exotic "suspiciously round" tell for the removal of a certain cross-profile
+ * link — worth it while several profiles share one machine. Revisit if a
+ * scanner is ever observed testing the divisibility.
+ */
+function cloakBrowserStorageQuotaMib(profileId: ProfileId, fp: FingerprintConfig): number {
+  // 20-400 GiB of headroom — the band consumer disks actually sit in.
+  const minMib = 20 * 1024;
+  const spanMib = 380 * 1024;
+  // Keyed off the same material as `fingerprintSeed`, under its own label so
+  // rotating one surface does not silently rotate the other.
+  const hex = createHash("sha256")
+    .update(`storage-quota:${fp.seed ?? profileId}`)
+    .digest("hex")
+    .slice(0, 8);
+  return minMib + (Number.parseInt(hex, 16) % spanMib);
 }
 
 function primaryBrandVersion(ch: ClientHints | undefined): string | null {
