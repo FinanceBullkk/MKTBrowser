@@ -22,6 +22,12 @@ function Assert-Rule([string]$Name, [string]$Program) {
         [StringComparison]::OrdinalIgnoreCase
       )) { throw "program-invalid" }
   if ($rule.Protocol -ne 17) { throw "protocol-invalid" }
+  # A rule that blocks every outbound UDP port also blocks QUIC on 443, which is
+  # how CloakBrowser reaches its licence server — the browser then refuses to
+  # start and blames the licence. Earlier installs created exactly that rule, so
+  # a wildcard port set must read as invalid here or the upgrade would inspect
+  # it, find it "correct", and leave the machine unable to open any profile.
+  if ($rule.RemotePorts -eq "*") { throw "ports-invalid" }
   if (-not $rule.Enabled -or $rule.Direction -ne 2 -or $rule.Action -ne 0 -or
       ($rule.Profiles -band 7) -ne 7) { throw "rule-invalid" }
   Assert-FirewallProfiles $policy
@@ -101,8 +107,29 @@ try {
       continue
     } catch {}
     Get-NetFirewallRule -DisplayName $entry.Candidate -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+    # Every outbound UDP port except 53 and 443. WebRTC's STUN/TURN and its
+    # media streams live on 3478 and on ephemeral high ports, all still blocked.
+    #
+    # 53 is the one that mattered. Blocking every UDP port also blocked DNS, and
+    # Chromium resolves names itself over UDP 53 rather than calling the OS
+    # resolver, so the browser could not look up its own licence host and exited
+    # reporting the licence server as unreachable. Measured: with all UDP
+    # blocked the launch exits 78; forcing the OS resolver with
+    # --disable-features=AsyncDns under the same rule exits 76, which is the
+    # licence server answering. The firewall was the cause, DNS was the path.
+    #
+    # 443 stays open for a different reason. A real Chrome negotiates HTTP/3
+    # with hosts that offer it; one that never can is deviating from the
+    # behaviour it claims, and that deviation is visible to the sites this tool
+    # exists to blend into.
+    #
+    # TURN relayed over UDP 443 slips through this gap, so the firewall is not
+    # the only layer: profiles already launch with --fingerprint-webrtc-ip,
+    # which replaces the address WebRTC would report at the source. A browser
+    # that refuses to start protects nothing at all.
     New-NetFirewallRule -DisplayName $entry.Candidate -Group $group -Enabled True `
-      -Direction Outbound -Action Block -Program $entry.Program -Protocol UDP -Profile Any | Out-Null
+      -Direction Outbound -Action Block -Program $entry.Program -Protocol UDP `
+      -RemotePort @("1-52", "54-442", "444-65535") -Profile Any | Out-Null
     Assert-Rule $entry.Candidate $entry.Program
   }
 
