@@ -412,17 +412,11 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     // proxy, disabling DoH is what sends resolution back to the connection's
     // own resolver — the one the IP implies.
     //
-    // Only the resolver switches belong here. The rest of what escapes
-    // --proxy-server — background networking (component updater, GCM,
-    // safe-browsing), Domain Reliability beacons, prerender, pings — is set in
-    // the proxy branch below, because that is the only profile they buy
-    // anything for: a profile with no proxy has no proxy to leak around.
-    //
-    // They were hoisted here on 19 Aug and every launch on engine 151 started
-    // dying about ten seconds in. Which flag does it is NOT established — the
-    // one obvious suspect, --disable-background-networking, survived 35s alone
-    // on a bare engine. What is measured: this exact command line, without the
-    // six, runs 75s and closes with exit 0.
+    // What still leaks bypassing --proxy-server (per Chromium net/docs):
+    //   • DoH (DNS-over-HTTPS) — talks straight to Cloudflare/Google
+    //   • DNS prefetcher / predictor
+    //   • Background networking (component updater, GCM, safe-browsing)
+    //   • Domain Reliability beacons
     //
     // We deliberately do NOT use --host-resolver-rules: it triggers the
     // "unsupported flag" infobar (visible to the user, even though JS can't
@@ -432,10 +426,16 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     // source-patched Chromium build, not the vanilla fallback.
     //
     // The DoH / AsyncDns / NetworkPrediction feature toggles ride in the one
-    // --disable-features list above; these three are the switch half.
+    // --disable-features list above; what follows is the command-switch half.
     args.push("--dns-over-https-mode=off");
     args.push("--dns-prefetch-disable");
     args.push("--disable-async-dns");
+    args.push("--no-prerender");
+    args.push("--no-pings");
+    args.push("--disable-background-networking");
+    args.push("--disable-component-update");
+    args.push("--disable-domain-reliability");
+    args.push("--disable-client-side-phishing-detection");
 
     if (engine === "cft") {
       args.push("--test-type=gpu");
@@ -467,28 +467,6 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
         );
       }
       args.push(`--proxy-server=${localProxyUrl}`);
-      // Telemetry and background traffic stay scoped to proxied profiles:
-      // they are leak controls for a profile that egresses through a proxy,
-      // and a profile without one gains nothing from them.
-      //
-      // They also carry a cost that is not yet fully understood. Hoisting them
-      // out of this branch on 19 Aug killed every launch on engine 151 — the
-      // browser started, served CDP, then exited about ten seconds later — and
-      // moving them back is what makes an unproxied launch survive. So a
-      // proxied launch is the configuration that still runs them, and it is
-      // the one to watch if the same ten-second death shows up again.
-      //
-      // Engine 146 had no licence check and these flags were harmless under it
-      // for months, which is why nothing caught this earlier. CloakBrowser 151
-      // does check, through Chromium's own network stack — proven when
-      // --disable-features=AsyncDns turned a "server unreachable" exit (78)
-      // into a "session limit" one (76).
-      args.push("--no-prerender");
-      args.push("--no-pings");
-      args.push("--disable-background-networking");
-      args.push("--disable-component-update");
-      args.push("--disable-domain-reliability");
-      args.push("--disable-client-side-phishing-detection");
       // WebRTC leaks the *real* public IP via STUN even when HTTP traffic
       // is proxied — STUN uses UDP and bypasses HTTP proxies by default.
       // `disable_non_proxied_udp` forces WebRTC to either go through a
