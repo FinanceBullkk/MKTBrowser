@@ -21,6 +21,16 @@ export interface AppSettings {
   mcpHttpEnabled: boolean;
   /** Which Chromium binary to download + run. Switching requires app restart. */
   browserEngine: BrowserEngine;
+  /**
+   * CloakBrowser licence key. Without one the engine is stuck on the last
+   * openly published build (146.0.7680.177.5, May 2026); with one it tracks
+   * the current Chrome major. A free key from https://cloakbrowser.dev/free
+   * allows one profile open at a time.
+   *
+   * The Pro binary re-checks this on every launch, so it is a runtime
+   * dependency, not just a download credential.
+   */
+  cloakBrowserLicenseKey: string;
 }
 
 const DEFAULTS: AppSettings = {
@@ -29,6 +39,7 @@ const DEFAULTS: AppSettings = {
   // Prefer CloakBrowser as the primary runtime. Chrome for Testing stays
   // available as a compatibility fallback from Settings.
   browserEngine: "cloakbrowser",
+  cloakBrowserLicenseKey: "",
 };
 
 export class SettingsStore {
@@ -61,6 +72,10 @@ export class SettingsStore {
         raw.browserEngine === "cft" || raw.browserEngine === "cloakbrowser"
           ? raw.browserEngine
           : DEFAULTS.browserEngine,
+      cloakBrowserLicenseKey:
+        typeof raw.cloakBrowserLicenseKey === "string"
+          ? raw.cloakBrowserLicenseKey.trim()
+          : DEFAULTS.cloakBrowserLicenseKey,
     };
     this.cache = merged;
     return merged;

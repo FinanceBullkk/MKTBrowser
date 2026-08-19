@@ -45,6 +45,7 @@ import {
   selectPrimaryBrowserPid,
 } from "./browser-process-discovery";
 import { assertWindowsWebRtcFirewallProtection } from "./windows-webrtc-firewall.ts";
+import { licenseExitMessage } from "./cloakbrowser-pro-channel.ts";
 import { stableWindowsRuntime, win32PathEquals } from "./chromium-runtime-path.ts";
 
 interface RunningProcess {
@@ -518,6 +519,26 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       DYLD_FALLBACK_FRAMEWORK_PATH: process.env.DYLD_FALLBACK_FRAMEWORK_PATH ?? "",
     };
 
+    // CloakBrowser's licensed build re-verifies its licence on every launch and
+    // reads the key from its OWN environment — the wrapper never passes it as a
+    // switch. Omitted here, a licensed binary exits 77 ("key missing") and the
+    // profile never opens. Empty on the keyless build, which ignores it.
+    const cloakBrowserLicenseKey = this.bootstrap.getCloakBrowserLicenseKey();
+    if (cloakBrowserLicenseKey) {
+      cleanEnv.CLOAKBROWSER_LICENSE_KEY = cloakBrowserLicenseKey;
+    }
+
+    // Windows has no HOME; the licence check stores state under the user
+    // profile and exits 79 when it cannot resolve or write it. These are
+    // ordinary Windows vars, not Electron markers, so they don't reintroduce
+    // the "running inside Electron" signal the minimal env exists to avoid.
+    if (process.platform === "win32") {
+      for (const key of ["USERPROFILE", "APPDATA", "LOCALAPPDATA", "SystemRoot", "windir"]) {
+        const value = process.env[key];
+        if (value !== undefined) cleanEnv[key] = value;
+      }
+    }
+
     // Linux GUI clients must inherit the active desktop session. Without
     // these values a headful Chromium process cannot connect to X11/Wayland
     // even though the Electron host window is already running successfully.
@@ -563,6 +584,13 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       // First-line breadcrumb — child.on("exit") below also handles
       // running-changed teardown.
       if (code !== 0 && code !== null) {
+        // A licence refusal exits with a bare code and no diagnostic output, so
+        // without this translation an operator sees only "the browser closed".
+        const licenseReason = licenseExitMessage(code);
+        if (licenseReason) {
+          process.stderr.write(`[mkt-browser] ${licenseReason}
+`);
+        }
         process.stderr.write(
           `[mkt-browser] Chromium pid ${child.pid} exited code=${code} signal=${signal ?? "—"}\n`,
         );
@@ -1198,7 +1226,36 @@ function buildCloakBrowserFingerprintArgs(profileId: ProfileId, fp: FingerprintC
   if (fp.clientHints?.secChUaPlatformVersion) {
     args.push(`--fingerprint-platform-version=${fp.clientHints.secChUaPlatformVersion}`);
   }
+  // screen.availHeight otherwise reflects the HOST's desktop chrome. Harmless
+  // for a Windows persona on Windows, but a macOS persona then reports a
+  // Windows taskbar inset, which no Mac can produce. Measured on CloakBrowser
+  // 146: height 1080 with `-taskbar-height=22` yields availHeight 1058, and
+  // `=0` yields 1080 — the switch is honoured exactly.
+  args.push(`--fingerprint-taskbar-height=${cloakBrowserTaskbarHeight(fp)}`);
   return args;
+}
+
+/**
+ * Desktop chrome inset (px) subtracted from `screen.availHeight`, by device
+ * family. Derived from the family prefix the same way `cloakBrowserPlatform()`
+ * is, so no persisted profile needs migrating.
+ *
+ *   Windows 48 — Windows 11 taskbar at 100% scale. Matches what this host
+ *                actually reports, so Windows personas keep their current
+ *                (already plausible) value rather than changing behaviour.
+ *   macOS    25 — the menu bar. A visible Dock would subtract more, but 25 is
+ *                the floor every Mac shows and is a real configuration
+ *                (auto-hidden Dock); the host's Windows inset is not.
+ *   Linux     0 — availHeight == height on many window managers.
+ *
+ * These are plausible defaults, not measured distributions: worth revisiting if
+ * real-world availHeight data ever says otherwise.
+ */
+function cloakBrowserTaskbarHeight(fp: FingerprintConfig): number {
+  const platform = cloakBrowserPlatform(fp);
+  if (platform === "macos") return 25;
+  if (platform === "linux") return 0;
+  return 48;
 }
 
 function primaryBrandVersion(ch: ClientHints | undefined): string | null {

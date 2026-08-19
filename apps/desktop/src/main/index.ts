@@ -147,6 +147,9 @@ function createChromiumBootstrap(engine: AppSettings["browserEngine"]): Chromium
       environmentEnabled: process.env.MKT_BROWSER_ALLOW_UNPINNED_ENGINE === "1",
       hasExplicitUserDataDir: app.commandLine.hasSwitch("user-data-dir"),
     }),
+    // Read at construction: switching the key requires a restart, same as
+    // switching the engine. Ignored by CFT, which has no licensed channel.
+    cloakBrowserLicenseKey: cachedSettings?.cloakBrowserLicenseKey ?? "",
   });
   bootstrap.on("status", (status: ChromiumStatus) => {
     if (chromiumBootstrap === bootstrap) {
