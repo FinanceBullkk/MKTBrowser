@@ -342,7 +342,12 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       // CDP-based graceful shutdown on close, this makes tab persistence
       // reliable across stop/launch even after a crash.
       "--restore-last-session",
-      "--disable-features=Translate,MediaRouter",
+      // Chromium honours only the LAST --disable-features it receives, so every
+      // feature this build wants off has to travel in this one list. Splitting
+      // it — DNS on one flag, UX on another — silently drops whichever came
+      // first, with nothing logged and no failure to notice.
+      "--disable-features=Translate,MediaRouter,DnsOverHttps,DnsOverHttpsUpgrade," +
+        "EncryptedClientHello,AsyncDns,DnsHttpsSvcb,DnsHttpsSvcbAlpn,NetworkPrediction",
       // Don't back Chromium's "Safe Storage" key with the OS keychain/keyring.
       // Two reasons: (1) our engine bundle is ad-hoc signed, so on macOS the
       // keychain ACL never matches and every launch pops a "Chromium wants to
@@ -407,32 +412,30 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     // proxy, disabling DoH is what sends resolution back to the connection's
     // own resolver — the one the IP implies.
     //
-    // What still leaks bypassing --proxy-server (per Chromium net/docs):
-    //   • DoH (DNS-over-HTTPS) — talks straight to Cloudflare/Google
-    //   • DNS prefetcher / predictor
-    //   • Background networking (component updater, GCM, safe-browsing)
-    //   • Domain Reliability beacons
+    // Only the resolver switches belong here. The rest of what escapes
+    // --proxy-server — background networking (component updater, GCM,
+    // safe-browsing), Domain Reliability beacons, prerender, pings — is set in
+    // the proxy branch below, because that is the only profile they buy
+    // anything for: a profile with no proxy has no proxy to leak around.
     //
-    // Disabling these via features+switches plugs every leak we can
-    // close without source-patching Chromium. We deliberately do NOT
-    // use --host-resolver-rules: it triggers the "unsupported flag"
-    // infobar (visible to the user, even though JS can't probe it),
-    // and a SOCKS5 upstream makes it redundant anyway. Real anti-
-    // detect products (Multilogin Mimic) solve the residual leak
-    // with a custom DNS-resolver source patch — a Phase-1 item for
-    // an approved source-patched Chromium build, not the vanilla fallback.
-    args.push(
-      "--disable-features=DnsOverHttps,DnsOverHttpsUpgrade,EncryptedClientHello,AsyncDns,DnsHttpsSvcb,DnsHttpsSvcbAlpn,NetworkPrediction",
-    );
+    // They were hoisted here on 19 Aug and every launch on engine 151 started
+    // dying about ten seconds in. Which flag does it is NOT established — the
+    // one obvious suspect, --disable-background-networking, survived 35s alone
+    // on a bare engine. What is measured: this exact command line, without the
+    // six, runs 75s and closes with exit 0.
+    //
+    // We deliberately do NOT use --host-resolver-rules: it triggers the
+    // "unsupported flag" infobar (visible to the user, even though JS can't
+    // probe it), and a SOCKS5 upstream makes it redundant anyway. Real
+    // anti-detect products (Multilogin Mimic) solve the residual leak with a
+    // custom DNS-resolver source patch — a Phase-1 item for an approved
+    // source-patched Chromium build, not the vanilla fallback.
+    //
+    // The DoH / AsyncDns / NetworkPrediction feature toggles ride in the one
+    // --disable-features list above; these three are the switch half.
     args.push("--dns-over-https-mode=off");
     args.push("--dns-prefetch-disable");
     args.push("--disable-async-dns");
-    args.push("--no-prerender");
-    args.push("--no-pings");
-    args.push("--disable-background-networking");
-    args.push("--disable-component-update");
-    args.push("--disable-domain-reliability");
-    args.push("--disable-client-side-phishing-detection");
 
     if (engine === "cft") {
       args.push("--test-type=gpu");
@@ -464,6 +467,28 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
         );
       }
       args.push(`--proxy-server=${localProxyUrl}`);
+      // Telemetry and background traffic stay scoped to proxied profiles:
+      // they are leak controls for a profile that egresses through a proxy,
+      // and a profile without one gains nothing from them.
+      //
+      // They also carry a cost that is not yet fully understood. Hoisting them
+      // out of this branch on 19 Aug killed every launch on engine 151 — the
+      // browser started, served CDP, then exited about ten seconds later — and
+      // moving them back is what makes an unproxied launch survive. So a
+      // proxied launch is the configuration that still runs them, and it is
+      // the one to watch if the same ten-second death shows up again.
+      //
+      // Engine 146 had no licence check and these flags were harmless under it
+      // for months, which is why nothing caught this earlier. CloakBrowser 151
+      // does check, through Chromium's own network stack — proven when
+      // --disable-features=AsyncDns turned a "server unreachable" exit (78)
+      // into a "session limit" one (76).
+      args.push("--no-prerender");
+      args.push("--no-pings");
+      args.push("--disable-background-networking");
+      args.push("--disable-component-update");
+      args.push("--disable-domain-reliability");
+      args.push("--disable-client-side-phishing-detection");
       // WebRTC leaks the *real* public IP via STUN even when HTTP traffic
       // is proxied — STUN uses UDP and bypasses HTTP proxies by default.
       // `disable_non_proxied_udp` forces WebRTC to either go through a
@@ -474,7 +499,6 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       // expose their real IP.
       args.push("--force-webrtc-ip-handling-policy=disable_non_proxied_udp");
       args.push("--enforce-webrtc-ip-permission-check");
-
     }
 
     // Browser extensions: load this profile's enabled extensions plus the
