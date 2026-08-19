@@ -8,12 +8,41 @@ export interface BrowserProcessInfo {
   commandLine: string;
 }
 
+/**
+ * Ask the OS which processes hold `dataDir`, and say whether the asking worked.
+ *
+ * `enumerated: false` means the process table could not be read at all — not that nothing holds the
+ * directory. The two are opposite conclusions and the caller must not confuse them: a shutdown
+ * sweep that reads a failed enumeration as "nothing left" reports a clean close over a browser that
+ * is still running and still holding the single licence seat.
+ */
+export async function enumerateBrowserProcessesUsingDataDir(
+  dataDir: string,
+): Promise<{ processes: BrowserProcessInfo[]; enumerated: boolean }> {
+  let processes: BrowserProcessInfo[];
+  try {
+    processes =
+      process.platform === "win32" ? await listWindowsProcesses() : await listPosixProcesses();
+  } catch {
+    return { processes: [], enumerated: false };
+  }
+  return {
+    processes: processes.filter((candidate) =>
+      commandLineUsesDataDir(candidate.commandLine, dataDir),
+    ),
+    enumerated: true,
+  };
+}
+
+/**
+ * The lossy view, for callers that already have a safe fallback (they pass a known PID to
+ * `selectPrimaryBrowserPid`). Anything that treats "empty" as proof of termination must use
+ * `enumerateBrowserProcessesUsingDataDir` and check the flag instead.
+ */
 export async function findBrowserProcessesUsingDataDir(
   dataDir: string,
 ): Promise<BrowserProcessInfo[]> {
-  const processes =
-    process.platform === "win32" ? await listWindowsProcesses() : await listPosixProcesses();
-  return processes.filter((candidate) => commandLineUsesDataDir(candidate.commandLine, dataDir));
+  return (await enumerateBrowserProcessesUsingDataDir(dataDir)).processes;
 }
 
 export function selectPrimaryBrowserPid(
@@ -51,8 +80,9 @@ async function listWindowsProcesses(): Promise<BrowserProcessInfo[]> {
     if (!stdout.trim()) return [];
     const parsed = JSON.parse(stdout) as BrowserProcessInfo[] | BrowserProcessInfo;
     return (Array.isArray(parsed) ? parsed : [parsed]).filter(isBrowserProcessInfo);
-  } catch {
-    return [];
+  } catch (cause) {
+    // Propagate: the one caller that cannot tolerate a false empty checks for it.
+    throw new Error("could not enumerate Windows processes", { cause });
   }
 }
 
@@ -69,8 +99,8 @@ async function listPosixProcesses(): Promise<BrowserProcessInfo[]> {
       if (pid > 0 && pid !== process.pid) processes.push({ pid, commandLine: match[2]! });
     }
     return processes;
-  } catch {
-    return [];
+  } catch (cause) {
+    throw new Error("could not enumerate processes", { cause });
   }
 }
 

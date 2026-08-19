@@ -41,6 +41,7 @@ import { companionDir } from "./extensions/companion";
 import { resolveLoadDir } from "./extensions/extensionStore.ts";
 import { sanitizeStartUrl } from "./startPage";
 import {
+  enumerateBrowserProcessesUsingDataDir,
   findBrowserProcessesUsingDataDir,
   selectPrimaryBrowserPid,
 } from "./browser-process-discovery";
@@ -99,7 +100,8 @@ type ProfileLifecycleLogReason =
   | "BOOTSTRAP-FAILED"
   | "LAUNCH-FAILED"
   | "SHUTDOWN-COMPLETE"
-  | "SHUTDOWN-FAILED";
+  | "SHUTDOWN-FAILED"
+  | "SWEEP-DISCOVERY-FAILED";
 
 interface ProfileLifecycleLogDetails {
   targetTypes?: Array<string | null>;
@@ -1646,8 +1648,10 @@ async function terminateBrowserProcess(
   context: BrowserProcessContext,
 ): Promise<boolean> {
   const shutdownMethod = await gracefulShutdown(profileId, context);
-  const survivors = await killBrowsersUsingDataDir(profileId, context);
-  const terminated = !isPidAlive(context.pid) && survivors.length === 0;
+  const { survivors, enumerated } = await killBrowsersUsingDataDir(profileId, context);
+  // An unreadable process table is not evidence of termination. Claiming "complete" from one is
+  // how a browser that still holds the licence seat gets recorded as closed.
+  const terminated = !isPidAlive(context.pid) && survivors.length === 0 && enumerated;
   writeProfileLifecycleLog(
     profileId,
     context,
@@ -1681,6 +1685,14 @@ async function gracefulShutdown(
   await withTimeout(r.session.closeBrowser(), 3000);
   if (!trackedPidWasAlive) {
     await withTimeout(r.session.close(), 1000);
+    // The tracked PID was a Windows launcher that already handed off, so the browser doing the
+    // actual closing is one we are not watching. Returning here used to hand straight to the
+    // data-dir sweep, whose first act is SIGKILL — landing on a browser three milliseconds into
+    // flushing its own shutdown. CloakBrowser releases its licence seat during that flush and not
+    // before, so killing it there costs a seat for the 7-17 minutes the lease takes to expire,
+    // on a plan that has exactly one. Give the untracked browser the same 4s Browser.close budget
+    // the tracked path gets; the sweep is still there for whatever ignores it.
+    await waitForDataDirProcessesToExit(r.browserDataDir, 4000);
     return "already-exited";
   }
   // Chromium needs ~500ms–2s to flush session-restore on macOS; 4s is margin.
@@ -1717,11 +1729,20 @@ async function gracefulShutdown(
 async function killBrowsersUsingDataDir(
   profileId: ProfileId,
   context: BrowserProcessContext,
-): Promise<number[]> {
-  const pids = (await findBrowserProcessesUsingDataDir(context.browserDataDir)).map(
-    (process) => process.pid,
+): Promise<{ survivors: number[]; enumerated: boolean }> {
+  const { processes, enumerated } = await enumerateBrowserProcessesUsingDataDir(
+    context.browserDataDir,
   );
-  if (pids.length === 0) return [];
+  if (!enumerated) {
+    // Nothing was swept because nothing could be listed. Saying so is the whole point: the
+    // alternative is an empty survivor list that reads exactly like a clean shutdown.
+    writeProfileLifecycleLog(profileId, context, "SWEEP-DISCOVERY-FAILED", {
+      shutdownSource: "data-dir-sweep",
+    });
+    return { survivors: [], enumerated: false };
+  }
+  const pids = processes.map((process) => process.pid);
+  if (pids.length === 0) return { survivors: [], enumerated: true };
   console.log(
     `[mkt-browser] sweep: SIGKILL ${pids.length} lingering proc(s) for ${context.browserDataDir}: ${pids.join(", ")}`,
   );
@@ -1733,7 +1754,7 @@ async function killBrowsersUsingDataDir(
     killPid(pid, "SIGKILL");
   }
   await Promise.all(pids.map((pid) => waitForPidDeath(pid, 2000)));
-  return pids.filter(isPidAlive);
+  return { survivors: pids.filter(isPidAlive), enumerated: true };
 }
 
 /** Resolve when `p` settles or after `ms`, whichever comes first. Never
@@ -1784,6 +1805,28 @@ async function isCdpEndpointReachable(port: number, timeoutMs: number): Promise<
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/**
+ * Poll until nothing holds `dataDir` any more, or the budget runs out. Unlike waitForPidDeath this
+ * asks the OS which processes claim the directory, which is the only way to wait on a browser whose
+ * PID we never tracked. A discovery failure ends the wait rather than extending it — the sweep that
+ * follows is the backstop, and blocking shutdown on a broken enumeration would be worse.
+ */
+async function waitForDataDirProcessesToExit(dataDir: string, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const { processes, enumerated } = await enumerateBrowserProcessesUsingDataDir(dataDir);
+      if (!enumerated) return false;
+      if (processes.length === 0) return true;
+    } catch {
+      return false;
+    }
+    await sleep(150);
+  }
+  const final = await enumerateBrowserProcessesUsingDataDir(dataDir);
+  return final.enumerated && final.processes.length === 0;
 }
 
 function createWindowWatcher(
