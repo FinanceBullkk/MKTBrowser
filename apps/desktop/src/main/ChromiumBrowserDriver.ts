@@ -48,6 +48,7 @@ import {
 import { assertWindowsWebRtcFirewallProtection } from "./windows-webrtc-firewall.ts";
 import { licenseExitMessage } from "./cloakbrowser-pro-channel.ts";
 import { appendProfileLifecycleLine } from "./profile-lifecycle-log.ts";
+import { LicenseKeyPool, keyTail } from "./license-key-pool.ts";
 import { stableWindowsRuntime, win32PathEquals } from "./chromium-runtime-path.ts";
 
 interface BrowserProcessContext {
@@ -102,7 +103,8 @@ type ProfileLifecycleLogReason =
   | "LAUNCH-FAILED"
   | "SHUTDOWN-COMPLETE"
   | "SHUTDOWN-FAILED"
-  | "SWEEP-DISCOVERY-FAILED";
+  | "SWEEP-DISCOVERY-FAILED"
+  | "LICENCE-KEY-REFUSED";
 
 interface ProfileLifecycleLogDetails {
   targetTypes?: Array<string | null>;
@@ -140,6 +142,12 @@ export interface ChromiumBrowserDriverOptions {
   profileManager: ProfileManager;
   chromiumBootstrap: ChromiumBootstrap;
   /**
+   * Which licence key each profile launches with. The engine binds one session per key, so this is
+   * what decides how many profiles can be open at once. Absent, every launch uses the bootstrap's
+   * single key and concurrency is whatever that one key allows.
+   */
+  licenseKeyPool?: LicenseKeyPool;
+  /**
    * Called when the companion extension's "Add to MKT Browser" button is clicked
    * inside a running profile. `profileId` is the profile that made the call
    * (the CDP session is profile-scoped). The host installs the extension.
@@ -171,6 +179,20 @@ interface DriverEvents {
  * is responsible for parsing the page snapshot and producing selectors. MKT Browser never
  * calls any external API.
  */
+/** CloakBrowser's exit code for "this key already has a session open". */
+const SEAT_LIMIT_EXIT_CODE = 76;
+
+/**
+ * Was this failure the engine refusing the key, rather than anything about the profile?
+ *
+ * Tagged at the throw site rather than matched on the message: the message is operator-facing and
+ * will be rewritten, and a rotation loop that stops working because someone improved the wording
+ * would be a quiet, expensive bug.
+ */
+function isSeatRefusal(error: unknown): boolean {
+  return (error as { licenseExitCode?: number } | null)?.licenseExitCode === SEAT_LIMIT_EXIT_CODE;
+}
+
 export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver {
   private readonly running = new Map<ProfileId, RunningProcess>();
   private readonly launching = new Set<ProfileId>();
@@ -182,6 +204,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
   private bootstrap: ChromiumBootstrap;
   private readonly onCompanionInstall?: (profileId: ProfileId, extensionId: string) => void;
   private readonly extensionStoreRoot: string;
+  private readonly licenseKeyPool?: LicenseKeyPool;
 
   constructor(opts: ChromiumBrowserDriverOptions) {
     super();
@@ -189,6 +212,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     this.bootstrap = opts.chromiumBootstrap;
     this.onCompanionInstall = opts.onCompanionInstall;
     this.extensionStoreRoot = opts.extensionStoreRoot;
+    this.licenseKeyPool = opts.licenseKeyPool;
   }
 
   setChromiumBootstrap(bootstrap: ChromiumBootstrap): void {
@@ -233,13 +257,62 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     }
     this.launching.add(profileId);
     try {
-      return await this.launchTracked(profileId);
-    } catch (error) {
-      await this.cleanupFailedLaunch(profileId, error);
-      throw error;
+      return await this.launchWithKeyRotation(profileId);
     } finally {
       this.launching.delete(profileId);
     }
+  }
+
+  /**
+   * Launch, and if the engine refuses the licence key, try the next one.
+   *
+   * The pool's picture of which keys are free is a good guess, not an authority: a seat can be held
+   * by a browser an earlier crash left behind, or by the same key in use somewhere else entirely.
+   * Exit 76 is the engine correcting that guess, so the answer is to note the key as busy and try
+   * another rather than to fail — the operator holds several keys precisely so that one being taken
+   * is not the end of it.
+   *
+   * Only a seat refusal rotates. Every other failure — a missing engine, a proxy that would not
+   * start, a profile that does not exist — would fail identically on every key, so retrying would
+   * just multiply the wait before reporting the same thing.
+   */
+  private async launchWithKeyRotation(profileId: ProfileId): Promise<LaunchedProfile> {
+    const pool = this.licenseKeyPool;
+    // One attempt per key, plus the no-pool case. A profile keeps its reservation across attempts,
+    // so this cannot spend more than one seat at a time.
+    const attempts = pool ? Math.max(pool.snapshot().total, 1) : 1;
+    let lastRefusal: unknown = null;
+
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      if (pool && pool.acquire(profileId) === null) {
+        // Nothing left to try. Report the refusal the engine gave us if there was one, so the
+        // message names the real reason rather than an empty pool.
+        if (lastRefusal) throw lastRefusal;
+        throw engineUnavailable(licenseExitMessage(SEAT_LIMIT_EXIT_CODE) ?? "No licence key is free.");
+      }
+      const key = pool?.keyFor(profileId) ?? null;
+      try {
+        return await this.launchTracked(profileId);
+      } catch (error) {
+        await this.cleanupFailedLaunch(profileId, error);
+        if (!pool || !isSeatRefusal(error)) {
+          pool?.release(profileId, true);
+          throw error;
+        }
+        // This key is spoken for. Rest it and let the loop reach for the next.
+        lastRefusal = error;
+        if (key) {
+          pool.markRefused(key);
+          appendProfileLifecycleLine({
+            profileId,
+            reason: "LICENCE-KEY-REFUSED",
+            keyTail: keyTail(key),
+            keysLeft: pool.availableCount(),
+          });
+        }
+      }
+    }
+    throw lastRefusal ?? engineUnavailable("No licence key could start a browser.");
   }
 
   private async launchTracked(profileId: ProfileId): Promise<LaunchedProfile> {
@@ -624,7 +697,10 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     // reads the key from its OWN environment — the wrapper never passes it as a
     // switch. Omitted here, a licensed binary exits 77 ("key missing") and the
     // profile never opens. Empty on the keyless build, which ignores it.
-    const cloakBrowserLicenseKey = this.bootstrap.getCloakBrowserLicenseKey();
+    // The pool has already reserved a key for this profile in launch(); read it rather than
+    // reserving here, so a retry after a refusal cannot quietly take a second seat.
+    const cloakBrowserLicenseKey =
+      this.licenseKeyPool?.keyFor(profileId) ?? this.bootstrap.getCloakBrowserLicenseKey();
     if (cloakBrowserLicenseKey) {
       cleanEnv.CLOAKBROWSER_LICENSE_KEY = cloakBrowserLicenseKey;
     }
@@ -778,7 +854,12 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       // ENGINE_UNAVAILABLE so a caller sees an expected refusal rather than INTERNAL_ERROR.
       const exitCode = launchProcess.childExit.exitCode;
       const licenseReason = licenseExitMessage(exitCode);
-      if (licenseReason) throw engineUnavailable(licenseReason);
+      if (licenseReason) {
+        const refusal = engineUnavailable(licenseReason);
+        // The rotation loop reads this to tell "try the next key" from "this will fail on every key".
+        (refusal as { licenseExitCode?: number }).licenseExitCode = exitCode ?? undefined;
+        throw refusal;
+      }
       throw new Error(`Chromium exited during launch with code ${String(exitCode)}`);
     }
     const launchLogContext: ProfileLifecycleLogContext = { pid: trackedPid, port, startedAt };
@@ -1131,12 +1212,27 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       });
     }
 
-    if (await terminateBrowserProcess(profileId, pending)) {
+    const outcome = await terminateBrowserProcess(profileId, pending);
+    this.releaseLicenseKey(profileId, outcome.shutdownMethod);
+    if (outcome.terminated) {
       if (this.launchingProcesses.get(profileId) === pending) {
         this.launchingProcesses.delete(profileId);
       }
       await withTimeout(stopBridgeForProfile(profileId), 2000);
     }
+  }
+
+  /**
+   * Give the profile's licence key back to the pool.
+   *
+   * Whether the seat actually came back depends on how the browser died: CloakBrowser releases it
+   * during its own shutdown flush, which Browser.close reaches and a signal does not. Reporting a
+   * signalled kill as a clean release would send the very next launch at a seat the server still
+   * counts as taken — so a killed browser rests its key for the lease instead.
+   */
+  private releaseLicenseKey(profileId: ProfileId, method: ShutdownMethod): void {
+    const seatReleased = method === "Browser.close" || method === "already-exited";
+    this.licenseKeyPool?.release(profileId, seatReleased);
   }
 
   private shutdownRunningProfile(
@@ -1150,7 +1246,9 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     this.closing.add(profileId);
     record.windowWatcher.stop();
     const shutdown = (async () => {
-      if (!(await terminateBrowserProcess(profileId, record))) {
+      const outcome = await terminateBrowserProcess(profileId, record);
+      this.releaseLicenseKey(profileId, outcome.shutdownMethod);
+      if (!outcome.terminated) {
         throw new Error(`Chromium pid ${record.pid} survived shutdown escalation`);
       }
 
@@ -1184,7 +1282,9 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
 
     this.closing.add(profileId);
     const shutdown = (async () => {
-      if (!(await terminateBrowserProcess(profileId, pending))) {
+      const outcome = await terminateBrowserProcess(profileId, pending);
+      this.releaseLicenseKey(profileId, outcome.shutdownMethod);
+      if (!outcome.terminated) {
         throw new Error(`Chromium pid ${pending.pid} survived shutdown escalation`);
       }
       if (this.launchingProcesses.get(profileId) === pending) {
@@ -1660,7 +1760,7 @@ type ShutdownMethod = "already-exited" | "Browser.close" | "SIGTERM" | "SIGKILL"
 async function terminateBrowserProcess(
   profileId: ProfileId,
   context: BrowserProcessContext,
-): Promise<boolean> {
+): Promise<{ terminated: boolean; shutdownMethod: ShutdownMethod }> {
   const shutdownMethod = await gracefulShutdown(profileId, context);
   const { survivors, enumerated } = await killBrowsersUsingDataDir(profileId, context);
   // An unreadable process table is not evidence of termination. Claiming "complete" from one is
@@ -1675,7 +1775,7 @@ async function terminateBrowserProcess(
       targetPid: survivors[0],
     },
   );
-  return terminated;
+  return { terminated, shutdownMethod };
 }
 
 async function gracefulShutdown(

@@ -202,7 +202,9 @@ test("keeps browser ownership until failed launches and shutdown sweeps finish",
   assert.match(driver, /await this\.cleanupFailedLaunch\(profileId, error\)/);
   assert.match(driver, /pending\.childExit = \{ exitCode: code, signal \}/);
   assert.match(driver, /writeProfileLifecycleLog\(profileId, pending, "CHILD-EXIT", childExit\)/);
-  assert.match(driver, /if \(await terminateBrowserProcess\(profileId, pending\)\)/);
+  assert.match(driver, /await terminateBrowserProcess\(profileId, pending\)/);
+  // Ownership is dropped only once termination reports success, whatever shape that check takes.
+  assert.match(driver, /if \(outcome\.terminated\)/);
   assert.match(driver, /record\.windowWatcher\.stop\(\)/);
   assert.match(driver, /await terminateBrowserProcess\(profileId, record\)/);
   assert.match(driver, /this\.running\.delete\(profileId\)/);
@@ -229,7 +231,10 @@ test("reports a licence refusal as a refusal, not as a crash", () => {
   // sees it hunting for one. The mapped text names the session limit and what to do about it.
   const driver = source("apps/desktop/src/main/ChromiumBrowserDriver.ts");
   assert.match(driver, /const licenseReason = licenseExitMessage\(exitCode\);/);
-  assert.match(driver, /if \(licenseReason\) throw engineUnavailable\(licenseReason\);/);
+  assert.match(driver, /const refusal = engineUnavailable\(licenseReason\);/);
+  // Tagged with the exit code so key rotation can tell a seat refusal from a real failure
+  // without matching on operator-facing wording that is meant to be rewritten.
+  assert.match(driver, /licenseExitCode\?: number \}\)\.licenseExitCode = exitCode/);
 
   // The mapping is only useful if it still covers the codes the engine actually exits with.
   const channel = source("apps/desktop/src/main/cloakbrowser-pro-channel.ts");

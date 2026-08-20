@@ -32,6 +32,18 @@ export interface AppSettings {
    */
   cloakBrowserLicenseKey: string;
   /**
+   * Every CloakBrowser key this installation may use.
+   *
+   * The engine binds a session to the key it was handed at spawn and refuses a second one, so
+   * concurrency is per key: holding N keys means up to N profiles open at once, one key each. The
+   * pool also absorbs the cooldown — a key whose seat was not released cleanly rests for its lease
+   * while the others keep working, instead of locking the whole app out.
+   *
+   * `cloakBrowserLicenseKey` remains the primary and is what the engine download and manifest
+   * checks use; it is folded into this list automatically so an existing install keeps working.
+   */
+  cloakBrowserLicenseKeys: string[];
+  /**
    * Close browsers left behind by an app that did not exit cleanly, at startup.
    *
    * An orphan holds the engine's licence seat until its lease expires — measured between 7 and 17
@@ -51,8 +63,32 @@ const DEFAULTS: AppSettings = {
   // available as a compatibility fallback from Settings.
   browserEngine: "cloakbrowser",
   cloakBrowserLicenseKey: "",
+  cloakBrowserLicenseKeys: [],
   startupOrphanSweep: true,
 };
+
+/**
+ * The key list, with the single primary key folded in and duplicates dropped.
+ *
+ * The primary comes first so an install that predates the list behaves exactly as before. A key
+ * listed twice would advertise two sessions where the engine grants one, so the operator would be
+ * told a profile can open and then be refused.
+ */
+function normalizeLicenseKeys(raw: Record<string, unknown>): string[] {
+  const primary = typeof raw.cloakBrowserLicenseKey === "string" ? raw.cloakBrowserLicenseKey : "";
+  const listed = Array.isArray(raw.cloakBrowserLicenseKeys)
+    ? raw.cloakBrowserLicenseKeys.filter((k): k is string => typeof k === "string")
+    : [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const key of [primary, ...listed]) {
+    const trimmed = key.trim();
+    if (trimmed.length === 0 || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
+}
 
 export class SettingsStore {
   private readonly jsonPath: string;
@@ -88,6 +124,7 @@ export class SettingsStore {
         typeof raw.cloakBrowserLicenseKey === "string"
           ? raw.cloakBrowserLicenseKey.trim()
           : DEFAULTS.cloakBrowserLicenseKey,
+      cloakBrowserLicenseKeys: normalizeLicenseKeys(raw),
       startupOrphanSweep:
         typeof raw.startupOrphanSweep === "boolean"
           ? raw.startupOrphanSweep

@@ -65,6 +65,7 @@ import { COMPATIBILITY_SMOKE_SWITCH } from "./compatibility-smoke-authorization.
 import { runPackagedCompatibilitySmoke } from "./compatibility-smoke-cli.ts";
 import { CdpSession } from "@mktbrowser/cdp-driver";
 import { appendProfileLifecycleLine } from "./profile-lifecycle-log.ts";
+import { LicenseKeyPool } from "./license-key-pool.ts";
 import { sweepOrphanedProfileBrowsers } from "./startup-orphan-sweep.ts";
 import {
   createIpcRuntimeRegistration,
@@ -113,6 +114,7 @@ let settingsStore: SettingsStore;
 let httpTransport: HttpTransport | null = null;
 let mcpAuthToken: string | null = null;
 let cachedSettings: AppSettings | null = null;
+let licenseKeyPool: LicenseKeyPool | null = null;
 let browserDriverReady = false;
 let switchToCftInFlight: Promise<ChromiumStatus> | null = null;
 let activeCompatibilityEnginePin: CompatibilityEnginePin | null = null;
@@ -417,10 +419,18 @@ app
       },
     });
 
+    // One session per licence key, so the pool is what decides how many profiles can be open at
+    // once. Built from settings on startup; changing keys needs a restart, same as the engine.
+    licenseKeyPool = new LicenseKeyPool({
+      keys: cachedSettings.cloakBrowserLicenseKeys,
+      cooldownMs: 17 * 60_000,
+    });
+
     browserDriver = new ChromiumBrowserDriver({
       profileManager,
       chromiumBootstrap,
       extensionStoreRoot,
+      licenseKeyPool,
       // The companion's "Add to MKT Browser" button routes here (profile-scoped).
       // Confirm natively first: any script on the store page could trigger the
       // channel, so an explicit OS dialog makes a drive-by install impossible.
