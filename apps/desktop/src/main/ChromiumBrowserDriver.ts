@@ -674,7 +674,23 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     const startedAt = new Date().toISOString();
     const cdpEndpoint = `http://127.0.0.1:${port}`;
     const child = spawn(chromiumPath, args, {
-      detached: false,
+      // Detached on purpose, and it is the licence seat that decides this.
+      //
+      // With detached:false the browser joins this app's Windows job object, so force-killing the
+      // app takes the browser down with it. That sounds tidy and is the worst outcome available:
+      // the browser dies the one way that does NOT release its seat, and nothing survives that
+      // could later be asked to release it politely. Measured — kill the app, and the next launch
+      // is refused for the full 7-17 minutes the lease takes to expire.
+      //
+      // Detached, the browser outlives the crash. That leaves a window on screen, which looks
+      // worse and is strictly better: closing that window is itself a clean shutdown that hands
+      // the seat back, and if the operator just restarts the app, the startup sweep closes it over
+      // its own DevTools port and reclaims the seat in seconds. An unrecoverable wait becomes a
+      // recoverable one.
+      //
+      // The normal path is unaffected: before-quit still calls closeAll(), which closes every
+      // browser through CDP before the app goes away.
+      detached: true,
       stdio: ["ignore", "ignore", "pipe"],
       env: cleanEnv,
     });

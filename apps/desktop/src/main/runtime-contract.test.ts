@@ -238,6 +238,20 @@ test("reports a licence refusal as a refusal, not as a crash", () => {
   }
 });
 
+test("spawns the engine detached so a crashed app leaves a reclaimable browser", () => {
+  // detached:false puts the browser in the app's Windows job object, so force-killing the app
+  // kills the browser the one way that keeps its licence seat, and leaves nothing behind that
+  // could be asked to release it. Detached, the startup sweep can still close it politely - or
+  // the operator can close the window, which does the same thing.
+  const driver = source("apps/desktop/src/main/ChromiumBrowserDriver.ts");
+  assert.match(driver, /detached: true,/);
+  assert.equal(driver.includes("detached: false"), false);
+
+  // The sweep is the other half: without it a detached browser is just a stray window.
+  const index = source("apps/desktop/src/main/index.ts");
+  assert.match(index, /sweepOrphanedProfileBrowsers\(/);
+});
+
 function source(relativePath: string): string {
   return readFileSync(new URL(relativePath, REPO_ROOT), "utf8");
 }
