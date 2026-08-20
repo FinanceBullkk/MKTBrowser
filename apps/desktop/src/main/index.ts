@@ -63,6 +63,9 @@ import {
 } from "./compatibility-engine-pin.ts";
 import { COMPATIBILITY_SMOKE_SWITCH } from "./compatibility-smoke-authorization.ts";
 import { runPackagedCompatibilitySmoke } from "./compatibility-smoke-cli.ts";
+import { CdpSession } from "@mktbrowser/cdp-driver";
+import { appendProfileLifecycleLine } from "./profile-lifecycle-log.ts";
+import { sweepOrphanedProfileBrowsers } from "./startup-orphan-sweep.ts";
 import {
   createIpcRuntimeRegistration,
   type IpcRuntimeHandler,
@@ -354,6 +357,45 @@ app
         }
       })
       .catch(() => {});
+
+    // Close browsers a previous run left behind. Only reachable after an unclean exit — the
+    // normal path goes through before-quit -> closeAll(). An orphan keeps the engine's licence
+    // seat until its lease expires, 7 to 17 minutes, during which the app truthfully reports zero
+    // profiles running and every launch truthfully fails, and nothing joins those two facts up for
+    // the operator. Best-effort and never awaited: a slow process listing must not delay the window.
+    if (cachedSettings.startupOrphanSweep) {
+      const profilesRoot = join(dataRoot, "profiles");
+      void sweepOrphanedProfileBrowsers(profilesRoot, {
+        isAlive: (pid) => {
+          try {
+            process.kill(pid, 0);
+            return true;
+          } catch {
+            return false;
+          }
+        },
+        kill: (pid) => {
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {
+            // Already gone, or not ours to kill.
+          }
+        },
+        closeViaCdp: async (port) => {
+          // The same call the Stop button makes, and the only shutdown that hands the seat back.
+          const session = new CdpSession({ port, engine: "cloakbrowser", host: "127.0.0.1" });
+          try {
+            await session.connect();
+            await session.closeBrowser();
+          } finally {
+            await session.close().catch(() => {});
+          }
+        },
+        log: (event) => appendProfileLifecycleLine({ ...event, profilesRoot }),
+      }).catch(() => {
+        // Reclaiming a seat is best-effort; failing to must never stop the app from starting.
+      });
+    }
 
     // Chromium bootstrap — picks the engine from user settings (CFT default,
     // CloakBrowser opt-in for stronger anti-detect), downloads it on first

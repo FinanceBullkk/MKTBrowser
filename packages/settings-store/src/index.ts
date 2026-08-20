@@ -31,6 +31,17 @@ export interface AppSettings {
    * dependency, not just a download credential.
    */
   cloakBrowserLicenseKey: string;
+  /**
+   * Close browsers left behind by an app that did not exit cleanly, at startup.
+   *
+   * An orphan holds the engine's licence seat until its lease expires — measured between 7 and 17
+   * minutes — during which the app shows zero profiles running and every launch fails. The sweep
+   * closes them over their own DevTools port, which is what hands the seat back.
+   *
+   * Off is for the case where two copies of the app share one profiles folder, where one copy's
+   * "orphan" is the other's live profile.
+   */
+  startupOrphanSweep: boolean;
 }
 
 const DEFAULTS: AppSettings = {
@@ -40,6 +51,7 @@ const DEFAULTS: AppSettings = {
   // available as a compatibility fallback from Settings.
   browserEngine: "cloakbrowser",
   cloakBrowserLicenseKey: "",
+  startupOrphanSweep: true,
 };
 
 export class SettingsStore {
@@ -76,6 +88,10 @@ export class SettingsStore {
         typeof raw.cloakBrowserLicenseKey === "string"
           ? raw.cloakBrowserLicenseKey.trim()
           : DEFAULTS.cloakBrowserLicenseKey,
+      startupOrphanSweep:
+        typeof raw.startupOrphanSweep === "boolean"
+          ? raw.startupOrphanSweep
+          : DEFAULTS.startupOrphanSweep,
     };
     this.cache = merged;
     return merged;

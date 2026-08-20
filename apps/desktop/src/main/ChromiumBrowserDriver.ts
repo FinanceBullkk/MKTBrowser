@@ -2,7 +2,7 @@ import { app } from "electron";
 import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { appendFileSync, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { promises as fsp } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
@@ -47,6 +47,7 @@ import {
 } from "./browser-process-discovery";
 import { assertWindowsWebRtcFirewallProtection } from "./windows-webrtc-firewall.ts";
 import { licenseExitMessage } from "./cloakbrowser-pro-channel.ts";
+import { appendProfileLifecycleLine } from "./profile-lifecycle-log.ts";
 import { stableWindowsRuntime, win32PathEquals } from "./chromium-runtime-path.ts";
 
 interface BrowserProcessContext {
@@ -123,26 +124,16 @@ function writeProfileLifecycleLog(
   reason: ProfileLifecycleLogReason,
   details: ProfileLifecycleLogDetails = {},
 ): void {
-  try {
-    const nowMs = Date.now();
-    const elapsedSeconds = Number(((nowMs - Date.parse(context.startedAt)) / 1000).toFixed(3));
-    // Persist before a hung launch or shutdown escalation can erase the last useful breadcrumb.
-    appendFileSync(
-      join(app.getPath("userData"), "profile-shutdown.log"),
-      `${JSON.stringify({
-        timestamp: new Date(nowMs).toISOString(),
-        profileId,
-        pid: context.pid,
-        port: context.port,
-        elapsedSeconds,
-        reason,
-        ...details,
-      })}\n`,
-      "utf8",
-    );
-  } catch {
-    // Diagnostics must never interfere with closing the browser.
-  }
+  // Persist before a hung launch or a shutdown escalation can erase the last useful breadcrumb.
+  const elapsedSeconds = Number(((Date.now() - Date.parse(context.startedAt)) / 1000).toFixed(3));
+  appendProfileLifecycleLine({
+    profileId,
+    pid: context.pid,
+    port: context.port,
+    elapsedSeconds,
+    reason,
+    ...details,
+  });
 }
 
 export interface ChromiumBrowserDriverOptions {

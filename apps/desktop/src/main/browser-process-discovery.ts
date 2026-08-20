@@ -34,6 +34,25 @@ export async function enumerateBrowserProcessesUsingDataDir(
   };
 }
 
+/** Every browser process holding any profile beneath `root`, and whether the asking worked. */
+export async function enumerateBrowserProcessesUnderRoot(
+  root: string,
+): Promise<{ processes: BrowserProcessInfo[]; enumerated: boolean }> {
+  let processes: BrowserProcessInfo[];
+  try {
+    processes =
+      process.platform === "win32" ? await listWindowsProcesses() : await listPosixProcesses();
+  } catch {
+    return { processes: [], enumerated: false };
+  }
+  return {
+    processes: processes.filter((candidate) =>
+      commandLineUsesDataDirUnder(candidate.commandLine, root),
+    ),
+    enumerated: true,
+  };
+}
+
 /**
  * The lossy view, for callers that already have a safe fallback (they pass a known PID to
  * `selectPrimaryBrowserPid`). Anything that treats "empty" as proof of termination must use
@@ -53,6 +72,46 @@ export function selectPrimaryBrowserPid(
     (candidate) => !/(?:^|\s)--type(?:=|\s)/.test(candidate.commandLine),
   );
   return primary?.pid ?? fallbackPid;
+}
+
+/**
+ * The DevTools port a running browser was started with, or null if it has none.
+ *
+ * This is what makes a browser we did not launch still closable the polite way: an orphan left by a
+ * force-killed app carries its own port on its command line, and `Browser.close` on that port is
+ * the only shutdown that returns the licence seat. Killing it keeps the seat for the 7-17 minutes
+ * the lease takes to expire.
+ */
+export function debugPortFromCommandLine(commandLine: string): number | null {
+  // Last flag wins, matching Chromium's own switch handling.
+  let found: number | null = null;
+  const pattern = /(?:^|\s)--remote-debugging-port=(?:"(\d+)"|'(\d+)'|(\d+))/g;
+  for (const match of commandLine.matchAll(pattern)) {
+    const port = Number(match[1] ?? match[2] ?? match[3]);
+    if (Number.isInteger(port) && port > 0 && port < 65_536) found = port;
+  }
+  return found;
+}
+
+/**
+ * Like `commandLineUsesDataDir`, but matches any directory *beneath* `root`.
+ *
+ * The startup sweep needs every browser holding any profile in the app's profiles folder, and it
+ * must not reach one directory further: the operator's own Chrome is also a Chromium with a
+ * `--user-data-dir`, and closing it would be an unforgivable way to reclaim a seat.
+ */
+export function commandLineUsesDataDirUnder(commandLine: string, root: string): boolean {
+  const expected = normalizePath(root);
+  const sep = process.platform === "win32" ? "\\" : "/";
+  const pattern = /(?:^|\s)--user-data-dir=(?:"([^"]+)"|'([^']+)'|(\S+))/g;
+  for (const match of commandLine.matchAll(pattern)) {
+    const value = match[1] ?? match[2] ?? match[3];
+    if (!value) continue;
+    const normalized = normalizePath(value);
+    if (normalized === expected) return true;
+    if (normalized.startsWith(expected + sep)) return true;
+  }
+  return false;
 }
 
 export function commandLineUsesDataDir(commandLine: string, dataDir: string): boolean {
