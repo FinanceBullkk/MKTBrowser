@@ -763,9 +763,16 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     );
     launchProcess.pid = trackedPid;
     if (launchProcess.childExit && trackedPid === child.pid && !isPidAlive(trackedPid)) {
-      throw new Error(
-        `Chromium exited during launch with code ${String(launchProcess.childExit.exitCode)}`,
-      );
+      // A licence refusal is the most common way to land here and it is not a defect: the free key
+      // allows one session at a time, and the engine opens its DevTools port BEFORE the licence
+      // verdict arrives, so readiness passes and the process is gone a second later. Reported as a
+      // raw exit code it reads as a crash — that misreading cost an evening. LICENSE_EXIT_MESSAGES
+      // already says what happened and what to do about it; say that instead, and classify it as
+      // ENGINE_UNAVAILABLE so a caller sees an expected refusal rather than INTERNAL_ERROR.
+      const exitCode = launchProcess.childExit.exitCode;
+      const licenseReason = licenseExitMessage(exitCode);
+      if (licenseReason) throw engineUnavailable(licenseReason);
+      throw new Error(`Chromium exited during launch with code ${String(exitCode)}`);
     }
     const launchLogContext: ProfileLifecycleLogContext = { pid: trackedPid, port, startedAt };
 

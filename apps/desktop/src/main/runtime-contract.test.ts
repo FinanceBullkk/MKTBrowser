@@ -222,6 +222,22 @@ test("serializes window watcher polls and requires process death for CDP-unreach
   assert.match(driver, /Date\.now\(\) - unreachableSinceMs > 1500 && !isProcessAlive\(\)/);
 });
 
+test("reports a licence refusal as a refusal, not as a crash", () => {
+  // CloakBrowser opens its DevTools port before the licence verdict lands, so a seat refusal
+  // reaches the launch path as a process that started, passed readiness, and then vanished. Left
+  // as `Chromium exited during launch with code 76` it reads as an engine crash and sends whoever
+  // sees it hunting for one. The mapped text names the session limit and what to do about it.
+  const driver = source("apps/desktop/src/main/ChromiumBrowserDriver.ts");
+  assert.match(driver, /const licenseReason = licenseExitMessage\(exitCode\);/);
+  assert.match(driver, /if \(licenseReason\) throw engineUnavailable\(licenseReason\);/);
+
+  // The mapping is only useful if it still covers the codes the engine actually exits with.
+  const channel = source("apps/desktop/src/main/cloakbrowser-pro-channel.ts");
+  for (const code of ["76", "77", "78", "79"]) {
+    assert.match(channel, new RegExp(`\n  ${code}:`), `licence exit ${code} has no message`);
+  }
+});
+
 function source(relativePath: string): string {
   return readFileSync(new URL(relativePath, REPO_ROOT), "utf8");
 }
