@@ -50,6 +50,10 @@ import { licenseExitMessage } from "./cloakbrowser-pro-channel.ts";
 import { appendProfileLifecycleLine } from "./profile-lifecycle-log.ts";
 import { LicenseKeyPool, keyTail } from "./license-key-pool.ts";
 import { stableWindowsRuntime, win32PathEquals } from "./chromium-runtime-path.ts";
+import {
+  disableFeaturesArg,
+  networkPrivacySwitches,
+} from "./chromium-network-privacy-flags.ts";
 
 interface BrowserProcessContext {
   child: ChildProcess;
@@ -503,12 +507,10 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       // CDP-based graceful shutdown on close, this makes tab persistence
       // reliable across stop/launch even after a crash.
       "--restore-last-session",
-      // Chromium honours only the LAST --disable-features it receives, so every
-      // feature this build wants off has to travel in this one list. Splitting
-      // it — DNS on one flag, UX on another — silently drops whichever came
-      // first, with nothing logged and no failure to notice.
-      "--disable-features=Translate,MediaRouter,DnsOverHttps,DnsOverHttpsUpgrade," +
-        "EncryptedClientHello,AsyncDns,DnsHttpsSvcb,DnsHttpsSvcbAlpn,NetworkPrediction",
+      // One list, deliberately. Chromium honours only the LAST --disable-features
+      // it receives, so a second flag anywhere in argv discards this one.
+      // chromium-network-privacy-flags.ts owns the contents.
+      disableFeaturesArg(),
       // Don't back Chromium's "Safe Storage" key with the OS keychain/keyring.
       // Two reasons: (1) our engine bundle is ad-hoc signed, so on macOS the
       // keychain ACL never matches and every launch pops a "Chromium wants to
@@ -587,16 +589,10 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     // source-patched Chromium build, not the vanilla fallback.
     //
     // The DoH / AsyncDns / NetworkPrediction feature toggles ride in the one
-    // --disable-features list above; what follows is the command-switch half.
-    args.push("--dns-over-https-mode=off");
-    args.push("--dns-prefetch-disable");
-    args.push("--disable-async-dns");
-    args.push("--no-prerender");
-    args.push("--no-pings");
-    args.push("--disable-background-networking");
-    args.push("--disable-component-update");
-    args.push("--disable-domain-reliability");
-    args.push("--disable-client-side-phishing-detection");
+    // --disable-features list above; this is the command-switch half. It is
+    // pushed here, outside every proxy branch, because that is where it was NOT
+    // in the build browserscan caught leaking DNS on unproxied profiles.
+    args.push(...networkPrivacySwitches(Boolean(profile.proxy)));
 
     if (engine === "cft") {
       args.push("--test-type=gpu");
