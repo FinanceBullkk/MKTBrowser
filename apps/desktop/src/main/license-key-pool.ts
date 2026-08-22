@@ -20,6 +20,8 @@
  * try the next one. The pool is a good guess that corrects itself, never an authority.
  */
 
+import { fingerprintLicenseKey, type LicenseLeaseState } from "./license-lease-journal.ts";
+
 export type LicenseKeyState = "idle" | "in-use" | "cooling";
 
 export interface LicenseKeyStatus {
@@ -38,6 +40,19 @@ export interface LicenseKeyPoolSnapshot {
   keys: LicenseKeyStatus[];
 }
 
+export interface LicenseCapacitySnapshot {
+  total: number;
+  free: number;
+  active: number;
+  pendingRecovery: number;
+  cooling: number;
+}
+
+export interface LicenseCapacityLeaseRecord {
+  keyFingerprint: string;
+  state: LicenseLeaseState;
+}
+
 interface Slot {
   key: string;
   profileId: string | null;
@@ -53,7 +68,7 @@ export interface LicenseKeyPoolOptions {
 
 /** Enough to identify a key in a log without being able to reuse it. */
 export function keyTail(key: string): string {
-  return key.length <= 6 ? key : key.slice(-6);
+  return key.length <= 6 ? "*".repeat(key.length) : key.slice(-6);
 }
 
 export class LicenseKeyPool {
@@ -147,5 +162,38 @@ export class LicenseKeyPool {
       cooling: keys.filter((k) => k.state === "cooling").length,
       keys,
     };
+  }
+
+  capacitySnapshot(
+    leaseRecords: readonly LicenseCapacityLeaseRecord[] = [],
+  ): LicenseCapacitySnapshot {
+    this.refresh();
+    const pendingFingerprints = new Set<string>();
+    const coolingFingerprints = new Set<string>();
+    for (const record of leaseRecords) {
+      if (record.state === "confirmed-released") continue;
+      if (record.state === "cooling" || record.state === "terminal-refused") {
+        coolingFingerprints.add(record.keyFingerprint);
+      } else {
+        pendingFingerprints.add(record.keyFingerprint);
+      }
+    }
+
+    const capacity: LicenseCapacitySnapshot = {
+      total: this.slots.length,
+      free: 0,
+      active: 0,
+      pendingRecovery: 0,
+      cooling: 0,
+    };
+    for (const slot of this.slots) {
+      const fingerprint = fingerprintLicenseKey(slot.key);
+      if (slot.profileId !== null) capacity.active += 1;
+      else if (slot.coolingUntilMs !== null || coolingFingerprints.has(fingerprint)) {
+        capacity.cooling += 1;
+      } else if (pendingFingerprints.has(fingerprint)) capacity.pendingRecovery += 1;
+      else capacity.free += 1;
+    }
+    return capacity;
   }
 }

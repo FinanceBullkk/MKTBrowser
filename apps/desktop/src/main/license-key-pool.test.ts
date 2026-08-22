@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { LicenseKeyPool, keyTail } from "./license-key-pool.ts";
+import { fingerprintLicenseKey } from "./license-lease-journal.ts";
 
 const KEYS = ["cb_aaaaaa111111", "cb_bbbbbb222222", "cb_cccccc333333"];
 
@@ -98,7 +99,7 @@ test("never exposes a whole key", () => {
     for (const full of KEYS) assert.equal(k.keyTail === full, false);
   }
   assert.equal(JSON.stringify(snap).includes(KEYS[0]!), false, "a snapshot travels over IPC");
-  assert.equal(keyTail("short"), "short");
+  assert.equal(keyTail("short"), "*****");
   assert.equal(keyTail("cb_aaaaaa111111"), "111111");
 });
 
@@ -115,4 +116,55 @@ test("releasing a profile that holds nothing changes nothing", () => {
   const pool = poolAt(clock);
   pool.release("never-launched", false);
   assert.equal(pool.availableCount(), KEYS.length);
+});
+
+test("capacity never counts pending recovery or cooling keys as free", () => {
+  const clock = { t: 0 };
+  const pool = poolAt(clock);
+  const activeKey = pool.acquire("profile-active");
+  const coolingKey = pool.acquire("profile-cooling");
+  assert.notEqual(activeKey, null);
+  assert.notEqual(coolingKey, null);
+  pool.release("profile-cooling", false);
+
+  const capacity = pool.capacitySnapshot([
+    {
+      keyFingerprint: fingerprintLicenseKey(KEYS[2]!),
+      state: "pending-recovery",
+    },
+    {
+      keyFingerprint: fingerprintLicenseKey(activeKey!),
+      state: "active",
+    },
+  ]);
+
+  assert.deepEqual(capacity, {
+    total: 3,
+    free: 0,
+    active: 1,
+    pendingRecovery: 1,
+    cooling: 1,
+  });
+  assert.equal(JSON.stringify(capacity).includes(KEYS[0]!), false);
+});
+
+test("capacity treats an unreconciled reservation as pending instead of free", () => {
+  const clock = { t: 0 };
+  const pool = poolAt(clock);
+
+  assert.deepEqual(
+    pool.capacitySnapshot([
+      {
+        keyFingerprint: fingerprintLicenseKey(KEYS[0]!),
+        state: "reserved",
+      },
+    ]),
+    {
+      total: 3,
+      free: 2,
+      active: 0,
+      pendingRecovery: 1,
+      cooling: 0,
+    },
+  );
 });

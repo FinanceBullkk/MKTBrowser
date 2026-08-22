@@ -52,6 +52,12 @@ profiles on the operator device.
   for crash-safe retry. The operator must type `DELETE <full profile id>`; active launch/close work
   is refused. Deletion is limited to the selected owned profile directory and database row, never
   Relay configuration, device credentials, the MCP token, or MultiZen data.
+- P0 automated proxy, lease-journal, and readiness hardening is green as of 22 August 2026. Proxied
+  launch fails closed on unverifiable egress; lease storage is atomic, schema-validated,
+  crash-recoverable, serialized, and redacted; aggregate capacity contains no key/profile identity.
+  `license-capacity-v1` is deliberately not advertised because the live vendor session protocol,
+  sidecar, and driver lifecycle are not connected. Real proxy/DNS/WebRTC evidence, human input,
+  second-PC recovery, and canary gates remain open, so this is not rollout approval.
 - This build may be used for an owner-led technical demo with disposable profiles. It is not
   approved for real accounts, pilot distribution, or team rollout.
 - The Windows directory package was regenerated on 12 August 2026 with SHA-256

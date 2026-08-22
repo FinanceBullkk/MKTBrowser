@@ -64,6 +64,7 @@ export const MKT_BROWSER_BASE_CAPABILITIES = [
 export const MKT_BROWSER_CAPABILITIES = [
   ...MKT_BROWSER_BASE_CAPABILITIES,
   "local-install-ready-v1",
+  "license-capacity-v1",
 ] as const;
 
 export type MktBrowserCapability = (typeof MKT_BROWSER_CAPABILITIES)[number];
@@ -114,6 +115,14 @@ export interface MktBrowserEngineInfo {
   status: ChromiumStatus["kind"] | "unknown";
 }
 
+export interface MktBrowserLicenseCapacity {
+  total: number;
+  free: number;
+  active: number;
+  pendingRecovery: number;
+  cooling: number;
+}
+
 export interface MktBrowserRuntimeInfo {
   /** Always the owned provider slug. Another value means the caller reached a different product. */
   provider: string;
@@ -122,6 +131,8 @@ export interface MktBrowserRuntimeInfo {
   profileSchemaVersion: number;
   engine: MktBrowserEngineInfo;
   capabilities: MktBrowserCapability[];
+  /** Null when this build cannot produce a complete measured capacity view. */
+  licenseCapacity: MktBrowserLicenseCapacity | null;
 }
 
 export interface MktBrowserOperationDiagnostic {

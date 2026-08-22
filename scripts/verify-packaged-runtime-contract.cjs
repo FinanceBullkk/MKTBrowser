@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const { spawn } = require("node:child_process");
 const { once } = require("node:events");
 const { existsSync } = require("node:fs");
-const { mkdtemp, readFile, rm } = require("node:fs/promises");
+const { mkdir, mkdtemp, readFile, rm } = require("node:fs/promises");
 const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
@@ -27,6 +27,7 @@ async function main() {
   assert.ok(existsSync(executable), "Build the Windows directory package before verification.");
 
   const userData = await mkdtemp(path.join(os.tmpdir(), "mkt-browser-packaged-contract-"));
+  const isolatedLocalAppData = path.join(userData, "local-app-data");
   let engineFixture;
   let child;
   let diagnostics = "";
@@ -37,11 +38,14 @@ async function main() {
   let launchedPid;
   let failure;
   try {
+    await mkdir(isolatedLocalAppData, { recursive: true });
     engineFixture = await installSystemChromeEngineFixture(userData);
     const port = await reservePort();
     const env = {
       ...process.env,
       ELECTRON_ENABLE_LOGGING: "1",
+      LOCALAPPDATA: isolatedLocalAppData,
+      MKT_BROWSER_ALLOW_UNPINNED_ENGINE: "1",
       MKT_BROWSER_PACKAGED_CONTRACT_VERIFY: "1",
       MKT_BROWSER_MCP_PORT: String(port),
     };
@@ -220,7 +224,11 @@ async function main() {
       operation_id: "packaged-launch-1",
     });
     assert.equal(blockedLaunch.isError, true);
-    assert.equal(blockedLaunch.body.error?.code, "PROXY_REJECTED");
+    assert.equal(
+      blockedLaunch.body.error?.code,
+      "PROXY_REJECTED",
+      `Managed invalid-proxy launch returned the wrong error: ${describeToolBody(blockedLaunch.body)}`,
+    );
 
     const lifecycleProfile = await callTool(baseUrl, token, "create_profile", {
       name: "Packaged browser lifecycle verifier",

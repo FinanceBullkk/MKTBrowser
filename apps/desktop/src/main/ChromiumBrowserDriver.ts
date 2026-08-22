@@ -36,7 +36,7 @@ import { CdpSession } from "@mktbrowser/cdp-driver";
 import type { ChromiumBootstrap } from "./ChromiumBootstrap";
 import { startBridgeForProfile, stopBridgeForProfile } from "./socks5Bridge";
 import { probeProxyGeo } from "./proxyGeo";
-import { resolveProxyGeoLaunch } from "./proxyGeoLaunch.ts";
+import { verifyProxyGeoLaunch } from "./proxyGeoLaunch.ts";
 import { companionDir } from "./extensions/companion";
 import { resolveLoadDir } from "./extensions/extensionStore.ts";
 import { sanitizeStartUrl } from "./startPage";
@@ -281,7 +281,8 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
    * just multiply the wait before reporting the same thing.
    */
   private async launchWithKeyRotation(profileId: ProfileId): Promise<LaunchedProfile> {
-    const pool = this.licenseKeyPool;
+    // CFT has no licensed session channel. An empty CloakBrowser pool must not block its launches.
+    const pool = this.bootstrap.getEngine() === "cloakbrowser" ? this.licenseKeyPool : undefined;
     // One attempt per key, plus the no-pool case. A profile keeps its reservation across attempts,
     // so this cannot spend more than one seat at a time.
     const attempts = pool ? Math.max(pool.snapshot().total, 1) : 1;
@@ -413,9 +414,14 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     let geoCoords: { latitude: number; longitude: number } | null = null;
     if (profile.proxy) {
       try {
-        const geo = await probeProxyGeo(profile.proxy, { timeoutMs: 4000 });
+        const verified = await verifyProxyGeoLaunch({
+          profileId,
+          fingerprint: fp,
+          probe: () => probeProxyGeo(profile.proxy!, { timeoutMs: 4000 }),
+          reject: proxyRejected,
+        });
+        const { geo, decision } = verified;
         const previousTimezone = fp.timezone;
-        const decision = resolveProxyGeoLaunch(fp, geo);
         fp = decision.fingerprint;
         webrtcSpoofIp = decision.webrtcSpoofIp;
         geoCoords = decision.geoCoords;
@@ -430,18 +436,10 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
             `[mkt-browser] aligning fingerprint timezone ${previousTimezone} → ${decision.fingerprint.timezone} (proxy geo)`,
           );
         }
-      } catch {
+      } catch (cause) {
         // Do not leave a country cached from an older proxy or a prior route.
-        // The fallback remains leak-safe because a null spoof IP selects the
-        // WebRTC kill switch below.
         this.profileManager.setProxyCountry(profileId, null);
-        const decision = resolveProxyGeoLaunch(fp, null);
-        fp = decision.fingerprint;
-        webrtcSpoofIp = decision.webrtcSpoofIp;
-        geoCoords = decision.geoCoords;
-        console.warn(
-          `[mkt-browser] ${decision.diagnosticCode}: continuing with verified containment and WebRTC disabled.`,
-        );
+        throw cause;
       }
     }
     // No-proxy: fp.timezone is left as the profile configured it (issue #13).

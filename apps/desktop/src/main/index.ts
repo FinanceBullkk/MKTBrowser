@@ -37,6 +37,7 @@ import {
   resolveMktBrowserMcpPort,
   type ChromiumStatus,
   type ExtensionConfig,
+  type MktBrowserCapability,
   type ProxyConfig,
 } from "@mktbrowser/types";
 import { ChromiumBrowserDriver } from "./ChromiumBrowserDriver.ts";
@@ -66,6 +67,7 @@ import { runPackagedCompatibilitySmoke } from "./compatibility-smoke-cli.ts";
 import { CdpSession } from "@mktbrowser/cdp-driver";
 import { appendProfileLifecycleLine } from "./profile-lifecycle-log.ts";
 import { LicenseKeyPool } from "./license-key-pool.ts";
+import { LicenseLeaseJournal } from "./license-lease-journal.ts";
 import { sweepOrphanedProfileBrowsers } from "./startup-orphan-sweep.ts";
 import {
   createIpcRuntimeRegistration,
@@ -115,6 +117,7 @@ let httpTransport: HttpTransport | null = null;
 let mcpAuthToken: string | null = null;
 let cachedSettings: AppSettings | null = null;
 let licenseKeyPool: LicenseKeyPool | null = null;
+let licenseLeaseJournal: LicenseLeaseJournal;
 let browserDriverReady = false;
 let switchToCftInFlight: Promise<ChromiumStatus> | null = null;
 let activeCompatibilityEnginePin: CompatibilityEnginePin | null = null;
@@ -272,9 +275,17 @@ app
         "Startup",
       ),
     });
-    const runtimeCapabilities = async () =>
-      (await localInstallInspector.isReady()) ? (["local-install-ready-v1"] as const) : [];
+    const runtimeCapabilities = async (): Promise<MktBrowserCapability[]> => {
+      // Keep the capacity payload diagnostic until driver lifecycle writes and startup recovery
+      // make it complete. MKTTool only treats it as launch authority once this capability appears.
+      const capabilities: MktBrowserCapability[] = [];
+      if (await localInstallInspector.isReady()) capabilities.push("local-install-ready-v1");
+      return capabilities;
+    };
     const dataRoot = join(userData, "data");
+    licenseLeaseJournal = await LicenseLeaseJournal.open(
+      join(dataRoot, "license-leases.json"),
+    );
     if (process.platform === "win32" && !app.commandLine.hasSwitch("user-data-dir")) {
       const legacyImport = findLegacyMultiZenImport(app.getPath("appData"), dataRoot);
       if (legacyImport?.status === "unreadable") {
@@ -425,6 +436,10 @@ app
       keys: cachedSettings.cloakBrowserLicenseKeys,
       cooldownMs: 17 * 60_000,
     });
+    const licenseCapacity = () =>
+      chromiumBootstrap.getEngine() === "cloakbrowser"
+        ? licenseKeyPool?.capacitySnapshot(licenseLeaseJournal.snapshot()) ?? null
+        : null;
 
     browserDriver = new ChromiumBrowserDriver({
       profileManager,
@@ -494,6 +509,7 @@ app
       engineInfo: () =>
         describeEngineStatus(chromiumBootstrap.getEngine(), chromiumBootstrap.getStatus()),
       runtimeCapabilities,
+      licenseCapacity,
       // The release the operator installed — not the MCP contract constant. These drifted apart
       // and `get_runtime_info` spent an evening answering 0.3.1 on a 0.3.6 install, which is the
       // one question the call exists to answer.
@@ -545,6 +561,7 @@ app
               engineInfo: () =>
                 describeEngineStatus(chromiumBootstrap.getEngine(), chromiumBootstrap.getStatus()),
               runtimeCapabilities,
+              licenseCapacity,
               appVersion: app.getVersion(),
             }).server,
         );

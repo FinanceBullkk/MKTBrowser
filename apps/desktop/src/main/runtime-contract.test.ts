@@ -38,6 +38,7 @@ test("publishes a versioned runtime contract", () => {
       "managed-profile-v1",
       "operation-diagnostics-v1",
       "local-install-ready-v1",
+      "license-capacity-v1",
     ],
   );
 });
@@ -63,6 +64,24 @@ test("keeps the local-install capability conditional at runtime", async () => {
   );
   assert.match(main, /local-install-ready-v1/);
   assert.match(main, /WindowsLocalInstallInspector/);
+});
+
+test("publishes measured license capacity without exposing lease or key identities", () => {
+  assert.equal(MKT_BROWSER_CAPABILITIES.includes("license-capacity-v1"), true);
+  const main = source("apps/desktop/src/main/index.ts");
+  const server = source("packages/mcp-server/src/server.ts");
+  const capacityModule = source("packages/mcp-server/src/runtime-license-capacity.ts");
+
+  assert.match(main, /LicenseLeaseJournal\.open/);
+  assert.match(main, /capacitySnapshot\(licenseLeaseJournal\.snapshot\(\)\)/);
+  assert.match(main, /licenseCapacity,/);
+  assert.doesNotMatch(
+    main,
+    /MktBrowserCapability\[\] = \["license-capacity-v1"\]/,
+    "do not advertise complete lease capacity before driver lifecycle writes and startup recovery exist",
+  );
+  assert.match(server, /resolveRuntimeLicenseCapacity/);
+  assert.doesNotMatch(capacityModule, /keyTail|keyFingerprint|profileId/);
 });
 
 test("keeps every failing layer separately addressable", () => {
@@ -135,6 +154,18 @@ test("exposes get_runtime_info and classifies failures by code, not by message",
   const driver = source("apps/desktop/src/main/ChromiumBrowserDriver.ts");
   assert.match(driver, /throw engineUnavailable\(/);
   assert.match(driver, /throw proxyRejected\(/);
+});
+
+test("verifies proxy egress before starting the bridge or spawning the engine", () => {
+  const driver = source("apps/desktop/src/main/ChromiumBrowserDriver.ts");
+  const verifyIndex = driver.indexOf("await verifyProxyGeoLaunch");
+  const bridgeIndex = driver.indexOf("await startBridgeForProfile");
+  const spawnIndex = driver.indexOf("const child = spawn(chromiumPath");
+
+  assert.ok(verifyIndex >= 0, "proxy egress preflight is missing");
+  assert.ok(bridgeIndex > verifyIndex, "the proxy bridge starts before egress verification");
+  assert.ok(spawnIndex > bridgeIndex, "the engine spawns before the proxy bridge is ready");
+  assert.match(driver.slice(verifyIndex, bridgeIndex), /reject: proxyRejected/);
 });
 
 test("reports the installed release, not the MCP contract constant", () => {

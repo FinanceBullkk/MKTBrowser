@@ -112,8 +112,12 @@ export function ProfileEditSheet({ profile, onSaved }: Props): JSX.Element {
   // JSON of the last-persisted form; edits that match it don't trigger a save.
   const savedRef = useRef<string>(JSON.stringify(toForm(profile)));
   // Always-current form + profile id for the flush-on-unmount cleanup.
-  const latestRef = useRef<{ form: FormState; id: string }>({ form, id: profile.id });
-  latestRef.current = { form, id: profile.id };
+  const latestRef = useRef<{ form: FormState; id: string; managed: boolean }>({
+    form,
+    id: profile.id,
+    managed: profile.managed,
+  });
+  latestRef.current = { form, id: profile.id, managed: profile.managed };
   const timerRef = useRef<number | null>(null);
   const onSavedRef = useRef(onSaved);
   onSavedRef.current = onSaved;
@@ -162,10 +166,10 @@ export function ProfileEditSheet({ profile, onSaved }: Props): JSX.Element {
   // otherwise a close-within-debounce leaves the card showing the stale value.
   useEffect(() => {
     return () => {
-      const { form: f, id } = latestRef.current;
-      if (JSON.stringify(f) !== savedRef.current && !validate(f, profile.managed)) {
+      const { form: f, id, managed } = latestRef.current;
+      if (JSON.stringify(f) !== savedRef.current && !validate(f, managed)) {
         void window.mktBrowser.profiles
-          .update(id, toPatch(f, profile.managed))
+          .update(id, toPatch(f, managed))
           .then(() => onSavedRef.current?.())
           .catch(() => {
             // Component is gone; nothing to surface. Swallow to avoid an

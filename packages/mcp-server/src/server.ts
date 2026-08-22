@@ -45,6 +45,10 @@ import {
   resolveRuntimeCapabilities,
   type RuntimeCapabilityProvider,
 } from "./runtime-capabilities.js";
+import {
+  resolveRuntimeLicenseCapacity,
+  type RuntimeLicenseCapacityProvider,
+} from "./runtime-license-capacity.js";
 import { launchManagedProfile, type RunningProfileState } from "./managed-profile-launch.js";
 
 // ── Security gates (engine-independent, enforced in the MCP dispatch layer) ──
@@ -240,6 +244,8 @@ export interface MktBrowserMcpServerOptions {
   engineInfo?: () => MktBrowserEngineInfo;
   /** Runtime-dependent capabilities that have passed their local checks on this device. */
   runtimeCapabilities?: RuntimeCapabilityProvider;
+  /** Aggregate local key/lease state. Never includes key identifiers or profile details. */
+  licenseCapacity?: RuntimeLicenseCapacityProvider;
   /** Capability filter resolved from the authenticated transport token. */
   accessPolicy?: McpToolAccessPolicy;
   /**
@@ -448,7 +454,14 @@ export function buildMcpInstructions(accessPolicy: McpToolAccessPolicy): string 
 }
 
 export function createMktBrowserMcpServer(opts: MktBrowserMcpServerOptions): MktBrowserMcpServer {
-  const { profileManager, browserDriver, engineInfo, runtimeCapabilities, appVersion } = opts;
+  const {
+    profileManager,
+    browserDriver,
+    engineInfo,
+    runtimeCapabilities,
+    licenseCapacity,
+    appVersion,
+  } = opts;
   const activityLog = opts.activityLog ?? new ActivityLog();
   const accessPolicy = opts.accessPolicy ?? FULL_LOCAL_ACCESS_POLICY;
   assertMcpToolInventory(TOOL_DEFINITIONS.map((tool) => tool.name));
@@ -489,6 +502,7 @@ export function createMktBrowserMcpServer(opts: MktBrowserMcpServerOptions): Mkt
         browserDriver,
         engineInfo,
         runtimeCapabilities,
+        licenseCapacity,
         appVersion,
       });
       activityLog.finish(event, "ok", summarize(result), startedAt);
@@ -514,6 +528,7 @@ interface DispatchDeps {
   browserDriver: BrowserDriver;
   engineInfo?: () => MktBrowserEngineInfo;
   runtimeCapabilities?: MktBrowserMcpServerOptions["runtimeCapabilities"];
+  licenseCapacity?: MktBrowserMcpServerOptions["licenseCapacity"];
   appVersion?: string;
 }
 
@@ -542,13 +557,21 @@ function buildRuntimeIdentity(engineInfo?: () => MktBrowserEngineInfo, appVersio
   };
 }
 
-async function buildRuntimeInfo(
-  engineInfo?: () => MktBrowserEngineInfo,
-  runtimeCapabilities?: MktBrowserMcpServerOptions["runtimeCapabilities"],
-  appVersion?: string,
-): Promise<MktBrowserRuntimeInfo> {
-  const capabilities = await resolveRuntimeCapabilities(runtimeCapabilities);
-  return { ...buildRuntimeIdentity(engineInfo, appVersion), capabilities };
+export async function buildRuntimeInfo(options: {
+  engineInfo?: () => MktBrowserEngineInfo;
+  runtimeCapabilities?: MktBrowserMcpServerOptions["runtimeCapabilities"];
+  licenseCapacity?: MktBrowserMcpServerOptions["licenseCapacity"];
+  appVersion?: string;
+} = {}): Promise<MktBrowserRuntimeInfo> {
+  const [capabilities, licenseCapacity] = await Promise.all([
+    resolveRuntimeCapabilities(options.runtimeCapabilities),
+    resolveRuntimeLicenseCapacity(options.licenseCapacity),
+  ]);
+  return {
+    ...buildRuntimeIdentity(options.engineInfo, options.appVersion),
+    capabilities,
+    licenseCapacity,
+  };
 }
 
 async function dispatch(
@@ -559,7 +582,7 @@ async function dispatch(
   const { profileManager, browserDriver } = deps;
   switch (name) {
     case "get_runtime_info": {
-      return await buildRuntimeInfo(deps.engineInfo, deps.runtimeCapabilities, deps.appVersion);
+      return await buildRuntimeInfo(deps);
     }
     case "list_profiles": {
       const profiles = profileManager.list().map((p) => ({

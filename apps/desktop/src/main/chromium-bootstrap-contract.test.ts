@@ -27,6 +27,19 @@ test("packaged engine bootstrap consumes only a compatibility-set pin", () => {
   assert.match(pin, /MKTTool.*compatibility-updater/);
 });
 
+test("packaged verification isolates disposable engine state from the installed compatibility set", () => {
+  const verifier = readFileSync(
+    new URL("../../../../scripts/verify-packaged-runtime-contract.cjs", ROOT),
+    "utf8",
+  );
+  assert.match(
+    verifier,
+    /const isolatedLocalAppData = path\.join\(userData, "local-app-data"\)/,
+  );
+  assert.match(verifier, /LOCALAPPDATA: isolatedLocalAppData/);
+  assert.match(verifier, /MKT_BROWSER_ALLOW_UNPINNED_ENGINE:\s*"1"/);
+});
+
 test("locks engine selection while a signed compatibility set is active", () => {
   const main = source("index.ts");
   const settings = readFileSync(
