@@ -30,23 +30,25 @@ profiles on the operator device.
   renderer is sandboxed with a restrictive CSP, IPC and MCP exposure inventories fail closed, and
   the fixed-seed fingerprint measurement remained identical before and after the upgrade.
 - MKB-02 managed mode was completed on 12 August 2026. Contract version `3` introduced idempotent
-  create, atomic launch, managed-profile locking, and correlated operation diagnostics. The Relay
-  token is profile-management only; page, cookie, and raw-CDP tools are unavailable and no
-  page-control token is issued by this build.
+  create, atomic launch, managed-profile locking, and correlated operation diagnostics; the current
+  runtime contract is version `4`, which also removes profile deletion from MCP and conditionally
+  reports local-install readiness. The Relay token is profile-management only; page, cookie, and
+  raw-CDP tools are unavailable and no page-control token is issued by this build.
 - MKB-03 local-onboarding fixes are implemented but still require human retest. The per-user Windows
   installer requests one Administrator approval for machine-wide outbound UDP rules covering the
   stable CFT and CloakBrowser runtime paths. Every proxied profile launch verifies its own engine's
   exact rule and all Windows firewall profiles, then fails closed before browser startup if the
   boundary is uncertain. CloakBrowser download failure can switch to CFT in-modal; CFT remains a
   compatibility fallback, not the primary antidetect runtime. The combined-installer manifest now
-  pins the locally verified, unpublished Relay v12 archive, which accepts Browser contract v4. The
+  pins the published Relay v15 archive, which accepts Browser contract v4. The
   installer also persists its conflict detector for runtime setup checks; contract v4 advertises
   `local-install-ready-v1` only after expected process, fixed-port, MultiZen-process, and startup
   ownership pass. The supported topology is one Windows operating-system user per PC; a foreign
   per-user installation is rejected before firewall mutation, and cross-user operation is not a
-  release gate. The complete Node 22 installer suite passes 97/97, packaging contracts pass 24/24,
-  and typecheck, lint, and the production Electron bundle pass. Operational distribution remains
-  blocked until the immutable v12 object is published and the remaining human Windows gates pass.
+  release gate. The complete Node 22 installer suite, packaging contracts, typecheck, lint, and the
+  production Electron bundle pass. Operational distribution remains
+  blocked until the installer is rebuilt from the current source and the remaining human Windows
+  gates pass.
 - MKB-03 Browser profile deletion is implemented as a separate in-app lifecycle. Contract version
   `4` removes `delete_profile` from MCP, and profile schema version `3` records incomplete deletion
   for crash-safe retry. The operator must type `DELETE <full profile id>`; active launch/close work
@@ -60,15 +62,18 @@ profiles on the operator device.
   second-PC recovery, and canary gates remain open, so this is not rollout approval.
 - This build may be used for an owner-led technical demo with disposable profiles. It is not
   approved for real accounts, pilot distribution, or team rollout.
-- The Windows directory package was regenerated on 12 August 2026 with SHA-256
-  `238d5d6fd5e373b052c484ceab90698f6dc295205a59be6573f9928b01db4f42`; Node guard 2/2,
-  W02 guards 8/8, MKB-01 tests 8/8, MKB-01E tests 7/7, MKB-02 tests 18/18, Windows packaging guards
-  3/3, typecheck, build, and packaged runtime/profile-lifecycle verification passed. The repository's
-  `yarn lint` now enforces the workspace quality contract, strict TypeScript unused/fallthrough
-  checks, and JavaScript syntax checks. The packaged verifier covers
+- The current desktop package version is `0.3.12`. The Windows directory package was regenerated on
+  22 August 2026 with SHA-256
+  `26074de0477d5401c4998e6cc1e5c20f727868e1d2b39deffb63cabfbbde9ce3`; typecheck, zero-warning
+  lint, the complete installer suite, build, and packaged runtime/profile-lifecycle verification
+  passed. The repository's `yarn lint` enforces the workspace quality contract, strict TypeScript
+  unused/fallthrough checks, and JavaScript syntax checks. The packaged verifier covers
   the restricted tool inventory, deterministic managed create/retry, correlated diagnostics,
   direct-launch/delete denial, endpoint-free proxy summaries, atomic managed launch, Windows Chrome
-  launcher-PID handoff, process-confirmed close, and clean process exit. It remains unsigned.
+  launcher-PID handoff, process-confirmed close, and clean process exit. It remains unsigned. The
+  combined installer under `apps/desktop/release/installer/` was last built on 21 August: it embeds
+  the verified Relay v15 archive but predates the 22 August P0 hardening, so it is not the current
+  rollout artifact and must not be distributed.
 
 ## Owned product and local contract
 
