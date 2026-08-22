@@ -19,6 +19,9 @@ test("keeps desktop packaging metadata aligned with the product identity", () =>
   const desktopPackage = JSON.parse(
     readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
   ) as { productName?: string; scripts?: Record<string, string> };
+  const rootPackage = JSON.parse(
+    readFileSync(new URL("../../../../package.json", import.meta.url), "utf8"),
+  ) as { scripts?: Record<string, string> };
   const builderConfig = readFileSync(
     new URL("../../electron-builder.yml", import.meta.url),
     "utf8",
@@ -55,9 +58,14 @@ test("keeps desktop packaging metadata aligned with the product identity", () =>
     "utf8",
   );
   const releaseWorkflow = readFileSync(
-    new URL("../../../../.github/workflows/release.yml", import.meta.url),
+    new URL("../../../../.github/workflows/windows-pipeline.yml", import.meta.url),
     "utf8",
   );
+  const viteConfig = readFileSync(
+    new URL("../../electron.vite.config.ts", import.meta.url),
+    "utf8",
+  );
+  const lockfile = readFileSync(new URL("../../../../yarn.lock", import.meta.url), "utf8");
   const installerIncludeBytes = readFileSync(new URL("../../build/installer.nsh", import.meta.url));
   const installerInclude = installerIncludeBytes.toString("ascii");
   const relayCleanup = readFileSync(
@@ -68,6 +76,16 @@ test("keeps desktop packaging metadata aligned with the product identity", () =>
   assert.equal(desktopPackage.productName, PRODUCT_NAME);
   assert.match(desktopPackage.scripts?.build ?? "", /verify-node-version\.cjs/);
   assert.match(desktopPackage.scripts?.build ?? "", /package:windows-directory/);
+  assert.equal(
+    rootPackage.scripts?.["audit:production"],
+    "yarn npm audit --all --recursive --environment production --severity high",
+  );
+  assert.match(releaseWorkflow, /run: yarn audit:production/);
+  assert.doesNotMatch(builderConfig, /^\s+extract-zip:/m);
+  assert.match(builderConfig, /^\s+yauzl: "3\.4\.0"$/m);
+  assert.doesNotMatch(viteConfig, /"extract-zip"/);
+  assert.match(viteConfig, /"yauzl"/);
+  assert.doesNotMatch(lockfile, /(^|\n)"extract-zip@npm:/);
   assert.match(builderConfig, /^appId: com\.mkttool\.browser$/m);
   assert.match(builderConfig, /^productName: MKT Browser$/m);
   assert.match(builderConfig, /^executableName: MKTBrowser$/m);

@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 
 const assert = require("node:assert/strict");
-const { spawn } = require("node:child_process");
+const { execFile, spawn } = require("node:child_process");
+const { createHash } = require("node:crypto");
 const { once } = require("node:events");
-const { existsSync } = require("node:fs");
-const { mkdtemp, readFile, rm } = require("node:fs/promises");
+const { createReadStream, existsSync } = require("node:fs");
+const { mkdir, mkdtemp, readFile, rm, writeFile } = require("node:fs/promises");
 const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
+const { promisify } = require("node:util");
 const {
   installSystemChromeEngineFixture,
   removeSystemChromeEngineFixture,
@@ -15,18 +17,63 @@ const {
 
 const EXPECTED_PROVIDER = "mkt-browser";
 const EXPECTED_CONTRACT_VERSION = 4;
+const HEALTH_REQUEST_TIMEOUT_MS = 2_000;
+const MCP_REQUEST_TIMEOUT_MS = 90_000;
+const execFileAsync = promisify(execFile);
 
 async function main() {
   if (process.platform !== "win32") {
     throw new Error("The packaged runtime contract verifier currently requires Windows.");
   }
 
+  const options = parseOptions(process.argv.slice(2));
   const executable = path.resolve(
     process.env.MKT_BROWSER_EXECUTABLE ?? "apps/desktop/release/win-unpacked/MKTBrowser.exe",
   );
   assert.ok(existsSync(executable), "Build the Windows directory package before verification.");
+  verifyPackagedExtractionDependencies(executable);
 
-  const userData = await mkdtemp(path.join(os.tmpdir(), "mkt-browser-packaged-contract-"));
+  const artifact = await collectArtifactEvidence(executable, options.artifactManifest);
+  process.stdout.write(
+    `Packaged artifact evidence sourceSha=${artifact.sourceSha ?? "local"} ` +
+      `artifactSha256=${artifact.artifactSha256 ?? "none"} ` +
+      `executableSha256=${artifact.executableSha256} appAsarSha256=${artifact.appAsarSha256}\n`,
+  );
+
+  const timings = [];
+  for (let iteration = 1; iteration <= options.repeat; iteration++) {
+    const startedAtMs = Date.now();
+    const iterationEvidence = {};
+    try {
+      await runIteration(executable, iteration, options, iterationEvidence);
+      timings.push({
+        iteration,
+        status: "passed",
+        elapsedMs: Date.now() - startedAtMs,
+        ...iterationEvidence,
+      });
+      await writeTimings(options.timingsOutput, artifact, timings);
+    } catch (error) {
+      timings.push({
+        iteration,
+        status: "failed",
+        elapsedMs: Date.now() - startedAtMs,
+        ...iterationEvidence,
+      });
+      await writeTimings(options.timingsOutput, artifact, timings);
+      throw error;
+    }
+  }
+  process.stdout.write(
+    `Packaged runtime contract completed ${options.repeat}/${options.repeat} iterations.\n`,
+  );
+}
+
+async function runIteration(executable, iteration, options, iterationEvidence) {
+  const userData = await mkdtemp(
+    path.join(os.tmpdir(), `mkt-browser-packaged-contract-${iteration}-`),
+  );
+  const isolatedLocalAppData = path.join(userData, "local-app-data");
   let engineFixture;
   let child;
   let diagnostics = "";
@@ -37,11 +84,24 @@ async function main() {
   let launchedPid;
   let failure;
   try {
+    await mkdir(isolatedLocalAppData, { recursive: true });
     engineFixture = await installSystemChromeEngineFixture(userData);
+    iterationEvidence.engine = {
+      version: engineFixture.version,
+      sha256: engineFixture.sha256,
+    };
+    process.stdout.write(
+      `Packaged engine evidence iteration=${iteration} version=${engineFixture.version} ` +
+        `sha256=${engineFixture.sha256}\n`,
+    );
+    // Checked before the launch so a mismatch costs a fixture install, not a full cold launch.
+    assertExpectedEngine(options.expectedEngineVersion, engineFixture);
     const port = await reservePort();
     const env = {
       ...process.env,
       ELECTRON_ENABLE_LOGGING: "1",
+      LOCALAPPDATA: isolatedLocalAppData,
+      MKT_BROWSER_ALLOW_UNPINNED_ENGINE: "1",
       MKT_BROWSER_PACKAGED_CONTRACT_VERIFY: "1",
       MKT_BROWSER_MCP_PORT: String(port),
     };
@@ -81,9 +141,14 @@ async function main() {
     await waitFor(
       async () => {
         try {
-          const response = await fetch(`${baseUrl}/healthz`, {
-            headers: { authorization: `Bearer ${token}` },
-          });
+          const response = await withHttpDeadline(
+            (signal) =>
+              fetch(`${baseUrl}/healthz`, {
+                headers: { authorization: `Bearer ${token}` },
+                signal,
+              }),
+            HEALTH_REQUEST_TIMEOUT_MS,
+          );
           return response.ok;
         } catch {
           return false;
@@ -220,7 +285,11 @@ async function main() {
       operation_id: "packaged-launch-1",
     });
     assert.equal(blockedLaunch.isError, true);
-    assert.equal(blockedLaunch.body.error?.code, "PROXY_REJECTED");
+    assert.equal(
+      blockedLaunch.body.error?.code,
+      "PROXY_REJECTED",
+      `Managed invalid-proxy launch returned the wrong error: ${describeToolBody(blockedLaunch.body)}`,
+    );
 
     const lifecycleProfile = await callTool(baseUrl, token, "create_profile", {
       name: "Packaged browser lifecycle verifier",
@@ -254,12 +323,35 @@ async function main() {
     assert.ok(afterLifecycle.profiles.some((profile) => profile.id === created.id));
     assert.ok(afterLifecycle.profiles.some((profile) => profile.id === lifecycleProfile.id));
 
-    process.stdout.write("Packaged MKT Browser runtime and profile lifecycle contracts passed.\n");
+    process.stdout.write(
+      `Packaged MKT Browser runtime and profile lifecycle contracts passed ` +
+        `(iteration ${iteration}/${options.repeat}).\n`,
+    );
   } catch (error) {
-    if (diagnostics.trim()) {
-      error.message += `\nPackaged app diagnostics:\n${diagnostics.trim()}`;
+    const failureError = error instanceof Error ? error : new Error(String(error));
+    const snapshot = await collectFailureSnapshot(userData, child, launchedPid).catch(
+      (snapshotError) => ({
+        snapshotError: snapshotError?.code ?? snapshotError?.name ?? "snapshot-failed",
+      }),
+    );
+    const combinedDiagnostics = [
+      `Verifier failure: ${failureError.message}`,
+      diagnostics.trim(),
+      `Verifier failure snapshot: ${JSON.stringify(snapshot)}`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    const sanitizedDiagnostics = sanitizeDiagnostics(combinedDiagnostics);
+    failureError.message += `\nPackaged app diagnostics:\n${sanitizedDiagnostics}`;
+    if (options.diagnosticsDir) {
+      await mkdir(options.diagnosticsDir, { recursive: true });
+      await writeFile(
+        path.join(options.diagnosticsDir, `iteration-${iteration}.log`),
+        `${sanitizedDiagnostics}\n`,
+        "utf8",
+      );
     }
-    failure = error;
+    failure = failureError;
   } finally {
     const cleanupErrors = [];
     if (child && baseUrl && token && createdProfileId) {
@@ -311,12 +403,169 @@ async function main() {
       cleanupErrors.push(error);
     }
     if (cleanupErrors.length > 0) {
-      const details = cleanupErrors.map((error) => error.message).join("\n");
+      const details = sanitizeDiagnostics(cleanupErrors.map((error) => error.message).join("\n"));
       if (failure) failure.message += `\nPackaged verifier cleanup failed:\n${details}`;
       else failure = new Error(`Packaged verifier cleanup failed:\n${details}`);
     }
   }
   if (failure) throw failure;
+}
+
+// The verifier links whichever Google Chrome the runner image ships, so the engine under test can
+// change between runs without anything in this repository changing. That is tolerable for one run,
+// which records the version it measured, but a multi-run stability streak is a claim about a single
+// engine. Declaring the expected version turns a silent runner-image refresh into a red run.
+//
+// The expectation stays opt-in: a developer verifying locally has a different Chrome than the runner
+// and must not be forced to match it. Only a declared streak sets a value.
+function assertExpectedEngine(expectedVersion, observed) {
+  if (!expectedVersion) return;
+  if (observed.version === expectedVersion) return;
+  throw new Error(
+    `Packaged verifier engine mismatch. Expected "${expectedVersion}" but the runner supplied ` +
+      `"${observed.version}" (sha256 ${observed.sha256}). A stability streak measured across two ` +
+      `engines is not a streak; re-declare the expectation and start the count again.`,
+  );
+}
+
+function parseOptions(args) {
+  const options = {
+    repeat: 1,
+    timingsOutput: process.env.MKT_BROWSER_TIMINGS_OUTPUT,
+    diagnosticsDir: process.env.MKT_BROWSER_DIAGNOSTICS_DIR,
+    artifactManifest: process.env.MKT_BROWSER_ARTIFACT_MANIFEST,
+    expectedEngineVersion: (process.env.MKT_BROWSER_EXPECTED_ENGINE_VERSION ?? "").trim(),
+  };
+  for (let index = 0; index < args.length; index++) {
+    const name = args[index];
+    const value = args[index + 1];
+    if (
+      !["--repeat", "--timings-output", "--diagnostics-dir", "--artifact-manifest"].includes(name)
+    ) {
+      throw new Error(`Unknown packaged verifier option: ${name}`);
+    }
+    if (!value || value.startsWith("--")) throw new Error(`Missing value for ${name}`);
+    index += 1;
+    if (name === "--repeat") {
+      options.repeat = Number(value);
+      if (!Number.isInteger(options.repeat) || options.repeat < 1 || options.repeat > 100) {
+        throw new Error("--repeat must be an integer from 1 to 100");
+      }
+    } else if (name === "--timings-output") {
+      options.timingsOutput = path.resolve(value);
+    } else if (name === "--diagnostics-dir") {
+      options.diagnosticsDir = path.resolve(value);
+    } else {
+      options.artifactManifest = path.resolve(value);
+    }
+  }
+  return options;
+}
+
+async function collectArtifactEvidence(executable, manifestPath) {
+  const appAsar = path.join(path.dirname(executable), "resources", "app.asar");
+  const evidence = {
+    sourceSha: null,
+    artifactSha256: null,
+    executableSha256: await sha256File(executable),
+    appAsarSha256: await sha256File(appAsar),
+  };
+  if (!manifestPath) return evidence;
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  assert.match(String(manifest.sourceSha ?? ""), /^[0-9a-f]{40}$/i, "Invalid artifact source SHA.");
+  assert.match(String(manifest.sha256 ?? ""), /^[0-9a-f]{64}$/i, "Invalid artifact SHA-256.");
+  evidence.sourceSha = manifest.sourceSha;
+  evidence.artifactSha256 = manifest.sha256.toLowerCase();
+  return evidence;
+}
+
+async function sha256File(filePath) {
+  const hash = createHash("sha256");
+  const stream = createReadStream(filePath);
+  stream.on("data", (chunk) => hash.update(chunk));
+  await once(stream, "end");
+  return hash.digest("hex");
+}
+
+async function writeTimings(outputPath, artifact, iterations) {
+  if (!outputPath) return;
+  await mkdir(path.dirname(outputPath), { recursive: true });
+  await writeFile(outputPath, `${JSON.stringify({ artifact, iterations }, null, 2)}\n`, "utf8");
+}
+
+function sanitizeDiagnostics(value) {
+  return value
+    .replace(/\bBearer\s+\S+/gi, "Bearer [redacted]")
+    .replace(/\b(?:https?|socks5?):\/\/[^\s/@]+@/gi, (match) => {
+      const schemeEnd = match.indexOf("//") + 2;
+      return `${match.slice(0, schemeEnd)}[redacted]@`;
+    })
+    .replace(/\b[A-Za-z]:[\\/][^\r\n]*/g, "[redacted-path]")
+    .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, "[redacted-ip]")
+    .replace(/\[(?:[0-9a-f]{0,4}:){2,}[0-9a-f:.]*\]/gi, "[redacted-ip]")
+    .replace(/(^|[\s=])(?:[0-9a-f]{0,4}:){2,}[0-9a-f]{0,4}(?=$|[\s,])/gi, "$1[redacted-ip]")
+    .replace(/\b[0-9a-f]{8}-[0-9a-f-]{27,}\b/gi, "[redacted-id]")
+    .replace(/\b(Bearer|token|password|proxy|key)\s*[:=]\s*\S+/gi, "$1=[redacted]");
+}
+
+async function collectFailureSnapshot(userData, child, launchedPid) {
+  const script = [
+    "$needle = $env:MKT_BROWSER_SNAPSHOT_USER_DATA",
+    "$processes = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object { ([string]$_.CommandLine).IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -ge 0 } | ForEach-Object { [pscustomobject]@{ pid = [int]$_.ProcessId; parentPid = [int]$_.ParentProcessId; name = [string]$_.Name } })",
+    "$pids = @($processes | Select-Object -ExpandProperty pid)",
+    "$connections = @(Get-NetTCPConnection -State Listen -ErrorAction Stop)",
+    "$listeners = @($connections | Where-Object { $pids -contains [int]$_.OwningProcess } | ForEach-Object { $scope = if ($_.LocalAddress -eq '127.0.0.1') { 'loopback-v4' } elseif ($_.LocalAddress -eq '::1') { 'loopback-v6' } elseif ($_.LocalAddress -in @('0.0.0.0','::')) { 'wildcard' } else { 'other' }; [pscustomobject]@{ pid = [int]$_.OwningProcess; port = [int]$_.LocalPort; addressScope = $scope } })",
+    "$fixed = @($connections | Where-Object { $_.LocalPort -in @(9222,9223) } | ForEach-Object { $scope = if ($_.LocalAddress -eq '127.0.0.1') { 'loopback-v4' } elseif ($_.LocalAddress -eq '::1') { 'loopback-v6' } elseif ($_.LocalAddress -in @('0.0.0.0','::')) { 'wildcard' } else { 'other' }; [pscustomobject]@{ pid = [int]$_.OwningProcess; port = [int]$_.LocalPort; addressScope = $scope } })",
+    "$result = [pscustomobject]@{ processes = $processes; listeners = $listeners; fixedPortListeners = $fixed }",
+    "[Console]::Out.Write(($result | ConvertTo-Json -Compress -Depth 4))",
+  ].join("; ");
+  const { stdout } = await execFileAsync(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-Command", script],
+    {
+      encoding: "utf8",
+      timeout: 5000,
+      windowsHide: true,
+      env: { ...process.env, MKT_BROWSER_SNAPSHOT_USER_DATA: userData },
+    },
+  );
+  const osSnapshot = JSON.parse(stdout);
+  return {
+    appPid: child?.pid ?? null,
+    appExitCode: child?.exitCode ?? null,
+    appSignalCode: child?.signalCode ?? null,
+    launchedBrowserPid: launchedPid ?? null,
+    ...osSnapshot,
+  };
+}
+
+function verifyPackagedExtractionDependencies(executable) {
+  const archive = path.join(path.dirname(executable), "resources", "app.asar");
+  assert.ok(existsSync(archive), "The packaged application is missing resources/app.asar.");
+  const asar = require(
+    require.resolve("@electron/asar", { paths: [path.resolve("apps/desktop")] }),
+  );
+  const packageJson = JSON.parse(asar.extractFile(archive, "package.json").toString("utf8"));
+  const entries = asar.listPackage(archive).map((entry) => entry.replace(/^\\/, ""));
+  const hasPackage = (name) =>
+    entries.some((entry) => new RegExp(`(^|[\\\\/])${name}([\\\\/]|$)`, "i").test(entry));
+
+  assert.equal(
+    packageJson.dependencies?.["extract-zip"],
+    undefined,
+    "The packaged metadata still declares extract-zip.",
+  );
+  assert.equal(
+    hasPackage("extract-zip"),
+    false,
+    "The packaged app.asar still contains extract-zip.",
+  );
+  assert.equal(
+    packageJson.dependencies?.yauzl,
+    "3.4.0",
+    "The packaged metadata does not pin yauzl 3.4.0.",
+  );
+  assert.equal(hasPackage("yauzl"), true, "The packaged app.asar is missing yauzl.");
 }
 
 async function callTool(baseUrl, token, name, toolArgs) {
@@ -372,17 +621,35 @@ async function callToolResult(baseUrl, token, name, toolArgs) {
 }
 
 async function rpc(baseUrl, token, body) {
-  const response = await fetch(`${baseUrl}/mcp`, {
-    method: "POST",
-    headers: {
-      accept: "application/json, text/event-stream",
-      authorization: `Bearer ${token}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify(body),
+  return withHttpDeadline(async (signal) => {
+    const response = await fetch(`${baseUrl}/mcp`, {
+      method: "POST",
+      headers: {
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal,
+    });
+    assert.equal(response.status, 200, `MCP request failed with HTTP ${response.status}.`);
+    return response.json();
+  }, MCP_REQUEST_TIMEOUT_MS);
+}
+
+function withHttpDeadline(operation, timeoutMs) {
+  const controller = new AbortController();
+  let timeout;
+  const deadline = new Promise((_, reject) => {
+    timeout = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`HTTP request timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
   });
-  assert.equal(response.status, 200, `MCP request failed with HTTP ${response.status}.`);
-  return response.json();
+  const request = Promise.resolve().then(() => operation(controller.signal));
+  return Promise.race([request, deadline]).finally(() => {
+    clearTimeout(timeout);
+  });
 }
 
 async function reservePort() {
@@ -441,7 +708,11 @@ async function stopChild(child, label) {
   }
 }
 
-main().catch((error) => {
-  process.stderr.write(`${error.stack ?? error.message}\n`);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((error) => {
+    process.stderr.write(`${sanitizeDiagnostics(error.stack ?? error.message)}\n`);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { assertExpectedEngine, parseOptions, sanitizeDiagnostics, withHttpDeadline };

@@ -1,0 +1,185 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import type { BrowserProcessInfo } from "./browser-process-discovery.ts";
+import {
+  DevToolsPortDiscoveryError,
+  parseDevToolsActivePort,
+  waitForOwnedDevToolsEndpoint,
+  type DevToolsPortDiscoveryDeps,
+} from "./devtools-port-discovery.ts";
+
+const DATA_DIR = "C:/MKT Browser/profile-1";
+
+test("parses only the bounded Chromium DevToolsActivePort schema", () => {
+  assert.deepEqual(parseDevToolsActivePort("55497\n/devtools/browser/session-id\n"), {
+    port: 55497,
+    browserWebSocketPath: "/devtools/browser/session-id",
+  });
+
+  for (const invalid of [
+    "",
+    "55497\n",
+    "0\n/devtools/browser/session-id\n",
+    "65536\n/devtools/browser/session-id\n",
+    "55497\n/devtools/page/session-id\n",
+    "55497\n/devtools/browser/session-id\nextra\n",
+    "x".repeat(513),
+  ]) {
+    assert.throws(() => parseDevToolsActivePort(invalid));
+  }
+});
+
+test("rejects a stale record until the current launch publishes an owned endpoint", async () => {
+  const clock = createClock();
+  let reads = 0;
+  const deps = harnessDeps(clock, {
+    readActivePortRecord: async () => ({
+      contents: "55497\n/devtools/browser/current\n",
+      modifiedAtMs: ++reads === 1 ? 900 : 1_001,
+    }),
+  });
+
+  const result = await discover(deps, 250);
+
+  assert.equal(reads, 2);
+  assert.equal(result.port, 55497);
+  assert.equal(result.primaryPid, 20);
+  assert.ok(result.timings.activePortMs > 0);
+  assert.equal(
+    result.timings.totalMs,
+    result.timings.activePortMs + result.timings.processMs + result.timings.ownershipMs,
+  );
+});
+
+test("never attaches when the listener belongs to a foreign process", async () => {
+  const clock = createClock();
+  const deps = harnessDeps(clock, { ownerPids: [999] });
+
+  await assert.rejects(discover(deps, 220), (error: unknown) => {
+    assert.ok(error instanceof DevToolsPortDiscoveryError);
+    assert.equal(error.diagnostics.stage, "ownership");
+    assert.equal(error.diagnostics.primaryPid, 20);
+    assert.deepEqual(error.diagnostics.portOwnerPids, [999]);
+    assert.deepEqual(error.diagnostics.processPids, [20]);
+    return true;
+  });
+});
+
+test("follows a Windows launcher handoff to the owned primary process", async () => {
+  const clock = createClock();
+  const deps = harnessDeps(clock, {
+    processes: [
+      { pid: 21, commandLine: `chrome.exe --type=renderer --user-data-dir="${DATA_DIR}"` },
+      browser(30),
+    ],
+    ownerPids: [30],
+  });
+
+  const result = await discover(deps);
+
+  assert.equal(result.primaryPid, 30);
+  assert.deepEqual(result.processPids, [21, 30]);
+});
+
+test("fails closed when listener ownership cannot be inspected", async () => {
+  const clock = createClock();
+  const deps = harnessDeps(clock, { ownerInspected: false });
+
+  await assert.rejects(discover(deps, 120), (error: unknown) => {
+    assert.ok(error instanceof DevToolsPortDiscoveryError);
+    assert.equal(error.diagnostics.stage, "ownership");
+    assert.equal(error.diagnostics.primaryPid, 20);
+    assert.deepEqual(error.diagnostics.portOwnerPids, []);
+    return true;
+  });
+});
+
+test("does not return success after an ownership query exceeds the budget", async () => {
+  const clock = createClock();
+  const deps = harnessDeps(clock, {
+    enumeratePortOwners: async () => {
+      await clock.sleep(1_000);
+      return { inspected: true, pids: [20] };
+    },
+  });
+
+  await assert.rejects(discover(deps, 100), (error: unknown) => {
+    assert.ok(error instanceof DevToolsPortDiscoveryError);
+    assert.equal(error.diagnostics.stage, "ownership");
+    assert.ok(error.diagnostics.elapsedMs >= 1_000);
+    return true;
+  });
+});
+
+test("times out at the active-port stage with bounded diagnostics", async () => {
+  const clock = createClock();
+  const deps = harnessDeps(clock, { activePortRecord: null });
+
+  await assert.rejects(discover(deps, 30), (error: unknown) => {
+    assert.ok(error instanceof DevToolsPortDiscoveryError);
+    assert.equal(error.diagnostics.stage, "active-port");
+    assert.equal(error.diagnostics.childPid, 20);
+    assert.equal(error.diagnostics.elapsedMs, 30);
+    return true;
+  });
+});
+
+function browser(pid: number): BrowserProcessInfo {
+  return {
+    pid,
+    commandLine: `chrome.exe --user-data-dir="${DATA_DIR}" --remote-debugging-port=0`,
+  };
+}
+
+function createClock(): { now: () => number; sleep: (ms: number) => Promise<void> } {
+  let now = 1_000;
+  return {
+    now: () => now,
+    sleep: async (ms) => {
+      now += ms;
+    },
+  };
+}
+
+function harnessDeps(
+  clock: ReturnType<typeof createClock>,
+  options: {
+    activePortRecord?: { contents: string; modifiedAtMs: number } | null;
+    readActivePortRecord?: DevToolsPortDiscoveryDeps["readActivePortRecord"];
+    processes?: BrowserProcessInfo[];
+    ownerPids?: number[];
+    ownerInspected?: boolean;
+    enumeratePortOwners?: DevToolsPortDiscoveryDeps["enumeratePortOwners"];
+  } = {},
+): DevToolsPortDiscoveryDeps {
+  const defaultRecord = {
+    contents: "55497\n/devtools/browser/current\n",
+    modifiedAtMs: 1_001,
+  };
+  return {
+    now: clock.now,
+    sleep: clock.sleep,
+    readActivePortRecord:
+      options.readActivePortRecord ??
+      (async () =>
+        Object.hasOwn(options, "activePortRecord") ? options.activePortRecord! : defaultRecord),
+    enumerateProcesses: async () => ({
+      processes: options.processes ?? [browser(20)],
+      enumerated: true,
+    }),
+    enumeratePortOwners:
+      options.enumeratePortOwners ??
+      (async () => ({
+        pids: options.ownerPids ?? (options.ownerInspected === false ? [] : [20]),
+        inspected: options.ownerInspected ?? true,
+      })),
+    isAlive: () => true,
+  };
+}
+
+function discover(deps: DevToolsPortDiscoveryDeps, budgetMs = 120) {
+  return waitForOwnedDevToolsEndpoint(
+    { dataDir: DATA_DIR, childPid: 20, startedAtMs: 1_000, budgetMs },
+    deps,
+  );
+}

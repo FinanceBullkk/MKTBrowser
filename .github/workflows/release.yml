@@ -1,82 +1,41 @@
 name: Windows Technical Build
 
-# Windows x64 is the only v1 and team-demo platform. Run this workflow manually to validate the
-# isolated technical directory package without creating a release or claiming pilot readiness.
+# Fast feedback on pushes, the nightly stability sweep, and the manual dispatch used for stability
+# streaks and Phase 4 installer builds.
+#
+# Merge authority does not live here. It lives in the gate workflow, which is the only file allowed
+# to carry the required check name, because a job disabled by a condition still publishes a check
+# run under its name and a skipped required check counts as satisfied. This workflow therefore
+# triggers only on push, schedule, and manual dispatch.
+
 on:
   push:
-  pull_request:
   workflow_dispatch:
+    inputs:
+      contract_iterations:
+        description: "Packaged runtime contract cold-launch iterations"
+        required: false
+        default: "20"
+      expected_engine_version:
+        description: "Engine version every run of a stability streak must report (blank records only)"
+        required: false
+        default: ""
+      build_installer:
+        description: "Also build the combined Windows installer (Phase 4 only)"
+        type: boolean
+        required: false
+        default: false
+  schedule:
+    - cron: "17 19 * * *"
 
 permissions:
   contents: read
 
 jobs:
-  windows-build:
-    strategy:
-      matrix:
-        os: [windows-latest]
-        node: [22]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Setup Node.js 22
-        uses: actions/setup-node@v5
-        with:
-          node-version: ${{ matrix.node }}
-          package-manager-cache: false
-
-      - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@4.5.0 --activate
-
-      - name: Install dependencies
-        run: yarn install --immutable
-
-      - name: Node.js build guard
-        run: yarn verify:node
-
-      - name: Workspace quality contract
-        run: yarn verify:workspace-quality
-
-      - name: Lint
-        run: yarn lint
-
-      # One aggregate step rather than one step per suite. Listing suites individually here meant CI
-      # silently lagged the repository: MKB-03 (permanent profile deletion, engine pinning), the
-      # settings-store suite, and the workspace-quality contract test all existed and passed locally
-      # while never running on any push. `test:installer` is the single place suites are registered,
-      # so a new suite is covered by CI the moment it is added there.
-      - name: Installer and runtime guard suites
-        run: yarn test:installer
-
-      - name: Typecheck
-        run: yarn typecheck
-
-      - name: Build Windows directory package
-        run: yarn workspace @mktbrowser/desktop build
-
-      - name: Verify packaged runtime contract
-        run: yarn verify:packaged-contract
-
-      - name: Build combined Windows installer
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          MKTTOOL_RELEASE_TOKEN: ${{ secrets.MKTTOOL_RELEASE_TOKEN }}
-          # Named explicitly rather than defaulted: packaging must never fall back to resolving an
-          # engine "latest", because a different Chromium moves the measured fingerprint of every
-          # profile at once.
-          # Absolute: the packaging script runs with the desktop workspace as its working
-          # directory, so a repo-relative path would resolve one level too deep.
-          MKT_BROWSER_ENGINE_RELEASE_FILE: ${{ github.workspace }}/apps/desktop/windows-engine-release.json
-        run: yarn workspace @mktbrowser/desktop build:win
-
-      - name: Upload combined Windows installer
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
-        with:
-          name: mktbrowser-windows-installer
-          path: apps/desktop/release/installer/*.exe
-          if-no-files-found: error
+  windows:
+    uses: ./.github/workflows/windows-pipeline.yml
+    secrets: inherit
+    with:
+      contract_iterations: ${{ github.event_name == 'workflow_dispatch' && inputs.contract_iterations || (github.event_name == 'schedule' && '20' || '5') }}
+      expected_engine_version: ${{ github.event_name == 'workflow_dispatch' && inputs.expected_engine_version || '' }}
+      build_installer: ${{ github.event_name == 'workflow_dispatch' && inputs.build_installer || false }}

@@ -7,8 +7,13 @@ const source = (name: string): string => readFileSync(new URL(name, ROOT), "utf8
 
 test("normalizes Windows engine installs to a stable runtime path", () => {
   const bootstrap = source("ChromiumBootstrap.ts");
+  const safeExtraction = source("safe-archive-extraction.ts");
   const runtimePath = source("chromium-runtime-path.ts");
   assert.match(bootstrap, /stableWindowsRuntime/);
+  assert.match(bootstrap, /extractArchiveSafely/);
+  assert.doesNotMatch(bootstrap, /from "extract-zip"/);
+  assert.match(safeExtraction, /strictFileNames: true/);
+  assert.match(safeExtraction, /EntryIntegrityTransform/);
   assert.match(bootstrap, /\.mkt-runtime\.json/);
   assert.match(runtimePath, /win32\.join\(cacheDir, "runtime", "chrome\.exe"\)/);
 });
@@ -25,6 +30,19 @@ test("packaged engine bootstrap consumes only a compatibility-set pin", () => {
   assert.match(main, /hasExplicitUserDataDir: app\.commandLine\.hasSwitch\("user-data-dir"\)/);
   assert.match(bootstrap, /removeMismatchedCachedRuntime/);
   assert.match(pin, /MKTTool.*compatibility-updater/);
+});
+
+test("packaged verification isolates disposable engine state from the installed compatibility set", () => {
+  const verifier = readFileSync(
+    new URL("../../../../scripts/verify-packaged-runtime-contract.cjs", ROOT),
+    "utf8",
+  );
+  assert.match(
+    verifier,
+    /const isolatedLocalAppData = path\.join\(userData, "local-app-data"\)/,
+  );
+  assert.match(verifier, /LOCALAPPDATA: isolatedLocalAppData/);
+  assert.match(verifier, /MKT_BROWSER_ALLOW_UNPINNED_ENGINE:\s*"1"/);
 });
 
 test("locks engine selection while a signed compatibility set is active", () => {

@@ -30,7 +30,6 @@ extraMetadata:
     "@modelcontextprotocol/sdk": "^1.0.4"
     better-sqlite3: "^12.11.1"
     chrome-remote-interface: "^0.33.3"
-    extract-zip: "^2.0.1"
     framer-motion: "^12.0.0"
     https-proxy-agent: "^9.0.0"
     lucide-react: "^0.469.0"
@@ -38,6 +37,7 @@ extraMetadata:
     socks: "^2.8.3"
     socks-proxy-agent: "^10.0.0"
     uuid: "^11.0.5"
+    yauzl: "3.4.0"
 
 # Native modules (better-sqlite3 has a .node C++ binding) cannot be
 # loaded from inside an asar archive — Node's require() can't dlopen

@@ -30,39 +30,66 @@ profiles on the operator device.
   renderer is sandboxed with a restrictive CSP, IPC and MCP exposure inventories fail closed, and
   the fixed-seed fingerprint measurement remained identical before and after the upgrade.
 - MKB-02 managed mode was completed on 12 August 2026. Contract version `3` introduced idempotent
-  create, atomic launch, managed-profile locking, and correlated operation diagnostics. The Relay
-  token is profile-management only; page, cookie, and raw-CDP tools are unavailable and no
-  page-control token is issued by this build.
+  create, atomic launch, managed-profile locking, and correlated operation diagnostics; the current
+  runtime contract is version `4`, which also removes profile deletion from MCP and conditionally
+  reports local-install readiness. The Relay token is profile-management only; page, cookie, and
+  raw-CDP tools are unavailable and no page-control token is issued by this build.
 - MKB-03 local-onboarding fixes are implemented but still require human retest. The per-user Windows
   installer requests one Administrator approval for machine-wide outbound UDP rules covering the
   stable CFT and CloakBrowser runtime paths. Every proxied profile launch verifies its own engine's
   exact rule and all Windows firewall profiles, then fails closed before browser startup if the
   boundary is uncertain. CloakBrowser download failure can switch to CFT in-modal; CFT remains a
   compatibility fallback, not the primary antidetect runtime. The combined-installer manifest now
-  pins the locally verified, unpublished Relay v12 archive, which accepts Browser contract v4. The
+  pins the published Relay v15 archive, which accepts Browser contract v4. The
   installer also persists its conflict detector for runtime setup checks; contract v4 advertises
   `local-install-ready-v1` only after expected process, fixed-port, MultiZen-process, and startup
   ownership pass. The supported topology is one Windows operating-system user per PC; a foreign
   per-user installation is rejected before firewall mutation, and cross-user operation is not a
-  release gate. The complete Node 22 installer suite passes 97/97, packaging contracts pass 24/24,
-  and typecheck, lint, and the production Electron bundle pass. Operational distribution remains
-  blocked until the immutable v12 object is published and the remaining human Windows gates pass.
+  release gate. The complete Node 22 installer suite, packaging contracts, typecheck, lint, and the
+  production Electron bundle pass. Operational distribution remains
+  blocked until the installer is rebuilt from the current source and the remaining human Windows
+  gates pass.
 - MKB-03 Browser profile deletion is implemented as a separate in-app lifecycle. Contract version
   `4` removes `delete_profile` from MCP, and profile schema version `3` records incomplete deletion
   for crash-safe retry. The operator must type `DELETE <full profile id>`; active launch/close work
   is refused. Deletion is limited to the selected owned profile directory and database row, never
   Relay configuration, device credentials, the MCP token, or MultiZen data.
+- P0 automated proxy, lease-journal, and readiness hardening is green as of 22 August 2026. Proxied
+  launch fails closed on unverifiable egress; lease storage is atomic, schema-validated,
+  crash-recoverable, serialized, and redacted; aggregate capacity contains no key/profile identity.
+  `license-capacity-v1` is deliberately not advertised because the live vendor session protocol,
+  sidecar, and driver lifecycle are not connected. Real proxy/DNS/WebRTC evidence, human input,
+  second-PC recovery, and canary gates remain open, so this is not rollout approval.
+- Release-readiness Phase 1 is verified locally on Windows as of 22 August 2026. The vulnerable
+  direct runtime dependency `extract-zip@2.0.1` is replaced by pinned `yauzl@3.4.0` behind an owned
+  fail-closed ZIP boundary for engine and CRX/ZIP extraction. Traversal, absolute and Windows device
+  paths, links and special entries, case-folded collisions, zip bombs, truncation, and CRC failures
+  are rejected before publication. CI audits production dependencies, and packaged verification
+  inspects `app.asar` to require `yauzl@3.4.0` and reject `extract-zip` metadata or files.
+- Release-readiness Phase 2 is in progress. Chromium now requests an OS-assigned DevTools port,
+  accepts only a fresh bounded `DevToolsActivePort` record owned by the launched data directory and
+  loopback listener, and uses one total 15-second operator budget or isolated 60-second packaged-CI
+  budget. CI is split into quality, build-once package, and fresh-job packaged-contract jobs with a
+  hashed uploaded archive. The final local directory package passed 5/5 cold lifecycle iterations
+  while ports 9222 and 9223 were occupied. The required PR artifact run and seven independent 20/20
+  Windows runner runs remain open, so Phase 2 is not complete.
 - This build may be used for an owner-led technical demo with disposable profiles. It is not
   approved for real accounts, pilot distribution, or team rollout.
-- The Windows directory package was regenerated on 12 August 2026 with SHA-256
-  `238d5d6fd5e373b052c484ceab90698f6dc295205a59be6573f9928b01db4f42`; Node guard 2/2,
-  W02 guards 8/8, MKB-01 tests 8/8, MKB-01E tests 7/7, MKB-02 tests 18/18, Windows packaging guards
-  3/3, typecheck, build, and packaged runtime/profile-lifecycle verification passed. The repository's
-  `yarn lint` now enforces the workspace quality contract, strict TypeScript unused/fallthrough
-  checks, and JavaScript syntax checks. The packaged verifier covers
+- The current desktop package version is `0.3.12`. The Windows directory package was regenerated on
+  22 August 2026 with SHA-256
+  `b62642a57c2651c071a59fe210fa2fe9633df584d16fa49e3abd855e747bc1a7`; packaged `app.asar` SHA-256
+  is `8a2310fbd9341b0b45ae829a45b9fdbb40a31da5aa821513fb01e9209a919da7`. Typecheck, zero-warning
+  lint, the complete installer suite, build, and packaged runtime/profile-lifecycle verification
+  passed. The repository's `yarn lint` enforces the workspace quality contract, strict TypeScript
+  unused/fallthrough checks, and JavaScript syntax checks. The packaged verifier covers
   the restricted tool inventory, deterministic managed create/retry, correlated diagnostics,
   direct-launch/delete denial, endpoint-free proxy summaries, atomic managed launch, Windows Chrome
-  launcher-PID handoff, process-confirmed close, and clean process exit. It remains unsigned.
+  launcher-PID handoff, OS-assigned owned DevTools discovery, per-stage timing, bounded verifier HTTP
+  requests, sanitized failure snapshots, process-confirmed close, and clean process exit. It remains
+  unsigned. The
+  combined installer under `apps/desktop/release/installer/` was last built on 21 August: it embeds
+  the verified Relay v15 archive but predates the 22 August P0 hardening, so it is not the current
+  rollout artifact and must not be distributed.
 
 ## Owned product and local contract
 
@@ -196,7 +223,7 @@ operator's identity, are recorded in the MKTTool repository's `docs/project-chan
 covers the product as a whole — MKTTool is the console, this is its execution layer, and a change
 here usually lands with a matching change there.
 
-Note when checking whether a build is affected by something recorded there: this repository *is*
+Note when checking whether a build is affected by something recorded there: this repository _is_
 versioned and tagged (`v0.3.1` at the time of writing), while MKTTool is not, so a changelog entry
 naming a build range is naming **these** tags.
 

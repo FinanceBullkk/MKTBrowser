@@ -48,6 +48,8 @@ export interface CdpSessionOptions {
    * trips the automation tripwire.
    */
   engine?: string;
+  /** Override the transport factory for deterministic connection tests. */
+  clientFactory?: (options: { host: string; port: number }) => Promise<CDP.Client>;
 }
 
 /**
@@ -88,6 +90,8 @@ const CLOAK_RISKY_ENABLE_DOMAINS = new Set(["Runtime", "Network"]);
  */
 export class CdpSession {
   private client: CDP.Client | null = null;
+  private connecting: Promise<void> | null = null;
+  private connectionGeneration = 0;
   private readonly opts: CdpSessionOptions;
   /** Cleanups (e.g. polling intervals) to run on close(). */
   private readonly teardowns: Array<() => void> = [];
@@ -111,23 +115,37 @@ export class CdpSession {
 
   async connect(): Promise<void> {
     if (this.client) return;
+    if (this.connecting) return this.connecting;
     const host = this.opts.host ?? "localhost";
-    this.client = await CDP({ host, port: this.opts.port });
-    const { Page } = this.client;
-    // Stealth-minimal connect. Anti-detect Chromium forks (CloakBrowser,
-    // BotBrowser, Camoufox) DCHECK on most CDP enable commands because
-    // they're automation-presence signals. We've reduced to just
-    // Page.enable (needed for navigate/lifecycle events). Runtime, DOM,
-    // Network, Accessibility are enabled on-demand inside specific
-    // methods that need them, then disabled afterwards.
-    //
-    // The big wins from this: (a) Cloudflare/DataDome can't fingerprint
-    // our CDP presence via Runtime.enable, (b) CloakBrowser doesn't
-    // SIGTRAP on connect.
-    await Page.enable();
+    const generation = this.connectionGeneration;
+    const connectAttempt = (async () => {
+      const clientFactory = this.opts.clientFactory ?? ((options) => CDP(options));
+      const client = await clientFactory({ host, port: this.opts.port });
+      try {
+        const { Page } = client;
+        // Keep the client private until the minimum usable CDP baseline succeeds. A failed
+        // Page.enable must be retryable instead of making the next connect() return early.
+        await Page.enable();
+        if (generation !== this.connectionGeneration) {
+          throw new Error("CDP session closed while connecting");
+        }
+        this.client = client;
+      } catch (error) {
+        await client.close().catch(() => {});
+        throw error;
+      }
+    })();
+    this.connecting = connectAttempt;
+    try {
+      await connectAttempt;
+    } finally {
+      if (this.connecting === connectAttempt) this.connecting = null;
+    }
   }
 
   async close(): Promise<void> {
+    this.connectionGeneration += 1;
+    this.connecting = null;
     for (const t of this.teardowns.splice(0)) {
       try {
         t();
@@ -135,9 +153,10 @@ export class CdpSession {
         // ignore
       }
     }
-    if (!this.client) return;
-    await this.client.close();
+    const client = this.client;
     this.client = null;
+    if (!client) return;
+    await client.close();
   }
 
   /**

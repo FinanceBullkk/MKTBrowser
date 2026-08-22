@@ -36,18 +36,27 @@ import { CdpSession } from "@mktbrowser/cdp-driver";
 import type { ChromiumBootstrap } from "./ChromiumBootstrap";
 import { startBridgeForProfile, stopBridgeForProfile } from "./socks5Bridge";
 import { probeProxyGeo } from "./proxyGeo";
-import { resolveProxyGeoLaunch } from "./proxyGeoLaunch.ts";
+import { verifyProxyGeoLaunch } from "./proxyGeoLaunch.ts";
 import { companionDir } from "./extensions/companion";
 import { resolveLoadDir } from "./extensions/extensionStore.ts";
 import { sanitizeStartUrl } from "./startPage";
 import {
+  enumerateBrowserProcessesUsingDataDir,
   findBrowserProcessesUsingDataDir,
   selectPrimaryBrowserPid,
 } from "./browser-process-discovery";
+import {
+  clearStaleDevToolsActivePort,
+  waitForOwnedDevToolsEndpoint,
+} from "./devtools-port-discovery.ts";
 import { assertWindowsWebRtcFirewallProtection } from "./windows-webrtc-firewall.ts";
+import { licenseExitMessage } from "./cloakbrowser-pro-channel.ts";
+import { appendProfileLifecycleLine } from "./profile-lifecycle-log.ts";
+import { LicenseKeyPool, keyTail } from "./license-key-pool.ts";
 import { stableWindowsRuntime, win32PathEquals } from "./chromium-runtime-path.ts";
+import { disableFeaturesArg, networkPrivacySwitches } from "./chromium-network-privacy-flags.ts";
 
-interface RunningProcess {
+interface BrowserProcessContext {
   child: ChildProcess;
   cdpEndpoint: string;
   port: number;
@@ -57,17 +66,102 @@ interface RunningProcess {
   /** The engine's `--user-data-dir`. Used to sweep any lingering browser
    *  process that still holds this profile's data dir on shutdown. */
   browserDataDir: string;
+}
+
+interface WindowWatcher {
+  stop(): void;
+}
+
+interface RunningProcess extends BrowserProcessContext {
   /** Polls /json/list and kills the child when no page targets remain. */
-  windowWatcher: NodeJS.Timeout;
+  windowWatcher: WindowWatcher;
   /** Snapshot of the proxy actually used for this process, including auth for exact comparison. */
   proxy?: ProxyConfig;
   /** Egress observed by the launch-time proxy probe; never exposed through MCP output. */
   observedProxyIp?: string;
 }
 
+interface LaunchingProcess {
+  child: ChildProcess;
+  cdpEndpoint: string | null;
+  port: number | null;
+  pid: number;
+  startedAt: string;
+  session: CdpSession | null;
+  browserDataDir: string;
+  childExit?: { exitCode: number | null; signal: NodeJS.Signals | null };
+  spawnError?: unknown;
+}
+
+type TrackedBrowserProcess = BrowserProcessContext | LaunchingProcess;
+
+type WindowWatcherShutdownReason =
+  | { reason: "ZERO-PAGES"; targetTypes: Array<string | null> }
+  | { reason: "CDP-UNREACHABLE"; errorCode: string };
+
+type ProfileLifecycleLogReason =
+  | WindowWatcherShutdownReason["reason"]
+  | "CLOSE-REQUESTED"
+  | "CHILD-EXIT"
+  | "Browser.close"
+  | "SIGTERM"
+  | "SIGKILL"
+  | "BOOTSTRAP-START"
+  | "BOOTSTRAP-TARGET-START"
+  | "BOOTSTRAP-PROBE-START"
+  | "BOOTSTRAP-PROBE-DONE"
+  | "BOOTSTRAP-PROBE-FAILED"
+  | "BOOTSTRAP-TARGET-DONE"
+  | "BOOTSTRAP-DONE"
+  | "BOOTSTRAP-FAILED"
+  | "LAUNCH-FAILED"
+  | "SHUTDOWN-COMPLETE"
+  | "SHUTDOWN-FAILED"
+  | "SWEEP-DISCOVERY-FAILED"
+  | "LICENCE-KEY-REFUSED";
+
+interface ProfileLifecycleLogDetails {
+  targetTypes?: Array<string | null>;
+  errorCode?: string;
+  exitCode?: number | null;
+  signal?: NodeJS.Signals | null;
+  isRoot?: boolean;
+  targetType?: "page" | "iframe";
+  targetPid?: number;
+  shutdownSource?: "graceful-shutdown" | "data-dir-sweep";
+  shutdownMethod?: "already-exited" | "Browser.close" | "SIGTERM" | "SIGKILL";
+}
+
+type ProfileLifecycleLogContext = Pick<TrackedBrowserProcess, "pid" | "port" | "startedAt">;
+
+function writeProfileLifecycleLog(
+  profileId: ProfileId,
+  context: ProfileLifecycleLogContext,
+  reason: ProfileLifecycleLogReason,
+  details: ProfileLifecycleLogDetails = {},
+): void {
+  // Persist before a hung launch or a shutdown escalation can erase the last useful breadcrumb.
+  const elapsedSeconds = Number(((Date.now() - Date.parse(context.startedAt)) / 1000).toFixed(3));
+  appendProfileLifecycleLine({
+    profileId,
+    pid: context.pid,
+    port: context.port,
+    elapsedSeconds,
+    reason,
+    ...details,
+  });
+}
+
 export interface ChromiumBrowserDriverOptions {
   profileManager: ProfileManager;
   chromiumBootstrap: ChromiumBootstrap;
+  startupBarrier?: Promise<void>;
+  /**
+   * Which licence key each profile launches with. The engine binds one session per key, so this is
+   * what decides how many profiles can be open at once. Absent, every launch uses the bootstrap's
+   * single key and concurrency is whatever that one key allows.
+   */
+  licenseKeyPool?: LicenseKeyPool;
   /**
    * Called when the companion extension's "Add to MKT Browser" button is clicked
    * inside a running profile. `profileId` is the profile that made the call
@@ -100,15 +194,32 @@ interface DriverEvents {
  * is responsible for parsing the page snapshot and producing selectors. MKT Browser never
  * calls any external API.
  */
+/** CloakBrowser's exit code for "this key already has a session open". */
+const SEAT_LIMIT_EXIT_CODE = 76;
+
+/**
+ * Was this failure the engine refusing the key, rather than anything about the profile?
+ *
+ * Tagged at the throw site rather than matched on the message: the message is operator-facing and
+ * will be rewritten, and a rotation loop that stops working because someone improved the wording
+ * would be a quiet, expensive bug.
+ */
+function isSeatRefusal(error: unknown): boolean {
+  return (error as { licenseExitCode?: number } | null)?.licenseExitCode === SEAT_LIMIT_EXIT_CODE;
+}
+
 export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver {
   private readonly running = new Map<ProfileId, RunningProcess>();
   private readonly launching = new Set<ProfileId>();
+  private readonly launchingProcesses = new Map<ProfileId, LaunchingProcess>();
   private readonly closing = new Set<ProfileId>();
-  private nextPort = 9222;
+  private readonly shutdowns = new Map<ProfileId, Promise<void>>();
   private readonly profileManager: ProfileManager;
   private bootstrap: ChromiumBootstrap;
   private readonly onCompanionInstall?: (profileId: ProfileId, extensionId: string) => void;
   private readonly extensionStoreRoot: string;
+  private readonly licenseKeyPool?: LicenseKeyPool;
+  private readonly startupBarrier: Promise<void>;
 
   constructor(opts: ChromiumBrowserDriverOptions) {
     super();
@@ -116,10 +227,17 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     this.bootstrap = opts.chromiumBootstrap;
     this.onCompanionInstall = opts.onCompanionInstall;
     this.extensionStoreRoot = opts.extensionStoreRoot;
+    this.licenseKeyPool = opts.licenseKeyPool;
+    this.startupBarrier = opts.startupBarrier ?? Promise.resolve();
   }
 
   setChromiumBootstrap(bootstrap: ChromiumBootstrap): void {
-    if (this.running.size > 0 || this.launching.size > 0 || this.closing.size > 0) {
+    if (
+      this.running.size > 0 ||
+      this.launching.size > 0 ||
+      this.launchingProcesses.size > 0 ||
+      this.closing.size > 0
+    ) {
       throw new Error("Close all profiles before changing the browser engine.");
     }
     this.bootstrap = bootstrap;
@@ -137,6 +255,16 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
   }
 
   async launch(profileId: ProfileId): Promise<LaunchedProfile> {
+    // A startup orphan sweep owns the same data directories. Let it finish before the first launch
+    // so a slow process-table query cannot classify the newly spawned browser as crash residue.
+    await this.startupBarrier;
+    if (
+      this.launching.has(profileId) ||
+      this.launchingProcesses.has(profileId) ||
+      this.closing.has(profileId)
+    ) {
+      throw profileAlreadyRunning(profileId);
+    }
     const existing = this.running.get(profileId);
     if (existing) {
       return {
@@ -146,11 +274,67 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
         startedAt: existing.startedAt,
       };
     }
-    if (this.launching.has(profileId) || this.closing.has(profileId)) {
-      throw profileAlreadyRunning(profileId);
-    }
     this.launching.add(profileId);
-    return this.launchTracked(profileId).finally(() => this.launching.delete(profileId));
+    try {
+      return await this.launchWithKeyRotation(profileId);
+    } finally {
+      this.launching.delete(profileId);
+    }
+  }
+
+  /**
+   * Launch, and if the engine refuses the licence key, try the next one.
+   *
+   * The pool's picture of which keys are free is a good guess, not an authority: a seat can be held
+   * by a browser an earlier crash left behind, or by the same key in use somewhere else entirely.
+   * Exit 76 is the engine correcting that guess, so the answer is to note the key as busy and try
+   * another rather than to fail — the operator holds several keys precisely so that one being taken
+   * is not the end of it.
+   *
+   * Only a seat refusal rotates. Every other failure — a missing engine, a proxy that would not
+   * start, a profile that does not exist — would fail identically on every key, so retrying would
+   * just multiply the wait before reporting the same thing.
+   */
+  private async launchWithKeyRotation(profileId: ProfileId): Promise<LaunchedProfile> {
+    // CFT has no licensed session channel. An empty CloakBrowser pool must not block its launches.
+    const pool = this.bootstrap.getEngine() === "cloakbrowser" ? this.licenseKeyPool : undefined;
+    // One attempt per key, plus the no-pool case. A profile keeps its reservation across attempts,
+    // so this cannot spend more than one seat at a time.
+    const attempts = pool ? Math.max(pool.snapshot().total, 1) : 1;
+    let lastRefusal: unknown = null;
+
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      if (pool && pool.acquire(profileId) === null) {
+        // Nothing left to try. Report the refusal the engine gave us if there was one, so the
+        // message names the real reason rather than an empty pool.
+        if (lastRefusal) throw lastRefusal;
+        throw engineUnavailable(
+          licenseExitMessage(SEAT_LIMIT_EXIT_CODE) ?? "No licence key is free.",
+        );
+      }
+      const key = pool?.keyFor(profileId) ?? null;
+      try {
+        return await this.launchTracked(profileId);
+      } catch (error) {
+        await this.cleanupFailedLaunch(profileId, error);
+        if (!pool || !isSeatRefusal(error)) {
+          pool?.release(profileId, true);
+          throw error;
+        }
+        // This key is spoken for. Rest it and let the loop reach for the next.
+        lastRefusal = error;
+        if (key) {
+          pool.markRefused(key);
+          appendProfileLifecycleLine({
+            profileId,
+            reason: "LICENCE-KEY-REFUSED",
+            keyTail: keyTail(key),
+            keysLeft: pool.availableCount(),
+          });
+        }
+      }
+    }
+    throw lastRefusal ?? engineUnavailable("No licence key could start a browser.");
   }
 
   private async launchTracked(profileId: ProfileId): Promise<LaunchedProfile> {
@@ -163,7 +347,6 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     // failed-to-spawn launch counts — the user pressed Launch.
     this.profileManager.markOpened(profileId);
 
-    const port = this.allocatePort();
     // A missing or half-prepared engine is its own failure class. Without this the caller sees
     // INTERNAL_ERROR and cannot tell "still downloading" from "this build is broken".
     let chromiumPath: string;
@@ -247,9 +430,14 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     let geoCoords: { latitude: number; longitude: number } | null = null;
     if (profile.proxy) {
       try {
-        const geo = await probeProxyGeo(profile.proxy, { timeoutMs: 4000 });
+        const verified = await verifyProxyGeoLaunch({
+          profileId,
+          fingerprint: fp,
+          probe: () => probeProxyGeo(profile.proxy!, { timeoutMs: 4000 }),
+          reject: proxyRejected,
+        });
+        const { geo, decision } = verified;
         const previousTimezone = fp.timezone;
-        const decision = resolveProxyGeoLaunch(fp, geo);
         fp = decision.fingerprint;
         webrtcSpoofIp = decision.webrtcSpoofIp;
         geoCoords = decision.geoCoords;
@@ -264,18 +452,10 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
             `[mkt-browser] aligning fingerprint timezone ${previousTimezone} → ${decision.fingerprint.timezone} (proxy geo)`,
           );
         }
-      } catch {
+      } catch (cause) {
         // Do not leave a country cached from an older proxy or a prior route.
-        // The fallback remains leak-safe because a null spoof IP selects the
-        // WebRTC kill switch below.
         this.profileManager.setProxyCountry(profileId, null);
-        const decision = resolveProxyGeoLaunch(fp, null);
-        fp = decision.fingerprint;
-        webrtcSpoofIp = decision.webrtcSpoofIp;
-        geoCoords = decision.geoCoords;
-        console.warn(
-          `[mkt-browser] ${decision.diagnosticCode}: continuing with verified containment and WebRTC disabled.`,
-        );
+        throw cause;
       }
     }
     // No-proxy: fp.timezone is left as the profile configured it (issue #13).
@@ -333,7 +513,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     const acceptLangPlain = fp.languages.join(",");
     const args = [
       `--user-data-dir=${browserDataDir}`,
-      `--remote-debugging-port=${port}`,
+      "--remote-debugging-port=0",
       "--no-first-run",
       "--no-default-browser-check",
       // Force-restore the previous session's tabs at startup. Combined
@@ -341,7 +521,10 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       // CDP-based graceful shutdown on close, this makes tab persistence
       // reliable across stop/launch even after a crash.
       "--restore-last-session",
-      "--disable-features=Translate,MediaRouter",
+      // One list, deliberately. Chromium honours only the LAST --disable-features
+      // it receives, so a second flag anywhere in argv discards this one.
+      // chromium-network-privacy-flags.ts owns the contents.
+      disableFeaturesArg(),
       // Don't back Chromium's "Safe Storage" key with the OS keychain/keyring.
       // Two reasons: (1) our engine bundle is ad-hoc signed, so on macOS the
       // keychain ACL never matches and every launch pops a "Chromium wants to
@@ -391,6 +574,40 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     // automated testing" infobar by entering IsGpuTest() exit branch in
     // chrome/browser/ui/startup/infobar_utils.cc. CloakBrowser doesn't
     // need this — and putting it in gpu-test mode crashes the binary.
+    // ── DNS coherence and leak prevention ───────────────────────────
+    // Applies to EVERY profile, not only proxied ones. These flags lived
+    // inside the proxy branch until browserscan measured a profile without
+    // one: the IP read as VNPT in Ho Chi Minh City while the resolvers
+    // answering for it sat abroad, because Chrome's automatic DoH upgrade had
+    // never been switched off on that path. A persona claiming to be a
+    // Vietnamese home connection whose DNS resolves through Cloudflare is
+    // incoherent in the same way a Windows UA with an Apple GPU is, and it
+    // costs one line to not be.
+    //
+    // For a proxied profile the SOCKS5 bridge already carries the hostname
+    // upstream, so URL-load DNS resolves at the egress. For a profile with no
+    // proxy, disabling DoH is what sends resolution back to the connection's
+    // own resolver — the one the IP implies.
+    //
+    // What still leaks bypassing --proxy-server (per Chromium net/docs):
+    //   • DoH (DNS-over-HTTPS) — talks straight to Cloudflare/Google
+    //   • DNS prefetcher / predictor
+    //   • Background networking (component updater, GCM, safe-browsing)
+    //   • Domain Reliability beacons
+    //
+    // We deliberately do NOT use --host-resolver-rules: it triggers the
+    // "unsupported flag" infobar (visible to the user, even though JS can't
+    // probe it), and a SOCKS5 upstream makes it redundant anyway. Real
+    // anti-detect products (Multilogin Mimic) solve the residual leak with a
+    // custom DNS-resolver source patch — a Phase-1 item for an approved
+    // source-patched Chromium build, not the vanilla fallback.
+    //
+    // The DoH / AsyncDns / NetworkPrediction feature toggles ride in the one
+    // --disable-features list above; this is the command-switch half. It is
+    // pushed here, outside every proxy branch, because that is where it was NOT
+    // in the build browserscan caught leaking DNS on unproxied profiles.
+    args.push(...networkPrivacySwitches(Boolean(profile.proxy)));
+
     if (engine === "cft") {
       args.push("--test-type=gpu");
     }
@@ -431,38 +648,6 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       // expose their real IP.
       args.push("--force-webrtc-ip-handling-policy=disable_non_proxied_udp");
       args.push("--enforce-webrtc-ip-permission-check");
-      // ── DNS leak prevention ─────────────────────────────────────────
-      // Chromium does *remote* DNS for socks5:// proxies natively — our
-      // local SOCKS5 bridge gets the hostname (not an IP) and forwards
-      // it to the upstream proxy, which resolves remotely. So URL-load
-      // DNS is already covered.
-      //
-      // What still leaks bypassing --proxy-server (per Chromium net/docs):
-      //   • DoH (DNS-over-HTTPS) — talks straight to Cloudflare/Google
-      //   • DNS prefetcher / predictor
-      //   • Background networking (component updater, GCM, safe-browsing)
-      //   • Domain Reliability beacons
-      //
-      // Disabling these via features+switches plugs every leak we can
-      // close without source-patching Chromium. We deliberately do NOT
-      // use --host-resolver-rules: it triggers the "unsupported flag"
-      // infobar (visible to the user, even though JS can't probe it),
-      // and a SOCKS5 upstream makes it redundant anyway. Real anti-
-      // detect products (Multilogin Mimic) solve the residual leak
-      // with a custom DNS-resolver source patch — a Phase-1 item for
-      // an approved source-patched Chromium build, not the vanilla fallback.
-      args.push(
-        "--disable-features=DnsOverHttps,DnsOverHttpsUpgrade,EncryptedClientHello,AsyncDns,DnsHttpsSvcb,DnsHttpsSvcbAlpn,NetworkPrediction",
-      );
-      args.push("--dns-over-https-mode=off");
-      args.push("--dns-prefetch-disable");
-      args.push("--disable-async-dns");
-      args.push("--no-prerender");
-      args.push("--no-pings");
-      args.push("--disable-background-networking");
-      args.push("--disable-component-update");
-      args.push("--disable-domain-reliability");
-      args.push("--disable-client-side-phishing-detection");
     }
 
     // Browser extensions: load this profile's enabled extensions plus the
@@ -518,6 +703,29 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       DYLD_FALLBACK_FRAMEWORK_PATH: process.env.DYLD_FALLBACK_FRAMEWORK_PATH ?? "",
     };
 
+    // CloakBrowser's licensed build re-verifies its licence on every launch and
+    // reads the key from its OWN environment — the wrapper never passes it as a
+    // switch. Omitted here, a licensed binary exits 77 ("key missing") and the
+    // profile never opens. Empty on the keyless build, which ignores it.
+    // The pool has already reserved a key for this profile in launch(); read it rather than
+    // reserving here, so a retry after a refusal cannot quietly take a second seat.
+    const cloakBrowserLicenseKey =
+      this.licenseKeyPool?.keyFor(profileId) ?? this.bootstrap.getCloakBrowserLicenseKey();
+    if (cloakBrowserLicenseKey) {
+      cleanEnv.CLOAKBROWSER_LICENSE_KEY = cloakBrowserLicenseKey;
+    }
+
+    // Windows has no HOME; the licence check stores state under the user
+    // profile and exits 79 when it cannot resolve or write it. These are
+    // ordinary Windows vars, not Electron markers, so they don't reintroduce
+    // the "running inside Electron" signal the minimal env exists to avoid.
+    if (process.platform === "win32") {
+      for (const key of ["USERPROFILE", "APPDATA", "LOCALAPPDATA", "SystemRoot", "windir"]) {
+        const value = process.env[key];
+        if (value !== undefined) cleanEnv[key] = value;
+      }
+    }
+
     // Linux GUI clients must inherit the active desktop session. Without
     // these values a headful Chromium process cannot connect to X11/Wayland
     // even though the Electron host window is already running successfully.
@@ -549,39 +757,176 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       args.push(sanitizeStartUrl(profile.startUrl));
     }
 
+    const readinessStartedAtMs = Date.now();
+    const prelaunchProcesses = await enumerateBrowserProcessesUsingDataDir(browserDataDir);
+    if (!prelaunchProcesses.enumerated) {
+      throw new Error("Could not establish the browser process baseline before launch");
+    }
+    if (prelaunchProcesses.processes.length > 0) {
+      throw new Error("A browser process already uses this profile data directory");
+    }
+
+    // Port zero makes Chromium choose an available endpoint and publish it atomically in this
+    // owned profile directory. Remove a crash-era record immediately before spawn so freshness is
+    // based on the current launch, never a reachable port left by an unrelated process.
+    await clearStaleDevToolsActivePort(browserDataDir);
+    const spawnedAtMs = Date.now();
+    const startedAt = new Date(spawnedAtMs).toISOString();
     const child = spawn(chromiumPath, args, {
-      detached: false,
+      // Detached on purpose, and it is the licence seat that decides this.
+      //
+      // With detached:false the browser joins this app's Windows job object, so force-killing the
+      // app takes the browser down with it. That sounds tidy and is the worst outcome available:
+      // the browser dies the one way that does NOT release its seat, and nothing survives that
+      // could later be asked to release it politely. Measured — kill the app, and the next launch
+      // is refused for the full 7-17 minutes the lease takes to expire.
+      //
+      // Detached, the browser outlives the crash. That leaves a window on screen, which looks
+      // worse and is strictly better: closing that window is itself a clean shutdown that hands
+      // the seat back, and if the operator just restarts the app, the startup sweep closes it over
+      // its own DevTools port and reclaims the seat in seconds. An unrecoverable wait becomes a
+      // recoverable one.
+      //
+      // The normal path is unaffected: before-quit still calls closeAll(), which closes every
+      // browser through CDP before the app goes away.
+      detached: true,
       stdio: ["ignore", "ignore", "pipe"],
       env: cleanEnv,
     });
+    let spawnError: unknown = null;
+    child.on("error", (error) => {
+      spawnError = error;
+      const pending = this.launchingProcesses.get(profileId);
+      if (pending?.child === child) pending.spawnError = error;
+      process.stderr.write(`[mkt-browser] Chromium spawn failed: ${error.message}\n`);
+    });
     if (!child.pid) throw new Error("Failed to spawn Chromium");
+
+    const launchProcess: LaunchingProcess = {
+      child,
+      cdpEndpoint: null,
+      port: null,
+      pid: child.pid,
+      startedAt,
+      session: null,
+      browserDataDir,
+    };
+    this.launchingProcesses.set(profileId, launchProcess);
     child.stderr?.on("data", (chunk: Buffer) => {
       const line = chunk.toString("utf8").trim();
       if (line) process.stderr.write(`[chromium ${child.pid}] ${line}\n`);
     });
     child.on("exit", (code, signal) => {
-      // First-line breadcrumb — child.on("exit") below also handles
-      // running-changed teardown.
       if (code !== 0 && code !== null) {
+        // A licence refusal exits with a bare code and no diagnostic output, so
+        // without this translation an operator sees only "the browser closed".
+        const licenseReason = licenseExitMessage(code);
+        if (licenseReason) {
+          process.stderr.write(`[mkt-browser] ${licenseReason}
+`);
+        }
         process.stderr.write(
           `[mkt-browser] Chromium pid ${child.pid} exited code=${code} signal=${signal ?? "—"}\n`,
         );
       }
+
+      const pending = this.launchingProcesses.get(profileId);
+      if (pending === launchProcess) {
+        pending.childExit = { exitCode: code, signal };
+        return;
+      }
+
+      const record = this.running.get(profileId);
+      if (!record || record.child !== child) return;
+      void this.handleRunningChildExit(profileId, record, code, signal);
     });
 
-    const startedAt = new Date().toISOString();
-    const cdpEndpoint = `http://127.0.0.1:${port}`;
-
-    const session = new CdpSession({ port, engine });
     // Staged readiness: /json/version → a page target exists → connect+attach,
     // all within one budget. Guarantees the profile is actually drivable before
     // launch() resolves, so an MCP navigate/extract right after launch can't
     // race a not-yet-ready CDP endpoint.
-    await waitForCdpSessionReady(port, session, 15000);
-    const trackedPid = selectPrimaryBrowserPid(
-      await findBrowserProcessesUsingDataDir(browserDataDir),
-      child.pid,
+    //
+    // The budget is wider under the packaged-contract verifier, and only there. 15s is measured
+    // against a developer machine where the engine is warm and the CPU is not shared. A GitHub
+    // Windows runner is neither, and on 19 August 2026 it lost the race at the first stage —
+    // Chromium had not opened the DevTools port at all. The identical commit passed on rerun, which
+    // is the worst outcome available: a check that is red often enough to be re-run is a check that
+    // teaches people to re-run rather than read, and that habit is what this repository keeps paying
+    // to remove.
+    //
+    // Widening it for everyone would be the wrong trade — the tight budget is what stops a real
+    // launch regression on an operator's machine from being absorbed as a slow start. So the wider
+    // number is scoped to the one process that already identifies itself, using the flag this file
+    // reads a few hundred lines above for the same purpose.
+    const readinessBudgetMs =
+      process.env.MKT_BROWSER_PACKAGED_CONTRACT_VERIFY === "1" ? 60_000 : 15_000;
+    const discoveryBudgetMs = readinessBudgetMs - (Date.now() - readinessStartedAtMs);
+    if (discoveryBudgetMs <= 0) {
+      throw new Error("CDP readiness budget exhausted before DevTools endpoint discovery");
+    }
+    let endpoint;
+    try {
+      endpoint = await waitForOwnedDevToolsEndpoint({
+        dataDir: browserDataDir,
+        childPid: child.pid,
+        startedAtMs: spawnedAtMs,
+        budgetMs: discoveryBudgetMs,
+      });
+    } catch (error) {
+      if (spawnError) throw spawnError;
+      const exitCode = launchProcess.childExit?.exitCode;
+      const licenseReason = licenseExitMessage(exitCode ?? null);
+      if (licenseReason) {
+        const refusal = engineUnavailable(licenseReason);
+        (refusal as { licenseExitCode?: number }).licenseExitCode = exitCode ?? undefined;
+        throw refusal;
+      }
+      throw error;
+    }
+    const { port, primaryPid: trackedPid } = endpoint;
+    const cdpEndpoint = `http://127.0.0.1:${port}`;
+    const session = new CdpSession({ port, engine });
+    launchProcess.port = port;
+    launchProcess.cdpEndpoint = cdpEndpoint;
+    launchProcess.session = session;
+    launchProcess.pid = trackedPid;
+    console.log(
+      `[mkt-browser] DevTools endpoint ready childPid=${child.pid} primaryPid=${trackedPid} ` +
+        `port=${port} activePortMs=${endpoint.timings.activePortMs} ` +
+        `ownershipMs=${endpoint.timings.ownershipMs}`,
     );
+
+    const remainingReadinessMs = readinessBudgetMs - (Date.now() - readinessStartedAtMs);
+    if (remainingReadinessMs <= 0) {
+      throw new Error(
+        `CDP readiness budget exhausted after DevTools endpoint discovery on port ${port}`,
+      );
+    }
+    const cdpTimings = await waitForCdpSessionReady(port, session, remainingReadinessMs);
+    console.log(
+      `[mkt-browser] CDP ready port=${port} versionMs=${cdpTimings.versionMs} ` +
+        `pageTargetMs=${cdpTimings.pageTargetMs} attachMs=${cdpTimings.attachMs} ` +
+        `totalMs=${cdpTimings.totalMs}`,
+    );
+    if (spawnError) throw spawnError;
+    if (launchProcess.childExit && trackedPid === child.pid && !isPidAlive(trackedPid)) {
+      // A licence refusal is the most common way to land here and it is not a defect: the free key
+      // allows one session at a time, and the engine opens its DevTools port BEFORE the licence
+      // verdict arrives, so readiness passes and the process is gone a second later. Reported as a
+      // raw exit code it reads as a crash — that misreading cost an evening. LICENSE_EXIT_MESSAGES
+      // already says what happened and what to do about it; say that instead, and classify it as
+      // ENGINE_UNAVAILABLE so a caller sees an expected refusal rather than INTERNAL_ERROR.
+      const exitCode = launchProcess.childExit.exitCode;
+      const licenseReason = licenseExitMessage(exitCode);
+      if (licenseReason) {
+        const refusal = engineUnavailable(licenseReason);
+        // The rotation loop reads this to tell "try the next key" from "this will fail on every key".
+        (refusal as { licenseExitCode?: number }).licenseExitCode = exitCode ?? undefined;
+        throw refusal;
+      }
+      throw new Error(`Chromium exited during launch with code ${String(exitCode)}`);
+    }
+    const launchLogContext: ProfileLifecycleLogContext = { pid: trackedPid, port, startedAt };
 
     // Apply per-target emulation: timezone, locale, Sec-CH-UA via
     // userAgentMetadata (works on stock Chromium — no patches needed!),
@@ -615,8 +960,22 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     // patching produces inconsistent values that detection vendors flag.
     const fingerprintScript =
       engine === "cloakbrowser" ? null : buildFingerprintPreloadScript(fp, { includeWebGl: true });
+    // Launch can hang before the window watcher exists, so durable stage pairs reveal the exact
+    // CDP await.
+    writeProfileLifecycleLog(profileId, launchLogContext, "BOOTSTRAP-START");
+    let tracingInitialBootstrap = true;
     await session
       .bootstrapTargets(async (send, ctx) => {
+        const traceTarget = tracingInitialBootstrap;
+        const targetDetails = { isRoot: ctx.isRoot, targetType: ctx.type };
+        if (traceTarget) {
+          writeProfileLifecycleLog(
+            profileId,
+            launchLogContext,
+            "BOOTSTRAP-TARGET-START",
+            targetDetails,
+          );
+        }
         // 1. WebRTC kill-switch / spoof when proxy is on.
         //    CloakBrowser handles WebRTC natively (webrtcScript is null).
         if (useProxy && webrtcScript) {
@@ -720,30 +1079,22 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
             console.error("[mkt-browser] setUserAgentOverride failed:", e);
           }
         } else {
-          // CloakBrowser: we skip the CDP UA/timezone overrides above because
-          // those have native --fingerprint-* patches that a CDP layer would
-          // contradict. LOCALE is the exception: CloakBrowser ships NO native
-          // locale switch (its --fingerprint-* set has timezone but no
-          // locale/language — verified against the binary), and macOS ignores
-          // --lang, so nothing otherwise sets the renderer's ICU default locale
-          // and Intl.*.resolvedOptions().locale leaks the host locale (e.g. a
-          // th-TH persona reports en-US). Because there is no native locale
-          // value here, this CDP override fills a gap rather than shadowing a
-          // patch — no cross-layer disagreement. (--lang is stock Chromium, not
-          // a fingerprint patch; CFT already ships this exact override.)
-          // navigator.language(s) come from --accept-lang and stay untouched.
-          try {
-            await send("Emulation.setLocaleOverride", { locale: fp.locale });
-          } catch (e) {
-            const msg = (e as Error).message;
-            if (!/already in effect/i.test(msg)) {
-              console.error("[mkt-browser] setLocaleOverride (cloakbrowser) failed:", e);
-            }
-          }
+          // CloakBrowser: no CDP Emulation.* layer at all. UA, timezone and —
+          // since the 151 measurement above — locale each have a native
+          // --fingerprint-* patch, and a CDP override on top would be a second
+          // source of truth that can disagree with the patch under a scanner.
         }
         // Diagnostic: capture what the page actually sees AFTER overrides.
         // Logs once per session — if browserscan reports "Different browser
         // name", these values tell us whether our override landed.
+        if (traceTarget) {
+          writeProfileLifecycleLog(
+            profileId,
+            launchLogContext,
+            "BOOTSTRAP-PROBE-START",
+            targetDetails,
+          );
+        }
         try {
           const probe = await send<{
             result?: { value?: string };
@@ -763,16 +1114,54 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
             })`,
             returnByValue: true,
           });
+          if (traceTarget) {
+            writeProfileLifecycleLog(
+              profileId,
+              launchLogContext,
+              "BOOTSTRAP-PROBE-DONE",
+              targetDetails,
+            );
+          }
           const value = probe?.result?.value;
           if (value) console.log("[mkt-browser] post-bootstrap probe:", value);
         } catch (e) {
+          if (traceTarget) {
+            writeProfileLifecycleLog(profileId, launchLogContext, "BOOTSTRAP-PROBE-FAILED", {
+              ...targetDetails,
+              errorCode: fetchErrorCode(e),
+            });
+          }
           // Non-fatal — diagnostic only.
           void e;
         }
+        if (traceTarget) {
+          writeProfileLifecycleLog(
+            profileId,
+            launchLogContext,
+            "BOOTSTRAP-TARGET-DONE",
+            targetDetails,
+          );
+        }
       })
-      .catch((e: unknown) => {
-        console.error("[mkt-browser] CDP bootstrap failed:", e);
-      });
+      .then(
+        () => {
+          tracingInitialBootstrap = false;
+          writeProfileLifecycleLog(profileId, launchLogContext, "BOOTSTRAP-DONE");
+        },
+        (e: unknown) => {
+          tracingInitialBootstrap = false;
+          writeProfileLifecycleLog(profileId, launchLogContext, "BOOTSTRAP-FAILED", {
+            errorCode: fetchErrorCode(e),
+          });
+          console.error("[mkt-browser] CDP bootstrap failed:", e);
+        },
+      );
+
+    if (launchProcess.childExit && trackedPid === child.pid && !isPidAlive(trackedPid)) {
+      throw new Error(
+        `Chromium exited during bootstrap with code ${String(launchProcess.childExit.exitCode)}`,
+      );
+    }
 
     // Wire the companion's "Add to MKT Browser" channel for this profile — scoped
     // to Web Store pages only (the host polls a DOM attribute there, never on
@@ -800,20 +1189,6 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     // Latch so the 1s watcher signals termination + shuts down exactly once,
     // not on every tick while pages stay at zero during the ~1.5–4s wind-down.
     let signalledClose = false;
-    const windowWatcher = createWindowWatcher(port, startedAt, () => {
-      if (signalledClose) return;
-      signalledClose = true;
-      // Window closed but the process lingers (mac app lifecycle) — tell the GUI
-      // we're terminating so the card stops showing "Stop" while it winds down.
-      this.emit("running-changed", { kind: "closing", profileId });
-      // Graceful CDP shutdown — preserves session-restore on CFT too.
-      void (async () => {
-        await gracefulShutdown(r);
-        await killBrowsersUsingDataDir(r.browserDataDir);
-        this.finishExternalClose(profileId, r);
-      })();
-    });
-
     const record: RunningProcess = {
       child,
       cdpEndpoint,
@@ -822,73 +1197,192 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       startedAt,
       session,
       browserDataDir,
-      windowWatcher,
+      // Replaced before publication; the watcher callback must read the mutable tracked PID.
+      windowWatcher: { stop: () => {} },
       proxy: profile.proxy ? { ...profile.proxy } : undefined,
       observedProxyIp: webrtcSpoofIp ?? undefined,
     };
-    const r = record;
+    record.windowWatcher = createWindowWatcher(
+      port,
+      startedAt,
+      () => isPidAlive(record.pid),
+      (shutdownReason) => {
+        if (signalledClose) return;
+        signalledClose = true;
+        writeProfileLifecycleLog(profileId, record, shutdownReason.reason, shutdownReason);
+        void this.shutdownRunningProfile(profileId, record, "external-exit").catch(
+          (error: unknown) => {
+            console.error("[mkt-browser] watcher shutdown failed:", error);
+          },
+        );
+      },
+    );
     this.running.set(profileId, record);
-
-    child.on("exit", () => {
-      // Windows Chrome can hand off from a short-lived launcher to the real browser process.
-      // Ignore that launcher exit while the tracked browser PID is still alive.
-      if (record.pid !== child.pid && isPidAlive(record.pid)) return;
-      this.finishExternalClose(profileId, record);
-    });
+    this.launchingProcesses.delete(profileId);
 
     this.emit("running-changed", { kind: "launched", profileId });
     return { id: profileId, cdpEndpoint, pid: trackedPid, startedAt };
   }
 
-  private finishExternalClose(profileId: ProfileId, record: RunningProcess): void {
-    if (this.running.get(profileId) !== record) return;
-    clearInterval(record.windowWatcher);
-    void record.session.close().catch(() => {});
-    void stopBridgeForProfile(profileId).catch(() => {});
-    this.running.delete(profileId);
-    this.emit("running-changed", { kind: "closed", profileId, reason: "external-exit" });
+  private async handleRunningChildExit(
+    profileId: ProfileId,
+    record: RunningProcess,
+    exitCode: number | null,
+    signal: NodeJS.Signals | null,
+  ): Promise<void> {
+    // Windows may emit exit for a launcher while the real browser has already inherited CDP.
+    if (record.pid !== record.child.pid && isPidAlive(record.pid)) return;
+    if (this.closing.has(profileId)) {
+      writeProfileLifecycleLog(profileId, record, "CHILD-EXIT", { exitCode, signal });
+      return;
+    }
+    const processes = await findBrowserProcessesUsingDataDir(record.browserDataDir);
+    const discoveredPid = selectPrimaryBrowserPid(processes, record.child.pid ?? record.pid);
+    if (discoveredPid !== record.child.pid && isPidAlive(discoveredPid)) {
+      record.pid = discoveredPid;
+      return;
+    }
+    if (await isCdpEndpointReachable(record.port, 500)) return;
+
+    writeProfileLifecycleLog(profileId, record, "CHILD-EXIT", { exitCode, signal });
+    if (this.running.get(profileId) === record && !this.closing.has(profileId)) {
+      await this.shutdownRunningProfile(profileId, record, "external-exit").catch(
+        (error: unknown) => console.error("[mkt-browser] child-exit cleanup failed:", error),
+      );
+    }
+  }
+
+  private async cleanupFailedLaunch(profileId: ProfileId, error: unknown): Promise<void> {
+    const activeShutdown = this.shutdowns.get(profileId);
+    if (activeShutdown) {
+      await activeShutdown.catch(() => {});
+      return;
+    }
+    const pending = this.launchingProcesses.get(profileId);
+    if (!pending) {
+      await withTimeout(stopBridgeForProfile(profileId), 2000);
+      return;
+    }
+
+    const processes = await findBrowserProcessesUsingDataDir(pending.browserDataDir);
+    pending.pid = selectPrimaryBrowserPid(processes, pending.pid);
+    const childExit = pending.childExit;
+    const childWasBrowser = pending.pid === pending.child.pid || !isPidAlive(pending.pid);
+    if (childExit && childWasBrowser) {
+      writeProfileLifecycleLog(profileId, pending, "CHILD-EXIT", childExit);
+    } else {
+      writeProfileLifecycleLog(profileId, pending, "LAUNCH-FAILED", {
+        errorCode: fetchErrorCode(pending.spawnError ?? error),
+      });
+    }
+
+    const outcome = await terminateBrowserProcess(profileId, pending);
+    this.releaseLicenseKey(profileId, outcome.shutdownMethod);
+    if (outcome.terminated) {
+      if (this.launchingProcesses.get(profileId) === pending) {
+        this.launchingProcesses.delete(profileId);
+      }
+      await withTimeout(stopBridgeForProfile(profileId), 2000);
+    }
+  }
+
+  /**
+   * Give the profile's licence key back to the pool.
+   *
+   * Whether the seat actually came back depends on how the browser died: CloakBrowser releases it
+   * during its own shutdown flush, which Browser.close reaches and a signal does not. Reporting a
+   * signalled kill as a clean release would send the very next launch at a seat the server still
+   * counts as taken — so a killed browser rests its key for the lease instead.
+   */
+  private releaseLicenseKey(profileId: ProfileId, method: ShutdownMethod): void {
+    const seatReleased = method === "Browser.close" || method === "already-exited";
+    this.licenseKeyPool?.release(profileId, seatReleased);
+  }
+
+  private shutdownRunningProfile(
+    profileId: ProfileId,
+    record: RunningProcess,
+    reason: "user-close" | "external-exit",
+  ): Promise<void> {
+    const existing = this.shutdowns.get(profileId);
+    if (existing) return existing;
+
+    this.closing.add(profileId);
+    record.windowWatcher.stop();
+    const shutdown = (async () => {
+      const outcome = await terminateBrowserProcess(profileId, record);
+      this.releaseLicenseKey(profileId, outcome.shutdownMethod);
+      if (!outcome.terminated) {
+        throw new Error(`Chromium pid ${record.pid} survived shutdown escalation`);
+      }
+
+      if (this.running.get(profileId) === record) this.running.delete(profileId);
+      await withTimeout(stopBridgeForProfile(profileId), 2000);
+      console.log(
+        `[mkt-browser] close() done profile=${profileId} pid=${record.pid} alive=${isPidAlive(record.pid)}`,
+      );
+      this.emit("running-changed", { kind: "closed", profileId, reason });
+    })()
+      .catch((error: unknown) => {
+        if (this.running.get(profileId) === record) {
+          this.closing.delete(profileId);
+          if (this.shutdowns.get(profileId) === shutdown) this.shutdowns.delete(profileId);
+          this.emit("running-changed", { kind: "launched", profileId });
+        }
+        throw error;
+      })
+      .finally(() => {
+        this.closing.delete(profileId);
+        if (this.shutdowns.get(profileId) === shutdown) this.shutdowns.delete(profileId);
+      });
+    this.shutdowns.set(profileId, shutdown);
+    this.emit("running-changed", { kind: "closing", profileId });
+    return shutdown;
+  }
+
+  private shutdownLaunchingProfile(profileId: ProfileId, pending: LaunchingProcess): Promise<void> {
+    const existing = this.shutdowns.get(profileId);
+    if (existing) return existing;
+
+    this.closing.add(profileId);
+    const shutdown = (async () => {
+      const outcome = await terminateBrowserProcess(profileId, pending);
+      this.releaseLicenseKey(profileId, outcome.shutdownMethod);
+      if (!outcome.terminated) {
+        throw new Error(`Chromium pid ${pending.pid} survived shutdown escalation`);
+      }
+      if (this.launchingProcesses.get(profileId) === pending) {
+        this.launchingProcesses.delete(profileId);
+      }
+      await withTimeout(stopBridgeForProfile(profileId), 2000);
+      this.emit("running-changed", { kind: "closed", profileId, reason: "user-close" });
+    })().finally(() => {
+      this.closing.delete(profileId);
+      if (this.shutdowns.get(profileId) === shutdown) this.shutdowns.delete(profileId);
+    });
+    this.shutdowns.set(profileId, shutdown);
+    this.emit("running-changed", { kind: "closing", profileId });
+    return shutdown;
   }
 
   async close(profileId: ProfileId): Promise<void> {
-    const r = this.running.get(profileId);
-    if (!r) return;
-    this.closing.add(profileId);
-    console.log(`[mkt-browser] close() profile=${profileId} pid=${r.pid}`);
-    // Signal the terminating phase up front (covers MCP/external callers that
-    // don't drive the button's local "Stopping…" state).
-    this.emit("running-changed", { kind: "closing", profileId });
-    // Remove from map first so the child.on('exit') handler treats this as
-    // a planned close (no event emitted from there).
-    this.running.delete(profileId);
-    clearInterval(r.windowWatcher);
-    // Always emit "closed" — even if shutdown throws — so the GUI's terminating
-    // state can never get stranded.
-    try {
-      // Kill the browser FIRST, then stop the proxy bridge. Order matters: the
-      // bridge's server.close() blocks until the browser's socks connection
-      // ends, so stopping it before the browser is dead would hang close()
-      // forever (the real bug behind "Stop leaves Chromium running").
-      await gracefulShutdown(r);
-      // Belt-and-suspenders: after the PID-based shutdown, sweep for ANY
-      // process still holding this profile's user-data-dir and SIGKILL it.
-      // Catches re-parented/forked survivors (or leftover helpers) that the
-      // single tracked PID could miss.
-      await killBrowsersUsingDataDir(r.browserDataDir);
-      // Browser is gone now, so the bridge closes immediately. Timeout-bounded
-      // anyway so a stuck socket can never strand Stop.
-      await withTimeout(stopBridgeForProfile(profileId), 2000);
-    } finally {
-      console.log(
-        `[mkt-browser] close() done profile=${profileId} pid=${r.pid} alive=${isPidAlive(r.pid)}`,
-      );
-      this.closing.delete(profileId);
-      this.emit("running-changed", { kind: "closed", profileId, reason: "user-close" });
-    }
+    const record = this.running.get(profileId);
+    const pending = this.launchingProcesses.get(profileId);
+    const processContext = record ?? pending;
+    if (!processContext) return;
+
+    writeProfileLifecycleLog(profileId, processContext, "CLOSE-REQUESTED");
+    console.log(`[mkt-browser] close() profile=${profileId} pid=${processContext.pid}`);
+    if (record) await this.shutdownRunningProfile(profileId, record, "user-close");
+    else if (pending) await this.shutdownLaunchingProfile(profileId, pending);
   }
 
   isRunning(profileId: ProfileId): boolean {
     return (
-      this.running.has(profileId) || this.launching.has(profileId) || this.closing.has(profileId)
+      this.running.has(profileId) ||
+      this.launching.has(profileId) ||
+      this.launchingProcesses.has(profileId) ||
+      this.closing.has(profileId)
     );
   }
 
@@ -942,18 +1436,15 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
   }
 
   async closeAll(): Promise<void> {
-    const ids = [...this.running.keys()];
-    await Promise.all(ids.map((id) => this.close(id)));
+    const ids = new Set([...this.running.keys(), ...this.launchingProcesses.keys()]);
+    await Promise.all([...ids].map((id) => this.close(id)));
   }
 
   private requireSession(profileId: ProfileId): CdpSession {
+    if (this.closing.has(profileId)) throw profileNotRunning(profileId);
     const r = this.running.get(profileId);
     if (!r) throw profileNotRunning(profileId);
     return r.session;
-  }
-
-  private allocatePort(): number {
-    return this.nextPort++;
   }
 }
 
@@ -1158,11 +1649,13 @@ function buildCloakBrowserFingerprintArgs(profileId: ProfileId, fp: FingerprintC
   const args = [
     `--fingerprint=${fingerprintSeed(profileId, fp)}`,
     `--fingerprint-platform=${cloakBrowserPlatform(fp)}`,
-    // NOTE: CloakBrowser has NO --fingerprint-locale switch (verified against
-    // the binary — its --fingerprint-* set covers timezone/platform/screen/etc
-    // but not locale/language). Locale is applied via CDP
-    // Emulation.setLocaleOverride in the bootstrap step instead; passing a
-    // --fingerprint-locale here would be silently ignored.
+    // Measured on CloakBrowser 151 (19 Aug 2026): `--fingerprint-locale=de-DE`
+    // makes the page report navigator.language AND
+    // Intl.DateTimeFormat().resolvedOptions().locale as de-DE. An earlier note
+    // here claimed the switch did not exist and routed locale through CDP
+    // Emulation.setLocaleOverride; the switch is in 151's table (and in 146's),
+    // so the native patch drives it and the CDP layer is gone.
+    `--fingerprint-locale=${fp.locale}`,
     `--fingerprint-timezone=${fp.timezone}`,
     `--fingerprint-screen-width=${fp.screen.width}`,
     `--fingerprint-screen-height=${fp.screen.height}`,
@@ -1183,7 +1676,70 @@ function buildCloakBrowserFingerprintArgs(profileId: ProfileId, fp: FingerprintC
   if (fp.clientHints?.secChUaPlatformVersion) {
     args.push(`--fingerprint-platform-version=${fp.clientHints.secChUaPlatformVersion}`);
   }
+  // screen.availHeight otherwise reflects the HOST's desktop chrome. Harmless
+  // for a Windows persona on Windows, but a macOS persona then reports a
+  // Windows taskbar inset, which no Mac can produce. Measured on CloakBrowser
+  // 146: height 1080 with `-taskbar-height=22` yields availHeight 1058, and
+  // `=0` yields 1080 — the switch is honoured exactly.
+  args.push(`--fingerprint-taskbar-height=${cloakBrowserTaskbarHeight(fp)}`);
+  args.push(`--fingerprint-storage-quota=${cloakBrowserStorageQuotaMib(profileId, fp)}`);
   return args;
+}
+
+/**
+ * Desktop chrome inset (px) subtracted from `screen.availHeight`, by device
+ * family. Derived from the family prefix the same way `cloakBrowserPlatform()`
+ * is, so no persisted profile needs migrating.
+ *
+ *   Windows 48 — Windows 11 taskbar at 100% scale. Matches what this host
+ *                actually reports, so Windows personas keep their current
+ *                (already plausible) value rather than changing behaviour.
+ *   macOS    25 — the menu bar. A visible Dock would subtract more, but 25 is
+ *                the floor every Mac shows and is a real configuration
+ *                (auto-hidden Dock); the host's Windows inset is not.
+ *   Linux     0 — availHeight == height on many window managers.
+ *
+ * These are plausible defaults, not measured distributions: worth revisiting if
+ * real-world availHeight data ever says otherwise.
+ */
+function cloakBrowserTaskbarHeight(fp: FingerprintConfig): number {
+  const platform = cloakBrowserPlatform(fp);
+  if (platform === "macos") return 25;
+  if (platform === "linux") return 0;
+  return 48;
+}
+
+/**
+ * `navigator.storage.estimate().quota`, expressed in MiB — the unit
+ * `--fingerprint-storage-quota` takes. Measured on CloakBrowser 146: `=8192`
+ * makes the page report exactly 8,589,934,592 bytes and `=131072` reports
+ * 137,438,953,472, i.e. what JavaScript sees is `value * 1024 ** 2`.
+ *
+ * Left unset, every profile on a host reports the SAME quota, because the
+ * value is derived from the host volume's real free space (559,109,800 bytes
+ * on this machine). That is a perfect join column: it survives separate
+ * proxies, separate cookies and separate canvas noise, so one flagged account
+ * can point at every sibling sharing the machine. Seeding it per profile is
+ * what removes the join.
+ *
+ * Known cost, taken deliberately: MiB granularity means the reported quota is
+ * always an exact multiple of 1,048,576, while a real Chrome computes a
+ * fraction of free disk and lands on arbitrary byte counts. That trades an
+ * exotic "suspiciously round" tell for the removal of a certain cross-profile
+ * link — worth it while several profiles share one machine. Revisit if a
+ * scanner is ever observed testing the divisibility.
+ */
+function cloakBrowserStorageQuotaMib(profileId: ProfileId, fp: FingerprintConfig): number {
+  // 20-400 GiB of headroom — the band consumer disks actually sit in.
+  const minMib = 20 * 1024;
+  const spanMib = 380 * 1024;
+  // Keyed off the same material as `fingerprintSeed`, under its own label so
+  // rotating one surface does not silently rotate the other.
+  const hex = createHash("sha256")
+    .update(`storage-quota:${fp.seed ?? profileId}`)
+    .digest("hex")
+    .slice(0, 8);
+  return minMib + (Number.parseInt(hex, 16) % spanMib);
 }
 
 function primaryBrandVersion(ch: ClientHints | undefined): string | null {
@@ -1259,52 +1815,137 @@ function browserDataDirForEngine(profileDataDir: string, engine: BrowserEngine):
  * Idempotent — safe to call once from `close()` and again from the window
  * watcher; the second call no-ops because the child is already exiting.
  */
-async function gracefulShutdown(r: RunningProcess): Promise<void> {
+type ShutdownMethod = "already-exited" | "Browser.close" | "SIGTERM" | "SIGKILL";
+
+async function terminateBrowserProcess(
+  profileId: ProfileId,
+  context: TrackedBrowserProcess,
+): Promise<{ terminated: boolean; shutdownMethod: ShutdownMethod }> {
+  const shutdownMethod = await gracefulShutdown(profileId, context);
+  const { survivors, enumerated, forcedBrowserTermination } = await killBrowsersUsingDataDir(
+    profileId,
+    context,
+  );
+  const effectiveShutdownMethod = forcedBrowserTermination ? "SIGKILL" : shutdownMethod;
+  // An unreadable process table is not evidence of termination. Claiming "complete" from one is
+  // how a browser that still holds the licence seat gets recorded as closed.
+  const terminated = !isPidAlive(context.pid) && survivors.length === 0 && enumerated;
+  writeProfileLifecycleLog(
+    profileId,
+    context,
+    terminated ? "SHUTDOWN-COMPLETE" : "SHUTDOWN-FAILED",
+    {
+      shutdownMethod: effectiveShutdownMethod,
+      targetPid: survivors[0],
+    },
+  );
+  return { terminated, shutdownMethod: effectiveShutdownMethod };
+}
+
+async function gracefulShutdown(
+  profileId: ProfileId,
+  r: TrackedBrowserProcess,
+): Promise<ShutdownMethod> {
   const { pid } = r;
+  const trackedPidWasAlive = isPidAlive(pid);
 
   // Source of truth is the OS, not `child.killed`/`exitCode`. Those flags lie
   // in a real case: the window watcher may have already fired a SIGTERM (so
   // `child.killed` is true) that Chromium ignored, and a subsequent Stop press
   // would then skip escalation and report "closed" while the browser lives on.
-  if (!isPidAlive(pid)) {
-    await r.session.close().catch(() => {});
-    return;
-  }
-
   // 1. Graceful CDP close (⌘Q equivalent — flushes session-restore). The
   //    websocket disconnects mid-call; timeout-bounded so a stuck send can
-  //    never block the signal escalation below.
-  await withTimeout(r.session.closeBrowser(), 3000);
-  // Chromium needs ~500ms–2s to flush session-restore on macOS; 4s is margin.
-  if (await waitForPidDeath(pid, 4000)) {
-    await withTimeout(r.session.close(), 1000);
-    return;
-  }
+  //    never block the signal escalation below. Attempt it even when the tracked PID already
+  //    exited because Windows launchers can hand CDP to an untracked browser process.
+  if (r.session) {
+    writeProfileLifecycleLog(profileId, r, "Browser.close", {
+      shutdownSource: "graceful-shutdown",
+    });
+    await withTimeout(r.session.closeBrowser(), 3000);
+    if (!trackedPidWasAlive) {
+      await withTimeout(r.session.close(), 1000);
+      // The tracked PID was a Windows launcher that already handed off, so the browser doing the
+      // actual closing is one we are not watching. Returning here used to hand straight to the
+      // data-dir sweep, whose first act is SIGKILL — landing on a browser three milliseconds into
+      // flushing its own shutdown. CloakBrowser releases its licence seat during that flush and not
+      // before, so killing it there costs a seat for the 7-17 minutes the lease takes to expire,
+      // on a plan that has exactly one. Give the untracked browser the same 4s Browser.close budget
+      // the tracked path gets; the sweep is still there for whatever ignores it.
+      await waitForDataDirProcessesToExit(r.browserDataDir, 4000);
+      return "already-exited";
+    }
+    // Chromium needs ~500ms–2s to flush session-restore on macOS; 4s is margin.
+    if (await waitForPidDeath(pid, 4000)) {
+      await withTimeout(r.session.close(), 1000);
+      return "Browser.close";
+    }
 
-  await withTimeout(r.session.close(), 1000);
+    await withTimeout(r.session.close(), 1000);
+  } else if (!trackedPidWasAlive) {
+    return "already-exited";
+  }
 
   // 2. SIGTERM by PID (not r.child.kill — don't trust the child flags).
   console.log(`[mkt-browser] shutdown pid=${pid}: Browser.close didn't exit in 4s → SIGTERM`);
+  writeProfileLifecycleLog(profileId, r, "SIGTERM", {
+    shutdownSource: "graceful-shutdown",
+  });
   killPid(pid, "SIGTERM");
-  if (await waitForPidDeath(pid, 2000)) return;
+  if (await waitForPidDeath(pid, 2000)) return "SIGTERM";
 
   // 3. SIGKILL — the kernel guarantees this. We poll to confirm the process is
   //    genuinely gone before returning, so close() never reports a false
   //    "closed" while Chromium is still on screen.
   console.log(`[mkt-browser] shutdown pid=${pid}: SIGTERM didn't exit in 2s → SIGKILL`);
+  writeProfileLifecycleLog(profileId, r, "SIGKILL", {
+    shutdownSource: "graceful-shutdown",
+    targetPid: pid,
+  });
   killPid(pid, "SIGKILL");
   await waitForPidDeath(pid, 2000);
+  return "SIGKILL";
 }
 
 /** SIGKILL every process still holding `dataDir`. Final safety net so a Stop
  *  can never leave a Chromium window behind. */
-async function killBrowsersUsingDataDir(dataDir: string): Promise<void> {
-  const pids = (await findBrowserProcessesUsingDataDir(dataDir)).map((process) => process.pid);
-  if (pids.length === 0) return;
-  console.log(
-    `[mkt-browser] sweep: SIGKILL ${pids.length} lingering proc(s) for ${dataDir}: ${pids.join(", ")}`,
+async function killBrowsersUsingDataDir(
+  profileId: ProfileId,
+  context: TrackedBrowserProcess,
+): Promise<{
+  survivors: number[];
+  enumerated: boolean;
+  forcedBrowserTermination: boolean;
+}> {
+  const { processes, enumerated } = await enumerateBrowserProcessesUsingDataDir(
+    context.browserDataDir,
   );
-  for (const pid of pids) killPid(pid, "SIGKILL");
+  if (!enumerated) {
+    // Nothing was swept because nothing could be listed. Saying so is the whole point: the
+    // alternative is an empty survivor list that reads exactly like a clean shutdown.
+    writeProfileLifecycleLog(profileId, context, "SWEEP-DISCOVERY-FAILED", {
+      shutdownSource: "data-dir-sweep",
+    });
+    return { survivors: [], enumerated: false, forcedBrowserTermination: false };
+  }
+  const pids = processes.map((process) => process.pid);
+  if (pids.length === 0) {
+    return { survivors: [], enumerated: true, forcedBrowserTermination: false };
+  }
+  const forcedBrowserTermination = processes.some(
+    (process) => !/(?:^|\s)--type(?:=|\s)/.test(process.commandLine),
+  );
+  console.log(
+    `[mkt-browser] sweep: SIGKILL ${pids.length} lingering proc(s) for ${context.browserDataDir}: ${pids.join(", ")}`,
+  );
+  for (const pid of pids) {
+    writeProfileLifecycleLog(profileId, context, "SIGKILL", {
+      shutdownSource: "data-dir-sweep",
+      targetPid: pid,
+    });
+    killPid(pid, "SIGKILL");
+  }
+  await Promise.all(pids.map((pid) => waitForPidDeath(pid, 2000)));
+  return { survivors: pids.filter(isPidAlive), enumerated: true, forcedBrowserTermination };
 }
 
 /** Resolve when `p` settles or after `ms`, whichever comes first. Never
@@ -1342,41 +1983,138 @@ async function waitForPidDeath(pid: number, timeoutMs: number): Promise<boolean>
   return !isPidAlive(pid);
 }
 
+async function isCdpEndpointReachable(port: number, timeoutMs: number): Promise<boolean> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/json/version`, {
+      signal: controller.signal,
+    });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
+ * Poll until nothing holds `dataDir` any more, or the budget runs out. Unlike waitForPidDeath this
+ * asks the OS which processes claim the directory, which is the only way to wait on a browser whose
+ * PID we never tracked. A discovery failure ends the wait rather than extending it — the sweep that
+ * follows is the backstop, and blocking shutdown on a broken enumeration would be worse.
+ */
+async function waitForDataDirProcessesToExit(dataDir: string, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const { processes, enumerated } = await enumerateBrowserProcessesUsingDataDir(dataDir);
+      if (!enumerated) return false;
+      if (processes.length === 0) return true;
+    } catch {
+      return false;
+    }
+    await sleep(150);
+  }
+  const final = await enumerateBrowserProcessesUsingDataDir(dataDir);
+  return final.enumerated && final.processes.length === 0;
+}
+
 function createWindowWatcher(
   port: number,
   startedAt: string,
-  onZeroWindows: () => void,
-): NodeJS.Timeout {
+  isProcessAlive: () => boolean,
+  onShutdown: (reason: WindowWatcherShutdownReason) => void,
+): WindowWatcher {
   let zeroSinceMs: number | null = null;
   let unreachableSinceMs: number | null = null;
-  return setInterval(async () => {
+  let stopped = false;
+  let timer: NodeJS.Timeout | null = null;
+
+  const stop = (): void => {
+    stopped = true;
+    if (timer) clearTimeout(timer);
+    timer = null;
+  };
+  const triggerShutdown = (reason: WindowWatcherShutdownReason): void => {
+    if (stopped) return;
+    stop();
+    onShutdown(reason);
+  };
+  const schedule = (): void => {
+    if (stopped) return;
+    timer = setTimeout(() => void poll(), 1000);
+  };
+  const poll = async (): Promise<void> => {
     // Don't start counting "zero windows" until Chromium has had a chance
     // to open its initial window (some 1-2s after spawn).
     const ageMs = Date.now() - new Date(startedAt).getTime();
-    if (ageMs < 2000) return;
+    if (ageMs < 2000) {
+      schedule();
+      return;
+    }
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/json/list`);
-      if (!res.ok) throw new Error(`CDP returned ${res.status}`);
+      const controller = new AbortController();
+      const fetchTimeout = setTimeout(() => controller.abort(), 1000);
+      let targets: Array<{ type?: string }>;
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/json/list`, {
+          signal: controller.signal,
+        });
+        if (!res.ok) {
+          throw Object.assign(new Error(`CDP returned ${res.status}`), {
+            code: `HTTP_${res.status}`,
+          });
+        }
+        targets = (await res.json()) as Array<{ type?: string }>;
+      } finally {
+        clearTimeout(fetchTimeout);
+      }
       unreachableSinceMs = null;
-      const targets = (await res.json()) as Array<{ type?: string }>;
+      const targetTypes = targets.map((target) => target.type ?? null);
       const pages = targets.filter((t) => t.type === "page").length;
       if (pages === 0) {
         if (zeroSinceMs === null) {
           zeroSinceMs = Date.now();
         } else if (Date.now() - zeroSinceMs > 1500) {
           // Confirmed: zero pages for >1.5s. Treat as user closing the browser.
-          onZeroWindows();
+          triggerShutdown({ reason: "ZERO-PAGES", targetTypes });
         }
       } else {
         zeroSinceMs = null;
       }
-    } catch {
+    } catch (error) {
+      // A failed poll cannot prove the page count stayed at zero.
+      zeroSinceMs = null;
       // A Windows launcher handoff means the tracked process may not be the ChildProcess that
       // emitted exit. Confirm CDP is unavailable before finalizing the externally closed profile.
       if (unreachableSinceMs === null) unreachableSinceMs = Date.now();
-      else if (Date.now() - unreachableSinceMs > 1500) onZeroWindows();
+      else if (Date.now() - unreachableSinceMs > 1500 && !isProcessAlive()) {
+        triggerShutdown({ reason: "CDP-UNREACHABLE", errorCode: fetchErrorCode(error) });
+      }
+    } finally {
+      schedule();
     }
-  }, 1000);
+  };
+
+  schedule();
+  return { stop };
+}
+
+function fetchErrorCode(error: unknown): string {
+  try {
+    let current = error;
+    const seen = new Set<object>();
+    while (typeof current === "object" && current !== null && !seen.has(current)) {
+      seen.add(current);
+      const code = Reflect.get(current, "code");
+      if (typeof code === "string" || typeof code === "number") return String(code);
+      current = Reflect.get(current, "cause");
+    }
+    return error instanceof Error ? error.name : "UNKNOWN";
+  } catch {
+    return "UNKNOWN";
+  }
 }
 
 /**

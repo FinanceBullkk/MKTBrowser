@@ -3,12 +3,21 @@ import { existsSync } from "node:fs";
 import { cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import extract from "extract-zip";
 import type { ExtensionConfig } from "@mktbrowser/types";
+import { extractArchiveSafely, type SafeArchivePolicy } from "../safe-archive-extraction.ts";
 import { unwrapVerifiedCrx } from "./crx-signature-verification.ts";
 import { storeEntryDir } from "./extensionStore.ts";
 
 const MAX_UNPACKED_BYTES = 150 * 1024 * 1024; // ~150 MB cap per extension
+const EXTENSION_ZIP_POLICY: SafeArchivePolicy = {
+  archiveType: "browser-extension",
+  maxCompressedBytes: MAX_UNPACKED_BYTES,
+  maxUncompressedBytes: MAX_UNPACKED_BYTES,
+  maxEntries: 10_000,
+  maxFileBytes: MAX_UNPACKED_BYTES,
+  maxCompressionRatio: 250,
+  maxPathLength: 512,
+};
 
 export interface UnpackToStoreInput {
   /** Absolute path to a .crx file, .zip file, or an unpacked extension folder. */
@@ -52,20 +61,27 @@ export async function unpackToStore(input: UnpackToStoreInput): Promise<Extensio
 
   try {
     let publicKey: Buffer | undefined;
+    let root: string;
     const info = await stat(source);
     if (info.isDirectory()) {
       await cp(source, staging, { recursive: true });
+      root = await resolveManifestRoot(staging);
     } else {
       const unwrapped = await unwrapVerifiedCrx(source, staging);
       if (origin === "web-store" && !unwrapped.isCrx) {
         throw new Error("Web Store download was not a signed CRX package.");
       }
       publicKey = unwrapped.publicKey;
-      await extract(unwrapped.zipPath, { dir: staging });
+      const extractedRoot = join(staging, "payload");
+      await extractArchiveSafely({
+        archivePath: unwrapped.zipPath,
+        destinationPath: extractedRoot,
+        policy: EXTENSION_ZIP_POLICY,
+      });
       if (unwrapped.zipPath !== source) await rm(unwrapped.zipPath, { force: true });
+      root = await resolveManifestRoot(extractedRoot);
     }
 
-    const root = await resolveManifestRoot(staging);
     const manifestPath = join(root, "manifest.json");
     if (!existsSync(manifestPath)) {
       throw new Error("No manifest.json found in the extension.");

@@ -6,34 +6,56 @@ import { createReadStream, createWriteStream, existsSync } from "node:fs";
 import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import extract from "extract-zip";
+import { extractArchiveSafely, type SafeArchivePolicy } from "./safe-archive-extraction.ts";
 
-/**
- * Extract a zip or tar.gz archive preserving all attributes the OS cares
- * about.
- *   - .zip on macOS: `ditto -xk` — Apple's official tool. Preserves
- *     symlinks, xattrs, resource forks, ACLs.
- *   - .tar.gz: `tar -xzf` (bundled on every Unix). Also preserves attrs.
- *   - Windows .zip: `tar -xf` (bundled with Windows 10+).
- *   - Linux .zip fallback: extract-zip lib.
- */
+const ENGINE_ZIP_POLICY: SafeArchivePolicy = {
+  archiveType: "browser-engine",
+  maxCompressedBytes: 1024 * 1024 * 1024,
+  maxUncompressedBytes: 4 * 1024 * 1024 * 1024,
+  maxEntries: 50_000,
+  maxFileBytes: 2 * 1024 * 1024 * 1024,
+  maxCompressionRatio: 250,
+  maxPathLength: 1024,
+};
+
+/** ZIPs use the owned fail-closed boundary; native tar handles Unix engine tarballs. */
 async function extractArchive(archivePath: string, destDir: string): Promise<void> {
   // Match .tar.gz / .tgz with optional .partial suffix from in-flight
   // downloads (CloakBrowser ships tarballs; CFT ships zip).
   const isTar = /\.(tar\.gz|tgz)(\.partial)?$/i.test(archivePath);
   if (isTar) {
-    await execFileP("tar", ["-xzf", archivePath, "-C", destDir]);
+    await mkdir(destDir, { recursive: true });
+    await execFileP(tarBinary(), ["-xzf", archivePath, "-C", destDir]);
     return;
   }
-  if (process.platform === "darwin") {
-    await execFileP("ditto", ["-xk", archivePath, destDir]);
-    return;
-  }
-  if (process.platform === "win32") {
-    await execFileP("tar", ["-xf", archivePath, "-C", destDir]);
-    return;
-  }
-  await extract(archivePath, { dir: destDir });
+  await extractArchiveSafely({
+    archivePath,
+    destinationPath: destDir,
+    policy: ENGINE_ZIP_POLICY,
+  });
+}
+
+/**
+ * Absolute path to Windows' bundled bsdtar, instead of whatever `tar` PATH
+ * happens to resolve to.
+ *
+ * On a machine with Git for Windows installed, `usr/bin/tar` (GNU tar 1.35)
+ * shadows `System32	ar.exe` (bsdtar 3.8.4). GNU tar cannot read zip at all,
+ * and it reads an absolute `C:\...` argument as rsh-style `host:path`, failing
+ * with "Cannot connect to C: resolve failed". The engine install then reports
+ * the archive as corrupt and advises an antivirus exclusion — pointing the
+ * operator at entirely the wrong thing.
+ *
+ * Verified on this host: GNU tar fails on the exact archive that bsdtar
+ * extracts cleanly. Other platforms keep PATH resolution, where `tar` is the
+ * system tar.
+ */
+function tarBinary(): string {
+  if (process.platform !== "win32") return "tar";
+  // Both are always set on Windows; if neither is, fall back to PATH rather
+  // than inventing a system directory that may not be where we guessed.
+  const systemRoot = process.env.SystemRoot || process.env.windir;
+  return systemRoot ? join(systemRoot, "System32", "tar.exe") : "tar";
 }
 
 import type { BrowserEngine } from "@mktbrowser/settings-store";
@@ -44,6 +66,7 @@ import {
   win32PathEquals,
 } from "./chromium-runtime-path.ts";
 import { isCachedEngineVersionAllowed } from "./compatibility-engine-pin.ts";
+import { resolveCloakBrowserProManifest } from "./cloakbrowser-pro-channel.ts";
 
 const execFileP = promisify(execFile);
 
@@ -73,6 +96,13 @@ interface BootstrapOptions {
   pinnedManifest?: BrowserDownloadManifest;
   /** Development-only escape hatch for technical builds that intentionally inspect upstream. */
   allowUnpinnedManifest?: boolean;
+  /**
+   * CloakBrowser licence key. With one, the engine comes from the licensed
+   * channel (current Chrome major). Without, the only binary CloakBrowser
+   * still publishes openly is 146.0.7680.177.5 from May 2026 — see
+   * `cloakbrowser-pro-channel.ts` for why that matters.
+   */
+  cloakBrowserLicenseKey?: string;
 }
 
 interface BootstrapEvents {
@@ -116,6 +146,10 @@ interface BrowserDownloadManifest {
   url: string;
   sha256?: string;
   sizeBytes?: number;
+  /** Extra request headers. The CloakBrowser Pro channel gates the archive
+   *  behind `Authorization: Bearer <licence key>`; the CFT and keyless-GitHub
+   *  paths leave this undefined. */
+  headers?: Record<string, string>;
 }
 
 /**
@@ -142,6 +176,7 @@ export class ChromiumBootstrap extends EventEmitter {
   private readonly engine: BrowserEngine;
   private readonly pinnedManifest: BrowserDownloadManifest | null;
   private readonly allowUnpinnedManifest: boolean;
+  private readonly cloakBrowserLicenseKey: string;
 
   constructor(opts: BootstrapOptions = {}) {
     super();
@@ -149,6 +184,12 @@ export class ChromiumBootstrap extends EventEmitter {
     // Per-engine subdir so switching doesn't trip on cross-engine cached
     // metadata. Each engine gets its own current.json.
     this.cacheDir = opts.cacheDir ?? join(app.getPath("userData"), "chromium", this.engine);
+    // `||`, not `??`: settings supply "" when no key is configured, and `??`
+    // only falls through on null/undefined — so the env fallback never fired and
+    // the keyless (146) path was taken even with a key exported. Caught by an
+    // end-to-end run against an empty cache, not by typecheck.
+    this.cloakBrowserLicenseKey =
+      opts.cloakBrowserLicenseKey?.trim() || process.env.CLOAKBROWSER_LICENSE_KEY?.trim() || "";
     this.channel = opts.channel ?? "Stable";
     this.manifestUrl = opts.manifestUrl ?? CFT_LATEST;
     this.pinnedManifest = opts.pinnedManifest ?? null;
@@ -175,6 +216,10 @@ export class ChromiumBootstrap extends EventEmitter {
    * patches WebRTC and WebGL at C++ level, so injecting our weaker JS
    * versions on top would create double-spoof anomalies.
    */
+  getCloakBrowserLicenseKey(): string {
+    return this.cloakBrowserLicenseKey;
+  }
+
   getEngine(): BrowserEngine {
     return this.engine;
   }
@@ -236,7 +281,6 @@ export class ChromiumBootstrap extends EventEmitter {
       // partial extraction can never end up at the canonical path.
       const tmpExtract = `${versionDir}.partial`;
       await rm(tmpExtract, { recursive: true, force: true });
-      await mkdir(tmpExtract, { recursive: true });
       try {
         await extractArchive(zipPath, tmpExtract);
       } catch (e) {
@@ -609,6 +653,9 @@ export class ChromiumBootstrap extends EventEmitter {
       // `net.request` follows redirects (GitHub → release-assets CDN) by
       // default and runs on Chromium's stack — see download()'s rationale.
       const request = net.request({ method: "GET", url: manifest.url, redirect: "follow" });
+      for (const [name, value] of Object.entries(manifest.headers ?? {})) {
+        request.setHeader(name, value);
+      }
       if (have > 0) request.setHeader("Range", `bytes=${have}-`);
 
       request.on("error", fail);
@@ -765,6 +812,22 @@ export class ChromiumBootstrap extends EventEmitter {
   // ─── CloakBrowser-specific resolvers ────────────────────────────────
 
   private async fetchCloakBrowserManifest(): Promise<BrowserDownloadManifest> {
+    // Licensed channel when we hold a key. Deliberately no catch-and-fall-back:
+    // quietly serving the keyless 146 build instead would reintroduce the exact
+    // five-major staleness this path exists to fix, and it would do so
+    // invisibly. A transport failure should be seen and retried.
+    if (this.cloakBrowserLicenseKey) {
+      return resolveCloakBrowserProManifest(this.cloakBrowserLicenseKey);
+    }
+    return this.fetchKeylessCloakBrowserManifest();
+  }
+
+  /**
+   * Keyless fallback: CloakBrowser's open GitHub releases. Reaches only
+   * 146.0.7680.177.5 (21 May 2026) — every later release publishes checksums
+   * without binaries. Kept so the app still runs with no key configured.
+   */
+  private async fetchKeylessCloakBrowserManifest(): Promise<BrowserDownloadManifest> {
     const res = await fetch(CLOAKBROWSER_API, {
       headers: { accept: "application/vnd.github+json" },
     });

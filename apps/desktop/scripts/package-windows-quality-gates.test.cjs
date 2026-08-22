@@ -17,6 +17,13 @@ test("compiles fresh application bundles before every official installer package
   );
 });
 
+test("quotes the live Windows gate so Yarn does not expand PowerShell environment syntax", () => {
+  assert.equal(
+    desktopPackage.scripts["test:packaging:windows-machine"],
+    `powershell.exe -NoProfile -NonInteractive -Command '$env:MKT_BROWSER_RUN_WINDOWS_MACHINE_INTEGRATION="1"; node --test scripts/windows-installer-ownership-fixtures.test.cjs'`,
+  );
+});
+
 test("runs bundled Corepack through node.exe on Windows", () => {
   const execPath = "C:\\node22\\node.exe";
   const expectedEntrypoint = path.join(

@@ -22,6 +22,9 @@ function Assert-Rule([string]$Name, [string]$Program) {
         [StringComparison]::OrdinalIgnoreCase
       )) { throw "program-invalid" }
   if ($rule.Protocol -ne 17) { throw "protocol-invalid" }
+  # Wildcard ports is the old block-everything rule; it must read as invalid so
+  # an upgrade replaces it instead of judging it correct.
+  if ($rule.RemotePorts -eq "*") { throw "ports-invalid" }
   if (-not $rule.Enabled -or $rule.Direction -ne 2 -or $rule.Action -ne 0 -or
       ($rule.Profiles -band 7) -ne 7) { throw "rule-invalid" }
   Assert-FirewallProfiles $policy
@@ -101,8 +104,12 @@ try {
       continue
     } catch {}
     Get-NetFirewallRule -DisplayName $entry.Candidate -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+    # All outbound UDP except 53 and 443. Why those two, and what it costs:
+    # see generate-windows-firewall-commands.cjs. This file is embedded in the
+    # installer command line and must stay small.
     New-NetFirewallRule -DisplayName $entry.Candidate -Group $group -Enabled True `
-      -Direction Outbound -Action Block -Program $entry.Program -Protocol UDP -Profile Any | Out-Null
+      -Direction Outbound -Action Block -Program $entry.Program -Protocol UDP `
+      -RemotePort @("1-52", "54-442", "444-65535") -Profile Any | Out-Null
     Assert-Rule $entry.Candidate $entry.Program
   }
 

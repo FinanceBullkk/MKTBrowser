@@ -30,12 +30,14 @@ import {
   type ActivityLog,
 } from "@mktbrowser/mcp-server";
 import { SettingsStore, defaultSettingsPath, type AppSettings } from "@mktbrowser/settings-store";
+import { activateLicensedEnginePin } from "./activate-licensed-engine-pin.ts";
 import {
   MKT_BROWSER_MCP_PORT_ENV,
   mktBrowserMcpBaseUrl,
   resolveMktBrowserMcpPort,
   type ChromiumStatus,
   type ExtensionConfig,
+  type MktBrowserCapability,
   type ProxyConfig,
 } from "@mktbrowser/types";
 import { ChromiumBrowserDriver } from "./ChromiumBrowserDriver.ts";
@@ -62,6 +64,11 @@ import {
 } from "./compatibility-engine-pin.ts";
 import { COMPATIBILITY_SMOKE_SWITCH } from "./compatibility-smoke-authorization.ts";
 import { runPackagedCompatibilitySmoke } from "./compatibility-smoke-cli.ts";
+import { CdpSession } from "@mktbrowser/cdp-driver";
+import { appendProfileLifecycleLine } from "./profile-lifecycle-log.ts";
+import { LicenseKeyPool } from "./license-key-pool.ts";
+import { LicenseLeaseJournal } from "./license-lease-journal.ts";
+import { sweepOrphanedProfileBrowsers } from "./startup-orphan-sweep.ts";
 import {
   createIpcRuntimeRegistration,
   type IpcRuntimeHandler,
@@ -109,6 +116,8 @@ let settingsStore: SettingsStore;
 let httpTransport: HttpTransport | null = null;
 let mcpAuthToken: string | null = null;
 let cachedSettings: AppSettings | null = null;
+let licenseKeyPool: LicenseKeyPool | null = null;
+let licenseLeaseJournal: LicenseLeaseJournal;
 let browserDriverReady = false;
 let switchToCftInFlight: Promise<ChromiumStatus> | null = null;
 let activeCompatibilityEnginePin: CompatibilityEnginePin | null = null;
@@ -147,6 +156,9 @@ function createChromiumBootstrap(engine: AppSettings["browserEngine"]): Chromium
       environmentEnabled: process.env.MKT_BROWSER_ALLOW_UNPINNED_ENGINE === "1",
       hasExplicitUserDataDir: app.commandLine.hasSwitch("user-data-dir"),
     }),
+    // Read at construction: switching the key requires a restart, same as
+    // switching the engine. Ignored by CFT, which has no licensed channel.
+    cloakBrowserLicenseKey: cachedSettings?.cloakBrowserLicenseKey ?? "",
   });
   bootstrap.on("status", (status: ChromiumStatus) => {
     if (chromiumBootstrap === bootstrap) {
@@ -263,9 +275,15 @@ app
         "Startup",
       ),
     });
-    const runtimeCapabilities = async () =>
-      (await localInstallInspector.isReady()) ? (["local-install-ready-v1"] as const) : [];
+    const runtimeCapabilities = async (): Promise<MktBrowserCapability[]> => {
+      // Keep the capacity payload diagnostic until driver lifecycle writes and startup recovery
+      // make it complete. MKTTool only treats it as launch authority once this capability appears.
+      const capabilities: MktBrowserCapability[] = [];
+      if (await localInstallInspector.isReady()) capabilities.push("local-install-ready-v1");
+      return capabilities;
+    };
     const dataRoot = join(userData, "data");
+    licenseLeaseJournal = await LicenseLeaseJournal.open(join(dataRoot, "license-leases.json"));
     if (process.platform === "win32" && !app.commandLine.hasSwitch("user-data-dir")) {
       const legacyImport = findLegacyMultiZenImport(app.getPath("appData"), dataRoot);
       if (legacyImport?.status === "unreadable") {
@@ -351,6 +369,59 @@ app
       })
       .catch(() => {});
 
+    // Close browsers a previous run left behind. Only reachable after an unclean exit — the
+    // normal path goes through before-quit -> closeAll(). An orphan keeps the engine's licence
+    // seat until its lease expires, 7 to 17 minutes, during which the app truthfully reports zero
+    // profiles running and every launch truthfully fails, and nothing joins those two facts up for
+    // the operator. The window is not delayed, but the driver waits on this promise before its first
+    // launch so a slow process listing cannot sweep a browser that was created after startup.
+    let startupOrphanSweep: Promise<void> = Promise.resolve();
+    if (cachedSettings.startupOrphanSweep) {
+      const profilesRoot = join(dataRoot, "profiles");
+      startupOrphanSweep = sweepOrphanedProfileBrowsers(profilesRoot, {
+        isAlive: (pid) => {
+          try {
+            process.kill(pid, 0);
+            return true;
+          } catch {
+            return false;
+          }
+        },
+        kill: (pid) => {
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {
+            // Already gone, or not ours to kill.
+          }
+        },
+        closeViaCdp: async (port, signal) => {
+          // The same call the Stop button makes, and the only shutdown that hands the seat back.
+          const session = new CdpSession({ port, engine: "cloakbrowser", host: "127.0.0.1" });
+          const abortSession = () => {
+            // Invalidate an in-flight connect so it cannot attach to a later process that reuses
+            // this port after the orphan has been killed and the startup barrier has opened.
+            void session.close().catch(() => {});
+          };
+          signal.addEventListener("abort", abortSession, { once: true });
+          try {
+            if (signal.aborted) throw new Error("Orphan CDP close was cancelled.");
+            await session.connect();
+            if (signal.aborted) throw new Error("Orphan CDP close was cancelled.");
+            await session.closeBrowser();
+          } finally {
+            signal.removeEventListener("abort", abortSession);
+            await session.close().catch(() => {});
+          }
+        },
+        log: (event) => appendProfileLifecycleLine({ ...event, profilesRoot }),
+      }).then(
+        () => {},
+        () => {
+          // Reclaiming a seat is best-effort; failing to must never stop the app from starting.
+        },
+      );
+    }
+
     // Chromium bootstrap — picks the engine from user settings (CFT default,
     // CloakBrowser opt-in for stronger anti-detect), downloads it on first
     // run, and reports progress to the renderer.
@@ -371,10 +442,23 @@ app
       },
     });
 
+    // One session per licence key, so the pool is what decides how many profiles can be open at
+    // once. Built from settings on startup; changing keys needs a restart, same as the engine.
+    licenseKeyPool = new LicenseKeyPool({
+      keys: cachedSettings.cloakBrowserLicenseKeys,
+      cooldownMs: 17 * 60_000,
+    });
+    const licenseCapacity = () =>
+      chromiumBootstrap.getEngine() === "cloakbrowser"
+        ? (licenseKeyPool?.capacitySnapshot(licenseLeaseJournal.snapshot()) ?? null)
+        : null;
+
     browserDriver = new ChromiumBrowserDriver({
       profileManager,
       chromiumBootstrap,
       extensionStoreRoot,
+      licenseKeyPool,
+      startupBarrier: startupOrphanSweep,
       // The companion's "Add to MKT Browser" button routes here (profile-scoped).
       // Confirm natively first: any script on the store page could trigger the
       // channel, so an explicit OS dialog makes a drive-by install impossible.
@@ -438,6 +522,11 @@ app
       engineInfo: () =>
         describeEngineStatus(chromiumBootstrap.getEngine(), chromiumBootstrap.getStatus()),
       runtimeCapabilities,
+      licenseCapacity,
+      // The release the operator installed — not the MCP contract constant. These drifted apart
+      // and `get_runtime_info` spent an evening answering 0.3.1 on a 0.3.6 install, which is the
+      // one question the call exists to answer.
+      appVersion: app.getVersion(),
     });
     activityLog = mcp.activityLog;
 
@@ -485,6 +574,8 @@ app
               engineInfo: () =>
                 describeEngineStatus(chromiumBootstrap.getEngine(), chromiumBootstrap.getStatus()),
               runtimeCapabilities,
+              licenseCapacity,
+              appVersion: app.getVersion(),
             }).server,
         );
       } catch (e) {
@@ -543,6 +634,22 @@ app
     // Chromium bootstrap IPC
     handleIpc(IPC.CHROMIUM_STATUS, () => chromiumBootstrap.getStatus());
     handleIpc(IPC.CHROMIUM_RETRY, () => chromiumBootstrap.retry());
+    // Deliberate engine upgrade. The pin is what the bootstrap obeys, so
+    // activating means writing a new pin and letting the existing convergence
+    // path clear the stale runtime and install the pinned build. Never on a
+    // timer: a new Chromium moves the measured fingerprint of every profile at
+    // once, which is the whole reason the pin exists.
+    handleIpc(IPC.CHROMIUM_ACTIVATE_LATEST, async () => {
+      if (process.platform !== "win32") {
+        throw new Error("Engine activation is Windows-only for now.");
+      }
+      await activateLicensedEnginePin({
+        licenseKey: cachedSettings?.cloakBrowserLicenseKey ?? "",
+        localAppData: process.env.LOCALAPPDATA ?? "",
+      });
+      activeCompatibilityEnginePin = readCompatibilityEnginePin(process.env.LOCALAPPDATA ?? "");
+      return chromiumBootstrap.retry();
+    });
     handleIpc(IPC.CHROMIUM_SWITCH_TO_CFT, async () => {
       if (switchToCftInFlight) return switchToCftInFlight;
       if (activeCompatibilityEnginePin && activeCompatibilityEnginePin.engineKind !== "cft") {

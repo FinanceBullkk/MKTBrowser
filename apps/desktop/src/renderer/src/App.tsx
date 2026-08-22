@@ -88,6 +88,7 @@ export function App(): JSX.Element {
   // Initial load + activity stream subscription
   useEffect(() => {
     if (!window.mktBrowser) return;
+    const timers = closingTimers.current;
     void refresh();
     void window.mktBrowser.system.info().then(setInfo);
     void window.mktBrowser.activity.recent().then(setEvents);
@@ -119,7 +120,6 @@ export function App(): JSX.Element {
     // "Terminating…" while the process winds down (still in the running map).
     const offRunning = window.mktBrowser.profiles.onRunningChanged((change) => {
       const id = change.profileId;
-      const timers = closingTimers.current;
       // Any state transition ends the previous episode's safety timer, so a
       // stale timer can never clear a card that a later episode re-marked.
       const existing = timers.get(id);
@@ -163,8 +163,8 @@ export function App(): JSX.Element {
       offEvents();
       offRunning();
       offProxyCountry();
-      closingTimers.current.forEach((t) => window.clearTimeout(t));
-      closingTimers.current.clear();
+      timers.forEach((t) => window.clearTimeout(t));
+      timers.clear();
     };
   }, [refresh]);
 
@@ -208,7 +208,7 @@ export function App(): JSX.Element {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [showSheet]);
+  }, [setDrawerOpen, setSection]);
 
   function showToast(msg: string): void {
     setToast(msg);
