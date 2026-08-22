@@ -1,8 +1,14 @@
 import {
+  dataDirFromCommandLine,
   debugPortFromCommandLine,
   enumerateBrowserProcessesUnderRoot,
+  enumerateLoopbackPortOwners,
   type BrowserProcessInfo,
 } from "./browser-process-discovery.ts";
+import {
+  parseDevToolsActivePort,
+  readDevToolsActivePortRecord,
+} from "./devtools-port-discovery.ts";
 
 /**
  * Close browsers left behind by an app that did not exit cleanly.
@@ -46,7 +52,11 @@ export interface OrphanSweepDeps {
    * module stays free of the CDP client: the caller already owns one, and keeping the dependency
    * out means the logic here is testable with plain `node --test` and no transport at all.
    */
-  closeViaCdp: (port: number) => Promise<void>;
+  closeViaCdp: (port: number, signal: AbortSignal) => Promise<void>;
+  discoverPort?: (
+    process: BrowserProcessInfo,
+    ownedPids: ReadonlySet<number>,
+  ) => Promise<number | null>;
   isAlive: (pid: number) => boolean;
   kill: (pid: number) => void;
   log: (event: OrphanSweepEvent) => void;
@@ -70,6 +80,7 @@ export async function sweepOrphanedProfileBrowsers(
 ): Promise<OrphanSweepOutcome> {
   const enumerate = deps.enumerate ?? enumerateBrowserProcessesUnderRoot;
   const closeViaCdp = deps.closeViaCdp;
+  const discoverPort = deps.discoverPort ?? discoverOwnedOrphanDevToolsPort;
   const sleep = deps.sleep ?? defaultSleep;
   const budget = deps.closeBudgetMs ?? 5000;
   const exclude = new Set(deps.excludePids ?? []);
@@ -90,21 +101,32 @@ export async function sweepOrphanedProfileBrowsers(
 
   const closed: number[] = [];
   const killed: number[] = [];
+  const ownedPids = new Set(processes.map((process) => process.pid));
 
   for (const orphan of orphans) {
-    const port = debugPortFromCommandLine(orphan.commandLine);
+    let port: number | null = null;
     let politeFailure: string | null = null;
 
-    if (port === null) {
-      politeFailure = "no DevTools port on the command line";
-    } else {
-      try {
-        await closeViaCdp(port);
-        const deadline = Date.now() + budget;
-        while (Date.now() < deadline && deps.isAlive(orphan.pid)) await sleep(150);
-        if (deps.isAlive(orphan.pid)) politeFailure = `still alive ${budget}ms after Browser.close`;
-      } catch (error) {
-        politeFailure = `Browser.close failed: ${(error as Error).message}`;
+    try {
+      port = await discoverPort(orphan, ownedPids);
+    } catch {
+      politeFailure = "DevTools port discovery failed";
+    }
+
+    if (politeFailure === null) {
+      if (port === null) {
+        politeFailure = "no owned DevTools port could be recovered";
+      } else {
+        const closeDeadline = Date.now() + budget;
+        try {
+          await requestBrowserClose(closeViaCdp, port, Math.max(1, closeDeadline - Date.now()));
+          while (Date.now() < closeDeadline && deps.isAlive(orphan.pid)) await sleep(150);
+          if (deps.isAlive(orphan.pid)) {
+            politeFailure = `still alive ${budget}ms after Browser.close`;
+          }
+        } catch (error) {
+          politeFailure = `Browser.close failed: ${(error as Error).message}`;
+        }
       }
     }
 
@@ -121,4 +143,75 @@ export async function sweepOrphanedProfileBrowsers(
   }
 
   return { closed, killed, enumerated: true };
+}
+
+function requestBrowserClose(
+  closeViaCdp: OrphanSweepDeps["closeViaCdp"],
+  port: number,
+  budgetMs: number,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`Browser.close request timed out after ${budgetMs}ms`));
+    }, budgetMs);
+
+    let request: Promise<void>;
+    try {
+      request = closeViaCdp(port, controller.signal);
+    } catch (error) {
+      clearTimeout(timeout);
+      controller.abort();
+      reject(error);
+      return;
+    }
+
+    request.then(
+      () => {
+        clearTimeout(timeout);
+        controller.abort();
+        resolve();
+      },
+      (error: unknown) => {
+        clearTimeout(timeout);
+        controller.abort();
+        reject(error);
+      },
+    );
+  });
+}
+
+async function discoverOwnedOrphanDevToolsPort(
+  orphan: BrowserProcessInfo,
+  ownedPids: ReadonlySet<number>,
+): Promise<number | null> {
+  const candidates: number[] = [];
+  const dataDir = dataDirFromCommandLine(orphan.commandLine);
+  if (dataDir) {
+    const record = await readDevToolsActivePortRecord(dataDir).catch(() => null);
+    if (record) {
+      try {
+        candidates.push(parseDevToolsActivePort(record.contents).port);
+      } catch {
+        // A partial or stale record is not authority; the legacy command-line value may still be.
+      }
+    }
+  }
+  const commandLinePort = debugPortFromCommandLine(orphan.commandLine);
+  if (commandLinePort !== null && !candidates.includes(commandLinePort)) {
+    candidates.push(commandLinePort);
+  }
+
+  for (const port of candidates) {
+    const owners = await enumerateLoopbackPortOwners(port);
+    if (
+      owners.inspected &&
+      owners.pids.includes(orphan.pid) &&
+      owners.pids.every((pid) => ownedPids.has(pid))
+    ) {
+      return port;
+    }
+  }
+  return null;
 }

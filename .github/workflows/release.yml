@@ -1,22 +1,20 @@
 name: Windows Technical Build
 
-# Windows x64 is the only v1 and team-demo platform. Run this workflow manually to validate the
-# isolated technical directory package without creating a release or claiming pilot readiness.
+# Windows x64 is the only v1 and team-demo platform. The unpacked package is built once, hashed,
+# uploaded, then exercised in a fresh job without rebuilding it.
 on:
   push:
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: "17 19 * * *"
 
 permissions:
   contents: read
 
 jobs:
-  windows-build:
-    strategy:
-      matrix:
-        os: [windows-latest]
-        node: [22]
-    runs-on: ${{ matrix.os }}
+  quality:
+    runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -24,7 +22,7 @@ jobs:
       - name: Setup Node.js 22
         uses: actions/setup-node@v5
         with:
-          node-version: ${{ matrix.node }}
+          node-version: 22
           package-manager-cache: false
 
       - name: Enable Corepack
@@ -47,37 +45,151 @@ jobs:
       - name: Lint
         run: yarn lint
 
-      # One aggregate step rather than one step per suite. Listing suites individually here meant CI
-      # silently lagged the repository: MKB-03 (permanent profile deletion, engine pinning), the
-      # settings-store suite, and the workspace-quality contract test all existed and passed locally
-      # while never running on any push. `test:installer` is the single place suites are registered,
-      # so a new suite is covered by CI the moment it is added there.
       - name: Installer and runtime guard suites
         run: yarn test:installer
 
       - name: Typecheck
         run: yarn typecheck
 
-      - name: Build Windows directory package
+  package:
+    needs: quality
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@4.5.0 --activate
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Build Windows directory package once
         run: yarn workspace @mktbrowser/desktop build
 
-      - name: Verify packaged runtime contract
-        run: yarn verify:packaged-contract
+      - name: Archive and hash directory package
+        shell: pwsh
+        run: |
+          $artifactRoot = Join-Path $env:RUNNER_TEMP "mktbrowser-package"
+          New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
+          $archive = Join-Path $artifactRoot "mktbrowser-win-unpacked.zip"
+          Compress-Archive -Path "apps/desktop/release/win-unpacked/*" -DestinationPath $archive -CompressionLevel Optimal
+          $sha256 = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          $manifest = [ordered]@{
+            sourceSha = $env:GITHUB_SHA
+            archive = "mktbrowser-win-unpacked.zip"
+            sha256 = $sha256
+            node = (node --version)
+            runnerImage = $env:ImageOS
+            runnerImageVersion = $env:ImageVersion
+          }
+          $manifest | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $artifactRoot "artifact-manifest.json") -Encoding utf8NoBOM
+
+      - name: Upload exact directory package
+        uses: actions/upload-artifact@v4
+        with:
+          name: mktbrowser-win-unpacked
+          path: ${{ runner.temp }}/mktbrowser-package/*
+          if-no-files-found: error
+          retention-days: 7
+
+  packaged-contract:
+    needs: package
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@4.5.0 --activate
+
+      - name: Install dependencies without rebuilding the package
+        run: yarn install --immutable
+
+      - name: Download exact directory package
+        uses: actions/download-artifact@v5
+        with:
+          name: mktbrowser-win-unpacked
+          path: ${{ runner.temp }}/mktbrowser-artifact
+
+      - name: Verify artifact manifest and extract
+        shell: pwsh
+        run: |
+          $artifactRoot = Join-Path $env:RUNNER_TEMP "mktbrowser-artifact"
+          $manifestPath = Join-Path $artifactRoot "artifact-manifest.json"
+          $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
+          if ($manifest.sourceSha -ne $env:GITHUB_SHA) { throw "Artifact source SHA does not match the checked-out merge tree." }
+          $archive = Join-Path $artifactRoot $manifest.archive
+          $actualSha = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualSha -ne $manifest.sha256) { throw "Downloaded directory package hash does not match its manifest." }
+          $unpacked = Join-Path $env:RUNNER_TEMP "mktbrowser-contract-package"
+          Expand-Archive -LiteralPath $archive -DestinationPath $unpacked -Force
+          $evidence = Join-Path $env:RUNNER_TEMP "mktbrowser-contract-evidence"
+          New-Item -ItemType Directory -Force -Path $evidence | Out-Null
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "MKT_BROWSER_EXECUTABLE=$(Join-Path $unpacked 'MKTBrowser.exe')"
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "MKT_BROWSER_ARTIFACT_MANIFEST=$manifestPath"
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "MKT_BROWSER_TIMINGS_OUTPUT=$(Join-Path $evidence 'timings.json')"
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "MKT_BROWSER_DIAGNOSTICS_DIR=$(Join-Path $evidence 'diagnostics')"
+
+      - name: Verify packaged runtime contract repeatedly
+        run: node scripts/verify-packaged-runtime-contract.cjs --repeat ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 20 || 5 }}
+
+      - name: Upload packaged contract evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaged-contract-evidence
+          path: |
+            ${{ runner.temp }}/mktbrowser-contract-evidence/**
+            ${{ runner.temp }}/mktbrowser-artifact/artifact-manifest.json
+          if-no-files-found: error
+          retention-days: 7
+
+  windows-installer:
+    if: github.event_name == 'workflow_dispatch'
+    needs: packaged-contract
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@4.5.0 --activate
+
+      - name: Install dependencies
+        run: yarn install --immutable
 
       - name: Build combined Windows installer
-        if: github.event_name == 'workflow_dispatch'
         env:
           MKTTOOL_RELEASE_TOKEN: ${{ secrets.MKTTOOL_RELEASE_TOKEN }}
-          # Named explicitly rather than defaulted: packaging must never fall back to resolving an
-          # engine "latest", because a different Chromium moves the measured fingerprint of every
-          # profile at once.
-          # Absolute: the packaging script runs with the desktop workspace as its working
-          # directory, so a repo-relative path would resolve one level too deep.
           MKT_BROWSER_ENGINE_RELEASE_FILE: ${{ github.workspace }}/apps/desktop/windows-engine-release.json
         run: yarn workspace @mktbrowser/desktop build:win
 
       - name: Upload combined Windows installer
-        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: mktbrowser-windows-installer

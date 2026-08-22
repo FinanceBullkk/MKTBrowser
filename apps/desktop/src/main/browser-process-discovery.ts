@@ -8,6 +8,11 @@ export interface BrowserProcessInfo {
   commandLine: string;
 }
 
+export interface LoopbackPortOwnersInspection {
+  inspected: boolean;
+  pids: number[];
+}
+
 /**
  * Ask the OS which processes hold `dataDir`, and say whether the asking worked.
  *
@@ -93,6 +98,16 @@ export function debugPortFromCommandLine(commandLine: string): number | null {
   return found;
 }
 
+/** The effective Chromium user-data-dir. Chromium honors the last occurrence. */
+export function dataDirFromCommandLine(commandLine: string): string | null {
+  let found: string | null = null;
+  const pattern = /(?:^|\s)--user-data-dir=(?:"([^"]+)"|'([^']+)'|(\S+))/g;
+  for (const match of commandLine.matchAll(pattern)) {
+    found = match[1] ?? match[2] ?? match[3] ?? null;
+  }
+  return found;
+}
+
 /**
  * Like `commandLineUsesDataDir`, but matches any directory *beneath* `root`.
  *
@@ -103,25 +118,49 @@ export function debugPortFromCommandLine(commandLine: string): number | null {
 export function commandLineUsesDataDirUnder(commandLine: string, root: string): boolean {
   const expected = normalizePath(root);
   const sep = process.platform === "win32" ? "\\" : "/";
-  const pattern = /(?:^|\s)--user-data-dir=(?:"([^"]+)"|'([^']+)'|(\S+))/g;
-  for (const match of commandLine.matchAll(pattern)) {
-    const value = match[1] ?? match[2] ?? match[3];
-    if (!value) continue;
-    const normalized = normalizePath(value);
-    if (normalized === expected) return true;
-    if (normalized.startsWith(expected + sep)) return true;
-  }
-  return false;
+  const value = dataDirFromCommandLine(commandLine);
+  if (!value) return false;
+  const normalized = normalizePath(value);
+  return normalized === expected || normalized.startsWith(expected + sep);
 }
 
 export function commandLineUsesDataDir(commandLine: string, dataDir: string): boolean {
   const expected = normalizePath(dataDir);
-  const pattern = /(?:^|\s)--user-data-dir=(?:"([^"]+)"|'([^']+)'|(\S+))/g;
-  for (const match of commandLine.matchAll(pattern)) {
-    const value = match[1] ?? match[2] ?? match[3];
-    if (value && normalizePath(value) === expected) return true;
+  const value = dataDirFromCommandLine(commandLine);
+  return value !== null && normalizePath(value) === expected;
+}
+
+/** Enumerate every Windows process listening specifically on 127.0.0.1 for `port`. */
+export async function enumerateLoopbackPortOwners(
+  port: number,
+): Promise<LoopbackPortOwnersInspection> {
+  if (process.platform !== "win32") return { inspected: false, pids: [] };
+  if (!Number.isInteger(port) || port <= 0 || port >= 65_536) {
+    return { inspected: true, pids: [] };
   }
-  return false;
+
+  const script = [
+    `$items = @(Get-NetTCPConnection -State Listen -ErrorAction Stop | Where-Object { $_.LocalPort -eq ${port} -and $_.LocalAddress -eq '127.0.0.1' } | Select-Object -ExpandProperty OwningProcess -Unique)`,
+    "$result = [pscustomobject]@{ inspected = $true; pids = @($items | ForEach-Object { [int]$_ }) }",
+    "[Console]::Out.Write(($result | ConvertTo-Json -Compress))",
+  ].join("; ");
+  try {
+    const { stdout } = await execFileAsync(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-Command", script],
+      { encoding: "utf8", windowsHide: true, timeout: 3000 },
+    );
+    const parsed = JSON.parse(stdout) as { inspected?: unknown; pids?: unknown };
+    if (parsed.inspected !== true || !Array.isArray(parsed.pids)) {
+      return { inspected: false, pids: [] };
+    }
+    return {
+      inspected: true,
+      pids: parsed.pids.map(Number).filter((pid) => Number.isInteger(pid) && pid > 0),
+    };
+  } catch {
+    return { inspected: false, pids: [] };
+  }
 }
 
 async function listWindowsProcesses(): Promise<BrowserProcessInfo[]> {
@@ -134,7 +173,7 @@ async function listWindowsProcesses(): Promise<BrowserProcessInfo[]> {
     const { stdout } = await execFileAsync(
       "powershell.exe",
       ["-NoProfile", "-NonInteractive", "-Command", script],
-      { encoding: "utf8", windowsHide: true },
+      { encoding: "utf8", windowsHide: true, timeout: 3000 },
     );
     if (!stdout.trim()) return [];
     const parsed = JSON.parse(stdout) as BrowserProcessInfo[] | BrowserProcessInfo;
@@ -165,7 +204,10 @@ async function listPosixProcesses(): Promise<BrowserProcessInfo[]> {
 
 function normalizePath(value: string): string {
   if (process.platform === "win32") {
-    return value.replaceAll("/", "\\").replace(/[\\]+$/, "").toLowerCase();
+    return value
+      .replaceAll("/", "\\")
+      .replace(/[\\]+$/, "")
+      .toLowerCase();
   }
   return value.replace(/\/+$/, "");
 }

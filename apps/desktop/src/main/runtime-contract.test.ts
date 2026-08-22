@@ -226,6 +226,53 @@ test("bounds a CDP connect that never settles", async () => {
   assert.ok(Date.now() - startedAt < 500, "hung connect escaped the readiness budget");
 });
 
+test("records each successful CDP readiness stage separately", async () => {
+  const timings = await waitForCdpSessionReady(9222, { connect: async () => {} }, 100, {
+    fetch: async (url) => ({
+      ok: true,
+      json: async () => (url.endsWith("/json/list") ? [{ type: "page" }] : {}),
+    }),
+    sleep: async () => {},
+  });
+
+  assert.ok(timings.versionMs >= 0);
+  assert.ok(timings.pageTargetMs >= 0);
+  assert.ok(timings.attachMs >= 0);
+  assert.equal(timings.totalMs, timings.versionMs + timings.pageTargetMs + timings.attachMs);
+});
+
+test("lets Chromium assign the DevTools port instead of consuming fixed ports", () => {
+  const driver = source("apps/desktop/src/main/ChromiumBrowserDriver.ts");
+  const desktop = source("apps/desktop/src/main/index.ts");
+  const processDiscovery = source("apps/desktop/src/main/browser-process-discovery.ts");
+
+  assert.doesNotMatch(driver, /nextPort\s*=\s*9222/);
+  assert.doesNotMatch(driver, /allocatePort\(\)/);
+  assert.match(driver, /--remote-debugging-port=0/);
+  assert.match(driver, /waitForOwnedDevToolsEndpoint/);
+  assert.match(driver, /await this\.startupBarrier/);
+  assert.match(driver, /prelaunchProcesses\.processes\.length > 0/);
+  assert.match(desktop, /startupBarrier: startupOrphanSweep/);
+  assert.match(driver, /MKT_BROWSER_PACKAGED_CONTRACT_VERIFY === "1" \? 60_000 : 15_000/);
+  assert.match(
+    driver,
+    /discoveryBudgetMs = readinessBudgetMs - \(Date\.now\(\) - readinessStartedAtMs\)/,
+  );
+  assert.doesNotMatch(processDiscovery, /LocalAddress -in @\('127\.0\.0\.1','0\.0\.0\.0'\)/);
+});
+
+test("builds one hashed package and verifies that artifact in a fresh CI job", () => {
+  const workflow = source(".github/workflows/release.yml");
+
+  assert.match(workflow, /quality:/);
+  assert.match(workflow, /package:\s*\n\s+needs: quality/);
+  assert.match(workflow, /packaged-contract:\s*\n\s+needs: package/);
+  assert.match(workflow, /actions\/upload-artifact@v4/);
+  assert.match(workflow, /actions\/download-artifact@v5/);
+  assert.match(workflow, /Get-FileHash[^\n]+SHA256/);
+  assert.match(workflow, /verify-packaged-runtime-contract\.cjs --repeat/);
+});
+
 test("keeps browser ownership until failed launches and shutdown sweeps finish", () => {
   const driver = source("apps/desktop/src/main/ChromiumBrowserDriver.ts");
 
@@ -241,6 +288,7 @@ test("keeps browser ownership until failed launches and shutdown sweeps finish",
   assert.match(driver, /this\.running\.delete\(profileId\)/);
   assert.match(driver, /shutdownSource: "data-dir-sweep"/);
   assert.match(driver, /"SHUTDOWN-COMPLETE" : "SHUTDOWN-FAILED"/);
+  assert.match(driver, /effectiveShutdownMethod = forcedBrowserTermination \? "SIGKILL"/);
   assert.match(driver, /const traceTarget = tracingInitialBootstrap/);
 });
 

@@ -32,6 +32,11 @@ function harness(overrides: Partial<OrphanSweepDeps> = {}) {
       // A polite close works: every process on that port goes away.
       alive.clear();
     },
+    discoverPort: async (process) => {
+      const match = process.commandLine.match(/--remote-debugging-port=(\d+)/);
+      const port = Number(match?.[1]);
+      return Number.isInteger(port) && port > 0 ? port : null;
+    },
     closeBudgetMs: 20,
     ...overrides,
   };
@@ -39,7 +44,9 @@ function harness(overrides: Partial<OrphanSweepDeps> = {}) {
 }
 
 test("closes an orphan through its own DevTools port so the seat comes back", async () => {
-  const h = harness({ enumerate: async () => ({ processes: [browser(101, 9222)], enumerated: true }) });
+  const h = harness({
+    enumerate: async () => ({ processes: [browser(101, 9222)], enumerated: true }),
+  });
   h.alive.add(101);
 
   const out = await sweepOrphanedProfileBrowsers(ROOT, h.deps);
@@ -47,19 +54,25 @@ test("closes an orphan through its own DevTools port so the seat comes back", as
   assert.deepEqual(out.closed, [101]);
   assert.deepEqual(out.killed, []);
   assert.deepEqual(h.closedPorts, [9222]);
-  assert.deepEqual(h.killedPids, [], "a kill here would keep the licence seat, defeating the sweep");
+  assert.deepEqual(
+    h.killedPids,
+    [],
+    "a kill here would keep the licence seat, defeating the sweep",
+  );
   assert.equal(h.events[0]?.reason, "ORPHAN-SWEEP-CLOSED");
 });
 
 test("kills only when the polite close is impossible, and says which it was", async () => {
   // No port on the command line: there is no polite option, so the seat is lost and the log has
   // to say so rather than reporting a clean sweep.
-  const noPort = harness({ enumerate: async () => ({ processes: [browser(102, null)], enumerated: true }) });
+  const noPort = harness({
+    enumerate: async () => ({ processes: [browser(102, null)], enumerated: true }),
+  });
   noPort.alive.add(102);
   const a = await sweepOrphanedProfileBrowsers(ROOT, noPort.deps);
   assert.deepEqual(a.killed, [102]);
   assert.equal(noPort.events[0]?.reason, "ORPHAN-SWEEP-KILLED");
-  assert.match(String(noPort.events[0]?.detail), /no DevTools port/);
+  assert.match(String(noPort.events[0]?.detail), /no owned DevTools port/);
 
   // Port present but the browser ignores Browser.close.
   const stubborn = harness({
@@ -82,6 +95,38 @@ test("kills only when the polite close is impossible, and says which it was", as
   const c = await sweepOrphanedProfileBrowsers(ROOT, broken.deps);
   assert.deepEqual(c.killed, [104]);
   assert.match(String(broken.events[0]?.detail), /Browser\.close failed/);
+
+  const undiscoverable = harness({
+    enumerate: async () => ({ processes: [browser(105, 0)], enumerated: true }),
+    discoverPort: async () => {
+      throw new Error("process query failed");
+    },
+  });
+  undiscoverable.alive.add(105);
+  const d = await sweepOrphanedProfileBrowsers(ROOT, undiscoverable.deps);
+  assert.deepEqual(d.killed, [105]);
+  assert.deepEqual(undiscoverable.closedPorts, []);
+  assert.match(String(undiscoverable.events[0]?.detail), /port discovery failed/);
+});
+
+test("bounds a polite close request that never settles before opening the launch barrier", async () => {
+  let closeSignal: AbortSignal | undefined;
+  const h = harness({
+    enumerate: async () => ({ processes: [browser(106, 9555)], enumerated: true }),
+    closeViaCdp: async (_port, signal) => {
+      closeSignal = signal;
+      await new Promise<void>(() => {});
+    },
+  });
+  h.alive.add(106);
+  const startedAt = Date.now();
+
+  const out = await sweepOrphanedProfileBrowsers(ROOT, h.deps);
+
+  assert.deepEqual(out.killed, [106]);
+  assert.equal(closeSignal?.aborted, true);
+  assert.ok(Date.now() - startedAt < 500, "hung CDP close escaped its startup budget");
+  assert.match(String(h.events[0]?.detail), /request timed out after \d+ms/);
 });
 
 test("does nothing at all when the process table could not be read", async () => {
@@ -109,6 +154,25 @@ test("leaves renderers and helpers to die with their parent", async () => {
 
   assert.deepEqual(out.closed, [202]);
   assert.equal(h.killedPids.includes(201), false, "a renderer has no browser to close");
+});
+
+test("recovers an OS-assigned port for an orphan whose command line contains port zero", async () => {
+  const orphan = browser(250, 0);
+  const h = harness({
+    enumerate: async () => ({ processes: [orphan], enumerated: true }),
+    discoverPort: async (process, ownedPids) => {
+      assert.equal(process.pid, 250);
+      assert.equal(ownedPids.has(250), true);
+      return 55497;
+    },
+  });
+  h.alive.add(250);
+
+  const out = await sweepOrphanedProfileBrowsers(ROOT, h.deps);
+
+  assert.deepEqual(out.closed, [250]);
+  assert.deepEqual(h.closedPorts, [55497]);
+  assert.deepEqual(h.killedPids, []);
 });
 
 test("never touches a PID the app already owns", async () => {

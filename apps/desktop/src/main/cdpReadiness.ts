@@ -22,6 +22,13 @@ export interface ReadinessSession {
   connect(): Promise<void>;
 }
 
+export interface CdpReadinessTimings {
+  versionMs: number;
+  pageTargetMs: number;
+  attachMs: number;
+  totalMs: number;
+}
+
 export interface ReadinessDeps {
   fetch: (url: string) => Promise<ReadinessResponseLike>;
   sleep: (ms: number) => Promise<void>;
@@ -37,10 +44,12 @@ export async function waitForCdpSessionReady(
   session: ReadinessSession,
   budgetMs: number,
   deps: ReadinessDeps = defaultReadinessDeps,
-): Promise<void> {
-  const deadline = Date.now() + budgetMs;
+): Promise<CdpReadinessTimings> {
+  const startedAtMs = Date.now();
+  const deadline = startedAtMs + budgetMs;
   let lastError: unknown = null;
   let versionReady = false;
+  let versionReadyAtMs = startedAtMs;
 
   // Stage 1: /json/version answers.
   while (Date.now() < deadline) {
@@ -53,6 +62,7 @@ export async function waitForCdpSessionReady(
       if (res.ok) {
         lastError = null;
         versionReady = true;
+        versionReadyAtMs = Date.now();
         break;
       }
     } catch (e) {
@@ -68,6 +78,7 @@ export async function waitForCdpSessionReady(
 
   // Stage 2: a page target exists.
   let pageReady = false;
+  let pageReadyAtMs = versionReadyAtMs;
   while (Date.now() < deadline) {
     try {
       const res = await withinDeadline(
@@ -84,6 +95,7 @@ export async function waitForCdpSessionReady(
         if (targets.some((t) => t.type === "page")) {
           lastError = null;
           pageReady = true;
+          pageReadyAtMs = Date.now();
           break;
         }
       }
@@ -102,7 +114,13 @@ export async function waitForCdpSessionReady(
   while (Date.now() < deadline) {
     try {
       await withinDeadline(session.connect(), deadline, "CDP connect/attach");
-      return;
+      const completedAtMs = Date.now();
+      return {
+        versionMs: versionReadyAtMs - startedAtMs,
+        pageTargetMs: pageReadyAtMs - versionReadyAtMs,
+        attachMs: completedAtMs - pageReadyAtMs,
+        totalMs: completedAtMs - startedAtMs,
+      };
     } catch (e) {
       lastError = e;
       await readinessBackoff(deps, deadline);

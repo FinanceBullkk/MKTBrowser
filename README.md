@@ -66,17 +66,27 @@ profiles on the operator device.
   paths, links and special entries, case-folded collisions, zip bombs, truncation, and CRC failures
   are rejected before publication. CI audits production dependencies, and packaged verification
   inspects `app.asar` to require `yauzl@3.4.0` and reject `extract-zip` metadata or files.
+- Release-readiness Phase 2 is in progress. Chromium now requests an OS-assigned DevTools port,
+  accepts only a fresh bounded `DevToolsActivePort` record owned by the launched data directory and
+  loopback listener, and uses one total 15-second operator budget or isolated 60-second packaged-CI
+  budget. CI is split into quality, build-once package, and fresh-job packaged-contract jobs with a
+  hashed uploaded archive. The final local directory package passed 5/5 cold lifecycle iterations
+  while ports 9222 and 9223 were occupied. The required PR artifact run and seven independent 20/20
+  Windows runner runs remain open, so Phase 2 is not complete.
 - This build may be used for an owner-led technical demo with disposable profiles. It is not
   approved for real accounts, pilot distribution, or team rollout.
 - The current desktop package version is `0.3.12`. The Windows directory package was regenerated on
   22 August 2026 with SHA-256
-  `6a3809d6ec83ad4f01459821b3de7cb0072483f42d67520dee8e729bdd2d2c69`; typecheck, zero-warning
+  `b62642a57c2651c071a59fe210fa2fe9633df584d16fa49e3abd855e747bc1a7`; packaged `app.asar` SHA-256
+  is `8a2310fbd9341b0b45ae829a45b9fdbb40a31da5aa821513fb01e9209a919da7`. Typecheck, zero-warning
   lint, the complete installer suite, build, and packaged runtime/profile-lifecycle verification
   passed. The repository's `yarn lint` enforces the workspace quality contract, strict TypeScript
   unused/fallthrough checks, and JavaScript syntax checks. The packaged verifier covers
   the restricted tool inventory, deterministic managed create/retry, correlated diagnostics,
   direct-launch/delete denial, endpoint-free proxy summaries, atomic managed launch, Windows Chrome
-  launcher-PID handoff, process-confirmed close, and clean process exit. It remains unsigned. The
+  launcher-PID handoff, OS-assigned owned DevTools discovery, per-stage timing, bounded verifier HTTP
+  requests, sanitized failure snapshots, process-confirmed close, and clean process exit. It remains
+  unsigned. The
   combined installer under `apps/desktop/release/installer/` was last built on 21 August: it embeds
   the verified Relay v15 archive but predates the 22 August P0 hardening, so it is not the current
   rollout artifact and must not be distributed.
@@ -213,7 +223,7 @@ operator's identity, are recorded in the MKTTool repository's `docs/project-chan
 covers the product as a whole — MKTTool is the console, this is its execution layer, and a change
 here usually lands with a matching change there.
 
-Note when checking whether a build is affected by something recorded there: this repository *is*
+Note when checking whether a build is affected by something recorded there: this repository _is_
 versioned and tagged (`v0.3.1` at the time of writing), while MKTTool is not, so a changelog entry
 naming a build range is naming **these** tags.
 

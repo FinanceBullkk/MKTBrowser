@@ -283,9 +283,7 @@ app
       return capabilities;
     };
     const dataRoot = join(userData, "data");
-    licenseLeaseJournal = await LicenseLeaseJournal.open(
-      join(dataRoot, "license-leases.json"),
-    );
+    licenseLeaseJournal = await LicenseLeaseJournal.open(join(dataRoot, "license-leases.json"));
     if (process.platform === "win32" && !app.commandLine.hasSwitch("user-data-dir")) {
       const legacyImport = findLegacyMultiZenImport(app.getPath("appData"), dataRoot);
       if (legacyImport?.status === "unreadable") {
@@ -375,10 +373,12 @@ app
     // normal path goes through before-quit -> closeAll(). An orphan keeps the engine's licence
     // seat until its lease expires, 7 to 17 minutes, during which the app truthfully reports zero
     // profiles running and every launch truthfully fails, and nothing joins those two facts up for
-    // the operator. Best-effort and never awaited: a slow process listing must not delay the window.
+    // the operator. The window is not delayed, but the driver waits on this promise before its first
+    // launch so a slow process listing cannot sweep a browser that was created after startup.
+    let startupOrphanSweep: Promise<void> = Promise.resolve();
     if (cachedSettings.startupOrphanSweep) {
       const profilesRoot = join(dataRoot, "profiles");
-      void sweepOrphanedProfileBrowsers(profilesRoot, {
+      startupOrphanSweep = sweepOrphanedProfileBrowsers(profilesRoot, {
         isAlive: (pid) => {
           try {
             process.kill(pid, 0);
@@ -394,20 +394,32 @@ app
             // Already gone, or not ours to kill.
           }
         },
-        closeViaCdp: async (port) => {
+        closeViaCdp: async (port, signal) => {
           // The same call the Stop button makes, and the only shutdown that hands the seat back.
           const session = new CdpSession({ port, engine: "cloakbrowser", host: "127.0.0.1" });
+          const abortSession = () => {
+            // Invalidate an in-flight connect so it cannot attach to a later process that reuses
+            // this port after the orphan has been killed and the startup barrier has opened.
+            void session.close().catch(() => {});
+          };
+          signal.addEventListener("abort", abortSession, { once: true });
           try {
+            if (signal.aborted) throw new Error("Orphan CDP close was cancelled.");
             await session.connect();
+            if (signal.aborted) throw new Error("Orphan CDP close was cancelled.");
             await session.closeBrowser();
           } finally {
+            signal.removeEventListener("abort", abortSession);
             await session.close().catch(() => {});
           }
         },
         log: (event) => appendProfileLifecycleLine({ ...event, profilesRoot }),
-      }).catch(() => {
-        // Reclaiming a seat is best-effort; failing to must never stop the app from starting.
-      });
+      }).then(
+        () => {},
+        () => {
+          // Reclaiming a seat is best-effort; failing to must never stop the app from starting.
+        },
+      );
     }
 
     // Chromium bootstrap — picks the engine from user settings (CFT default,
@@ -438,7 +450,7 @@ app
     });
     const licenseCapacity = () =>
       chromiumBootstrap.getEngine() === "cloakbrowser"
-        ? licenseKeyPool?.capacitySnapshot(licenseLeaseJournal.snapshot()) ?? null
+        ? (licenseKeyPool?.capacitySnapshot(licenseLeaseJournal.snapshot()) ?? null)
         : null;
 
     browserDriver = new ChromiumBrowserDriver({
@@ -446,6 +458,7 @@ app
       chromiumBootstrap,
       extensionStoreRoot,
       licenseKeyPool,
+      startupBarrier: startupOrphanSweep,
       // The companion's "Add to MKT Browser" button routes here (profile-scoped).
       // Confirm natively first: any script on the store page could trigger the
       // channel, so an explicit OS dialog makes a drive-by install impossible.
