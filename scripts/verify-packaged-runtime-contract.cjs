@@ -94,6 +94,8 @@ async function runIteration(executable, iteration, options, iterationEvidence) {
       `Packaged engine evidence iteration=${iteration} version=${engineFixture.version} ` +
         `sha256=${engineFixture.sha256}\n`,
     );
+    // Checked before the launch so a mismatch costs a fixture install, not a full cold launch.
+    assertExpectedEngine(options.expectedEngineVersion, engineFixture);
     const port = await reservePort();
     const env = {
       ...process.env,
@@ -409,12 +411,30 @@ async function runIteration(executable, iteration, options, iterationEvidence) {
   if (failure) throw failure;
 }
 
+// The verifier links whichever Google Chrome the runner image ships, so the engine under test can
+// change between runs without anything in this repository changing. That is tolerable for one run,
+// which records the version it measured, but a multi-run stability streak is a claim about a single
+// engine. Declaring the expected version turns a silent runner-image refresh into a red run.
+//
+// The expectation stays opt-in: a developer verifying locally has a different Chrome than the runner
+// and must not be forced to match it. Only a declared streak sets a value.
+function assertExpectedEngine(expectedVersion, observed) {
+  if (!expectedVersion) return;
+  if (observed.version === expectedVersion) return;
+  throw new Error(
+    `Packaged verifier engine mismatch. Expected "${expectedVersion}" but the runner supplied ` +
+      `"${observed.version}" (sha256 ${observed.sha256}). A stability streak measured across two ` +
+      `engines is not a streak; re-declare the expectation and start the count again.`,
+  );
+}
+
 function parseOptions(args) {
   const options = {
     repeat: 1,
     timingsOutput: process.env.MKT_BROWSER_TIMINGS_OUTPUT,
     diagnosticsDir: process.env.MKT_BROWSER_DIAGNOSTICS_DIR,
     artifactManifest: process.env.MKT_BROWSER_ARTIFACT_MANIFEST,
+    expectedEngineVersion: (process.env.MKT_BROWSER_EXPECTED_ENGINE_VERSION ?? "").trim(),
   };
   for (let index = 0; index < args.length; index++) {
     const name = args[index];
@@ -695,4 +715,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseOptions, sanitizeDiagnostics, withHttpDeadline };
+module.exports = { assertExpectedEngine, parseOptions, sanitizeDiagnostics, withHttpDeadline };

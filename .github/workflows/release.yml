@@ -11,6 +11,10 @@ on:
         description: "Packaged runtime contract cold-launch iterations"
         required: false
         default: "20"
+      expected_engine_version:
+        description: "Engine version every run of a stability streak must report (blank records only)"
+        required: false
+        default: ""
       build_installer:
         description: "Also build the combined Windows installer (Phase 4 only)"
         type: boolean
@@ -163,6 +167,9 @@ jobs:
       - name: Verify packaged runtime contract repeatedly
         env:
           MKT_CONTRACT_ITERATIONS: ${{ github.event_name == 'workflow_dispatch' && inputs.contract_iterations || (github.event_name == 'schedule' && 20 || 5) }}
+          # Blank on push and pull request, so ordinary runs still record whatever Chrome the image
+          # ships. A stability streak declares one version and any drift fails that run.
+          MKT_BROWSER_EXPECTED_ENGINE_VERSION: ${{ inputs.expected_engine_version }}
         run: node scripts/verify-packaged-runtime-contract.cjs --repeat "$env:MKT_CONTRACT_ITERATIONS"
 
       - name: Upload packaged contract evidence

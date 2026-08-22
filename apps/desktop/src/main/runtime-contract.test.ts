@@ -278,6 +278,13 @@ test("builds one hashed package and verifies that artifact in a fresh CI job", (
   assert.match(workflow, /MKT_CONTRACT_ITERATIONS: \$\{\{.*inputs\.contract_iterations/);
   assert.match(workflow, /--repeat "\$env:MKT_CONTRACT_ITERATIONS"/);
 
+  // A stability streak is a claim about one engine, and the verifier links whichever Chrome the
+  // runner image ships. The declared version travels with the dispatch so drift fails the run.
+  assert.ok(
+    workflow.includes("MKT_BROWSER_EXPECTED_ENGINE_VERSION: ${{ inputs.expected_engine_version }}"),
+    "the stability dispatch must declare the engine version it expects",
+  );
+
   // Phase 4 builds exactly one installer from a frozen tree. A stability dispatch must not emit a
   // second unsigned installer that could later be mistaken for the release artifact.
   assert.match(

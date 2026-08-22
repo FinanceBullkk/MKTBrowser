@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const {
+  assertExpectedEngine,
   parseOptions,
   sanitizeDiagnostics,
   withHttpDeadline,
@@ -80,4 +81,34 @@ test("redacts paths, network identities, profile ids, and secret-like diagnostic
     /operator|203\.0\.113\.7|2001:db8|123e4567|bearer-secret|password/,
   );
   assert.match(sanitized, /\[redacted-path\]|\[redacted-ip\]/);
+});
+
+test("records the engine without an expectation, and fails the streak when one drifts", () => {
+  const observed = { version: "151.0.7922.170", sha256: "a".repeat(64) };
+
+  // A local verification run has no declared engine, so it must stay usable on whatever Chrome the
+  // developer has installed.
+  assert.doesNotThrow(() => assertExpectedEngine("", observed));
+  assert.doesNotThrow(() => assertExpectedEngine(undefined, observed));
+  assert.doesNotThrow(() => assertExpectedEngine("151.0.7922.170", observed));
+
+  // A declared streak is a claim about one engine. A runner image refresh mid-streak must be loud.
+  assert.throws(
+    () => assertExpectedEngine("151.0.7922.138", observed),
+    /Expected "151\.0\.7922\.138".+supplied "151\.0\.7922\.170"/s,
+  );
+  assert.throws(() => assertExpectedEngine("151.0.7922.138", observed), /start the count again/);
+});
+
+test("reads the declared engine expectation from the environment", () => {
+  const previous = process.env.MKT_BROWSER_EXPECTED_ENGINE_VERSION;
+  try {
+    process.env.MKT_BROWSER_EXPECTED_ENGINE_VERSION = "  151.0.7922.170  ";
+    assert.equal(parseOptions([]).expectedEngineVersion, "151.0.7922.170");
+    delete process.env.MKT_BROWSER_EXPECTED_ENGINE_VERSION;
+    assert.equal(parseOptions([]).expectedEngineVersion, "");
+  } finally {
+    if (previous === undefined) delete process.env.MKT_BROWSER_EXPECTED_ENGINE_VERSION;
+    else process.env.MKT_BROWSER_EXPECTED_ENGINE_VERSION = previous;
+  }
 });
