@@ -70,6 +70,8 @@ test("contains no retired first-party compatibility markers", () => {
     ...textFiles(new URL("packages/", REPO_ROOT)),
     new URL("package.json", REPO_ROOT),
     new URL(".github/workflows/release.yml", REPO_ROOT),
+    new URL(".github/workflows/windows-pipeline.yml", REPO_ROOT),
+    new URL(".github/workflows/pr-release-gate.yml", REPO_ROOT),
   ];
 
   for (const file of files) {

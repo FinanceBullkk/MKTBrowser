@@ -1,10 +1,15 @@
 name: Windows Technical Build
 
-# Windows x64 is the only v1 and team-demo platform. The unpacked package is built once, hashed,
-# uploaded, then exercised in a fresh job without rebuilding it.
+# Fast feedback on pushes, the nightly stability sweep, and the manual dispatch used for stability
+# streaks and Phase 4 installer builds.
+#
+# Merge authority does not live here. It lives in the gate workflow, which is the only file allowed
+# to carry the required check name, because a job disabled by a condition still publishes a check
+# run under its name and a skipped required check counts as satisfied. This workflow therefore
+# triggers only on push, schedule, and manual dispatch.
+
 on:
   push:
-  pull_request:
   workflow_dispatch:
     inputs:
       contract_iterations:
@@ -27,233 +32,10 @@ permissions:
   contents: read
 
 jobs:
-  quality:
-    runs-on: windows-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Setup Node.js 22
-        uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          package-manager-cache: false
-
-      - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@4.5.0 --activate
-
-      - name: Install dependencies
-        run: yarn install --immutable
-
-      - name: Audit production dependencies
-        run: yarn audit:production
-
-      - name: Node.js build guard
-        run: yarn verify:node
-
-      - name: Workspace quality contract
-        run: yarn verify:workspace-quality
-
-      - name: Lint
-        run: yarn lint
-
-      - name: Installer and runtime guard suites
-        run: yarn test:installer
-
-      # Critical-path coverage, not a whole-repository percentage. See
-      # scripts/critical-coverage-contract.cjs for which modules are protected and why.
-      - name: Critical coverage contract
-        run: yarn test:critical-coverage
-
-      - name: Typecheck
-        run: yarn typecheck
-
-  package:
-    needs: quality
-    runs-on: windows-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Setup Node.js 22
-        uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          package-manager-cache: false
-
-      - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@4.5.0 --activate
-
-      - name: Install dependencies
-        run: yarn install --immutable
-
-      - name: Build Windows directory package once
-        run: yarn workspace @mktbrowser/desktop build
-
-      - name: Archive and hash directory package
-        shell: pwsh
-        run: |
-          $artifactRoot = Join-Path $env:RUNNER_TEMP "mktbrowser-package"
-          New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
-          $archive = Join-Path $artifactRoot "mktbrowser-win-unpacked.zip"
-          Compress-Archive -Path "apps/desktop/release/win-unpacked/*" -DestinationPath $archive -CompressionLevel Optimal
-          $sha256 = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-          $manifest = [ordered]@{
-            sourceSha = $env:GITHUB_SHA
-            archive = "mktbrowser-win-unpacked.zip"
-            sha256 = $sha256
-            node = (node --version)
-            runnerImage = $env:ImageOS
-            runnerImageVersion = $env:ImageVersion
-          }
-          $manifest | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $artifactRoot "artifact-manifest.json") -Encoding utf8NoBOM
-
-      - name: Upload exact directory package
-        uses: actions/upload-artifact@v4
-        with:
-          name: mktbrowser-win-unpacked
-          path: ${{ runner.temp }}/mktbrowser-package/*
-          if-no-files-found: error
-          retention-days: 7
-
-  packaged-contract:
-    needs: package
-    runs-on: windows-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Setup Node.js 22
-        uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          package-manager-cache: false
-
-      - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@4.5.0 --activate
-
-      - name: Install dependencies without rebuilding the package
-        run: yarn install --immutable
-
-      - name: Download exact directory package
-        uses: actions/download-artifact@v5
-        with:
-          name: mktbrowser-win-unpacked
-          path: ${{ runner.temp }}/mktbrowser-artifact
-
-      - name: Verify artifact manifest and extract
-        shell: pwsh
-        run: |
-          $artifactRoot = Join-Path $env:RUNNER_TEMP "mktbrowser-artifact"
-          $manifestPath = Join-Path $artifactRoot "artifact-manifest.json"
-          $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
-          if ($manifest.sourceSha -ne $env:GITHUB_SHA) { throw "Artifact source SHA does not match the checked-out merge tree." }
-          $archive = Join-Path $artifactRoot $manifest.archive
-          $actualSha = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($actualSha -ne $manifest.sha256) { throw "Downloaded directory package hash does not match its manifest." }
-          $unpacked = Join-Path $env:RUNNER_TEMP "mktbrowser-contract-package"
-          Expand-Archive -LiteralPath $archive -DestinationPath $unpacked -Force
-          $evidence = Join-Path $env:RUNNER_TEMP "mktbrowser-contract-evidence"
-          New-Item -ItemType Directory -Force -Path $evidence | Out-Null
-          Add-Content -LiteralPath $env:GITHUB_ENV -Value "MKT_BROWSER_EXECUTABLE=$(Join-Path $unpacked 'MKTBrowser.exe')"
-          Add-Content -LiteralPath $env:GITHUB_ENV -Value "MKT_BROWSER_ARTIFACT_MANIFEST=$manifestPath"
-          Add-Content -LiteralPath $env:GITHUB_ENV -Value "MKT_BROWSER_TIMINGS_OUTPUT=$(Join-Path $evidence 'timings.json')"
-          Add-Content -LiteralPath $env:GITHUB_ENV -Value "MKT_BROWSER_DIAGNOSTICS_DIR=$(Join-Path $evidence 'diagnostics')"
-
-      # The iteration count reaches the verifier through the environment, never through string
-      # interpolation into the command line, so a dispatch input cannot become shell syntax.
-      # The verifier itself rejects anything that is not an integer from 1 to 100.
-      - name: Verify packaged runtime contract repeatedly
-        env:
-          MKT_CONTRACT_ITERATIONS: ${{ github.event_name == 'workflow_dispatch' && inputs.contract_iterations || (github.event_name == 'schedule' && 20 || 5) }}
-          # Blank on push and pull request, so ordinary runs still record whatever Chrome the image
-          # ships. A stability streak declares one version and any drift fails that run.
-          MKT_BROWSER_EXPECTED_ENGINE_VERSION: ${{ inputs.expected_engine_version }}
-        run: node scripts/verify-packaged-runtime-contract.cjs --repeat "$env:MKT_CONTRACT_ITERATIONS"
-
-      - name: Upload packaged contract evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: packaged-contract-evidence
-          path: |
-            ${{ runner.temp }}/mktbrowser-contract-evidence/**
-            ${{ runner.temp }}/mktbrowser-artifact/artifact-manifest.json
-          if-no-files-found: error
-          retention-days: 7
-
-  windows-installer:
-    # Phase 4 builds exactly one installer from a frozen tree. Stability dispatch runs must not
-    # produce extra unsigned installers that could be mistaken for the release artifact.
-    if: github.event_name == 'workflow_dispatch' && inputs.build_installer
-    needs: packaged-contract
-    runs-on: windows-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Setup Node.js 22
-        uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          package-manager-cache: false
-
-      - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@4.5.0 --activate
-
-      - name: Install dependencies
-        run: yarn install --immutable
-
-      - name: Build combined Windows installer
-        env:
-          MKTTOOL_RELEASE_TOKEN: ${{ secrets.MKTTOOL_RELEASE_TOKEN }}
-          MKT_BROWSER_ENGINE_RELEASE_FILE: ${{ github.workspace }}/apps/desktop/windows-engine-release.json
-        run: yarn workspace @mktbrowser/desktop build:win
-
-      - name: Upload combined Windows installer
-        uses: actions/upload-artifact@v4
-        with:
-          name: mktbrowser-windows-installer
-          path: apps/desktop/release/installer/*.exe
-          if-no-files-found: error
-
-  # The single required status check for merging into the default branch.
-  #
-  # Two properties matter and both are easy to get wrong:
-  #
-  # 1. It runs only on pull_request, so a green push on a feature branch can never report this name
-  #    and can never stand in for the merge-tree result. That substitution is what let a branch look
-  #    releasable on 22 August while the required check was failing on the same source tree.
-  #
-  # 2. It runs with always(), and inspects each dependency explicitly. A job that is skipped because
-  #    a dependency failed reports "skipped", and GitHub treats a skipped required check as
-  #    satisfied. Without the explicit result check below, a failing pipeline would merge cleanly.
-  mktbrowser-pr-release-gate:
-    if: always() && github.event_name == 'pull_request'
-    needs: [quality, package, packaged-contract]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Require every release job to have succeeded
-        env:
-          QUALITY: ${{ needs.quality.result }}
-          PACKAGE: ${{ needs.package.result }}
-          PACKAGED_CONTRACT: ${{ needs.packaged-contract.result }}
-        run: |
-          echo "quality=$QUALITY package=$PACKAGE packaged-contract=$PACKAGED_CONTRACT"
-          failed=0
-          for result in "$QUALITY" "$PACKAGE" "$PACKAGED_CONTRACT"; do
-            if [ "$result" != "success" ]; then failed=1; fi
-          done
-          if [ "$failed" -ne 0 ]; then
-            echo "::error::A required release job did not succeed. This merge tree is not releasable."
-            exit 1
-          fi
-          echo "All required release jobs succeeded for this merge tree."
+  windows:
+    uses: ./.github/workflows/windows-pipeline.yml
+    secrets: inherit
+    with:
+      contract_iterations: ${{ github.event_name == 'workflow_dispatch' && inputs.contract_iterations || (github.event_name == 'schedule' && '20' || '5') }}
+      expected_engine_version: ${{ github.event_name == 'workflow_dispatch' && inputs.expected_engine_version || '' }}
+      build_installer: ${{ github.event_name == 'workflow_dispatch' && inputs.build_installer || false }}

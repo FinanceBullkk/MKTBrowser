@@ -58,7 +58,7 @@ test("keeps desktop packaging metadata aligned with the product identity", () =>
     "utf8",
   );
   const releaseWorkflow = readFileSync(
-    new URL("../../../../.github/workflows/release.yml", import.meta.url),
+    new URL("../../../../.github/workflows/windows-pipeline.yml", import.meta.url),
     "utf8",
   );
   const viteConfig = readFileSync(

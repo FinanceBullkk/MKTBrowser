@@ -262,7 +262,7 @@ test("lets Chromium assign the DevTools port instead of consuming fixed ports", 
 });
 
 test("builds one hashed package and verifies that artifact in a fresh CI job", () => {
-  const workflow = source(".github/workflows/release.yml");
+  const workflow = source(".github/workflows/windows-pipeline.yml");
 
   assert.match(workflow, /quality:/);
   assert.match(workflow, /package:\s*\n\s+needs: quality/);
@@ -287,50 +287,60 @@ test("builds one hashed package and verifies that artifact in a fresh CI job", (
 });
 
 test("exposes one required merge gate that a push cannot satisfy and a skip cannot fake", () => {
-  const workflow = source(".github/workflows/release.yml");
+  const gate = source(".github/workflows/pr-release-gate.yml");
+  const push = source(".github/workflows/release.yml");
+  const pipeline = source(".github/workflows/windows-pipeline.yml");
 
   assert.ok(
-    workflow.includes("mktbrowser-pr-release-gate:"),
+    gate.includes("mktbrowser-pr-release-gate:"),
     "the required status check must exist under a stable name",
   );
+  assert.ok(gate.includes("  pull_request:"), "the gate workflow triggers on pull_request");
 
-  // A green push on a feature branch must never report the required name. That substitution is what
-  // let the branch read as releasable while the required check was failing on the same source tree.
+  // Measured on 22 August, after the first attempt at this gate shipped. An `if:` condition stops a
+  // job from running but not from publishing a check run under its name, and GitHub counts a
+  // skipped required check as satisfied. The push workflow therefore reported
+  // `mktbrowser-pr-release-gate: skipped` on the same head commit as the real result, which would
+  // have let a failing pipeline merge. The name must not exist outside the pull-request workflow.
   assert.ok(
-    workflow.includes("if: always() && github.event_name == 'pull_request'"),
-    "the merge gate must run only on pull_request, and must run even when a dependency fails",
+    !push.includes("mktbrowser-pr-release-gate"),
+    "the push workflow must never publish a check under the required name, not even skipped",
   );
   assert.ok(
-    workflow.includes("needs: [quality, package, packaged-contract]"),
-    "the merge gate must depend on every release job",
+    !pipeline.includes("mktbrowser-pr-release-gate"),
+    "the reusable pipeline must not publish a check under the required name",
+  );
+  assert.ok(
+    !push.includes("pull_request"),
+    "the push workflow must not run on pull_request, or it would republish pipeline check names",
   );
 
-  // GitHub treats a skipped required check as satisfied. Without always() plus an explicit result
-  // check, a failing pipeline would skip this job and the merge would be allowed.
-  for (const dependency of [
-    "QUALITY: ${{ needs.quality.result }}",
-    "PACKAGE: ${{ needs.package.result }}",
-    "PACKAGED_CONTRACT: ${{ needs.packaged-contract.result }}",
-  ]) {
-    assert.ok(workflow.includes(dependency), `the merge gate must inspect ${dependency}`);
-  }
+  // The gate must run even when the pipeline fails, and must inspect the result rather than merely
+  // depending on it. A gate skipped alongside a failing pipeline reports satisfied.
+  assert.ok(gate.includes("if: always()"), "the gate must run even when the pipeline fails");
+  assert.ok(gate.includes("needs: [windows]"));
+  assert.ok(gate.includes("PIPELINE: ${{ needs.windows.result }}"));
   assert.ok(
-    workflow.includes('if [ "$result" != "success" ]; then failed=1; fi'),
-    "the merge gate must fail unless every dependency reported success",
+    gate.includes('if [ "$PIPELINE" != "success" ]; then'),
+    "the gate must fail unless the pipeline reported success",
   );
 
   // The coverage floor only exists if the required pipeline runs it. A contract that lives in a
   // script nobody invokes is the same shape of mistake as a check that never ran on the artifact.
   assert.ok(
-    workflow.includes("run: yarn test:critical-coverage"),
+    pipeline.includes("run: yarn test:critical-coverage"),
     "the required pipeline must run the critical coverage contract",
   );
 
-  // Phase 4 builds exactly one installer from a frozen tree. A stability dispatch must not emit a
-  // second unsigned installer that could later be mistaken for the release artifact.
-  assert.match(
-    workflow,
-    /windows-installer:[\s\S]*?if: github\.event_name == 'workflow_dispatch' && inputs\.build_installer/,
+  // Phase 4 builds exactly one installer from a frozen tree. A stability run must not emit a second
+  // one, and with an unsigned release the two are indistinguishable by inspection.
+  assert.ok(
+    pipeline.includes("if: inputs.build_installer"),
+    "the installer job must stay off unless a dispatch explicitly asks for it",
+  );
+  assert.ok(
+    push.includes("build_installer: ${{ github.event_name == 'workflow_dispatch' && inputs.build_installer || false }}"),
+    "only a manual dispatch may request an installer build",
   );
 });
 

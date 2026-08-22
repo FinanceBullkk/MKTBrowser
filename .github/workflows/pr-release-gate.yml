@@ -1,0 +1,43 @@
+name: PR Release Gate
+
+# The only merge authority for the default branch.
+#
+# Two properties matter, and the obvious implementation gets both wrong:
+#
+# 1. The required check name exists only here, on pull_request. A green push on a feature branch
+#    therefore cannot report it and cannot stand in for the merge-tree result. That substitution is
+#    what let this branch read as releasable on 22 August while the required check was failing on
+#    the same source tree.
+#
+# 2. The gate job runs with always() and inspects the pipeline result explicitly. GitHub counts a
+#    skipped required check as satisfied, so a gate that simply depends on the pipeline would be
+#    skipped when the pipeline fails, and the merge would be allowed.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    uses: ./.github/workflows/windows-pipeline.yml
+    secrets: inherit
+    with:
+      contract_iterations: "5"
+
+  mktbrowser-pr-release-gate:
+    if: always()
+    needs: [windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the Windows pipeline to have succeeded on this merge tree
+        env:
+          PIPELINE: ${{ needs.windows.result }}
+        run: |
+          echo "windows pipeline result: $PIPELINE"
+          if [ "$PIPELINE" != "success" ]; then
+            echo "::error::The Windows pipeline did not succeed. This merge tree is not releasable."
+            exit 1
+          fi
+          echo "The Windows pipeline succeeded for this merge tree."
