@@ -25,6 +25,7 @@ async function main() {
     process.env.MKT_BROWSER_EXECUTABLE ?? "apps/desktop/release/win-unpacked/MKTBrowser.exe",
   );
   assert.ok(existsSync(executable), "Build the Windows directory package before verification.");
+  verifyPackagedExtractionDependencies(executable);
 
   const userData = await mkdtemp(path.join(os.tmpdir(), "mkt-browser-packaged-contract-"));
   const isolatedLocalAppData = path.join(userData, "local-app-data");
@@ -325,6 +326,31 @@ async function main() {
     }
   }
   if (failure) throw failure;
+}
+
+function verifyPackagedExtractionDependencies(executable) {
+  const archive = path.join(path.dirname(executable), "resources", "app.asar");
+  assert.ok(existsSync(archive), "The packaged application is missing resources/app.asar.");
+  const asar = require(
+    require.resolve("@electron/asar", { paths: [path.resolve("apps/desktop")] }),
+  );
+  const packageJson = JSON.parse(asar.extractFile(archive, "package.json").toString("utf8"));
+  const entries = asar.listPackage(archive).map((entry) => entry.replace(/^\\/, ""));
+  const hasPackage = (name) =>
+    entries.some((entry) => new RegExp(`(^|[\\\\/])${name}([\\\\/]|$)`, "i").test(entry));
+
+  assert.equal(
+    packageJson.dependencies?.["extract-zip"],
+    undefined,
+    "The packaged metadata still declares extract-zip.",
+  );
+  assert.equal(hasPackage("extract-zip"), false, "The packaged app.asar still contains extract-zip.");
+  assert.equal(
+    packageJson.dependencies?.yauzl,
+    "3.4.0",
+    "The packaged metadata does not pin yauzl 3.4.0.",
+  );
+  assert.equal(hasPackage("yauzl"), true, "The packaged app.asar is missing yauzl.");
 }
 
 async function callTool(baseUrl, token, name, toolArgs) {

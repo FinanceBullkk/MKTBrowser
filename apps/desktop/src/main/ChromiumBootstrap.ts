@@ -6,34 +6,33 @@ import { createReadStream, createWriteStream, existsSync } from "node:fs";
 import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import extract from "extract-zip";
+import { extractArchiveSafely, type SafeArchivePolicy } from "./safe-archive-extraction.ts";
 
-/**
- * Extract a zip or tar.gz archive preserving all attributes the OS cares
- * about.
- *   - .zip on macOS: `ditto -xk` — Apple's official tool. Preserves
- *     symlinks, xattrs, resource forks, ACLs.
- *   - .tar.gz: `tar -xzf` (bundled on every Unix). Also preserves attrs.
- *   - Windows .zip: `tar -xf` (bundled with Windows 10+).
- *   - Linux .zip fallback: extract-zip lib.
- */
+const ENGINE_ZIP_POLICY: SafeArchivePolicy = {
+  archiveType: "browser-engine",
+  maxCompressedBytes: 1024 * 1024 * 1024,
+  maxUncompressedBytes: 4 * 1024 * 1024 * 1024,
+  maxEntries: 50_000,
+  maxFileBytes: 2 * 1024 * 1024 * 1024,
+  maxCompressionRatio: 250,
+  maxPathLength: 1024,
+};
+
+/** ZIPs use the owned fail-closed boundary; native tar handles Unix engine tarballs. */
 async function extractArchive(archivePath: string, destDir: string): Promise<void> {
   // Match .tar.gz / .tgz with optional .partial suffix from in-flight
   // downloads (CloakBrowser ships tarballs; CFT ships zip).
   const isTar = /\.(tar\.gz|tgz)(\.partial)?$/i.test(archivePath);
   if (isTar) {
+    await mkdir(destDir, { recursive: true });
     await execFileP(tarBinary(), ["-xzf", archivePath, "-C", destDir]);
     return;
   }
-  if (process.platform === "darwin") {
-    await execFileP("ditto", ["-xk", archivePath, destDir]);
-    return;
-  }
-  if (process.platform === "win32") {
-    await execFileP(tarBinary(), ["-xf", archivePath, "-C", destDir]);
-    return;
-  }
-  await extract(archivePath, { dir: destDir });
+  await extractArchiveSafely({
+    archivePath,
+    destinationPath: destDir,
+    policy: ENGINE_ZIP_POLICY,
+  });
 }
 
 /**
@@ -282,7 +281,6 @@ export class ChromiumBootstrap extends EventEmitter {
       // partial extraction can never end up at the canonical path.
       const tmpExtract = `${versionDir}.partial`;
       await rm(tmpExtract, { recursive: true, force: true });
-      await mkdir(tmpExtract, { recursive: true });
       try {
         await extractArchive(zipPath, tmpExtract);
       } catch (e) {

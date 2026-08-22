@@ -35,6 +35,9 @@ jobs:
       - name: Install dependencies
         run: yarn install --immutable
 
+      - name: Audit production dependencies
+        run: yarn audit:production
+
       - name: Node.js build guard
         run: yarn verify:node
 

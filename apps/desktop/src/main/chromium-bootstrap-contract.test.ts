@@ -7,8 +7,13 @@ const source = (name: string): string => readFileSync(new URL(name, ROOT), "utf8
 
 test("normalizes Windows engine installs to a stable runtime path", () => {
   const bootstrap = source("ChromiumBootstrap.ts");
+  const safeExtraction = source("safe-archive-extraction.ts");
   const runtimePath = source("chromium-runtime-path.ts");
   assert.match(bootstrap, /stableWindowsRuntime/);
+  assert.match(bootstrap, /extractArchiveSafely/);
+  assert.doesNotMatch(bootstrap, /from "extract-zip"/);
+  assert.match(safeExtraction, /strictFileNames: true/);
+  assert.match(safeExtraction, /EntryIntegrityTransform/);
   assert.match(bootstrap, /\.mkt-runtime\.json/);
   assert.match(runtimePath, /win32\.join\(cacheDir, "runtime", "chrome\.exe"\)/);
 });

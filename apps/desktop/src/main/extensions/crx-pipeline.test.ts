@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -111,9 +111,28 @@ test("H38: ZIP entries cannot traverse outside the staging directory", async () 
 
     await assert.rejects(
       unpackToStore({ source: f.source, storeRoot: f.store, origin: "file" }),
-      /out of bound path|invalid relative path|outside/i,
+      /ARCHIVE_INVALID_PATH/,
     );
     assert.equal(existsSync(escaped), false);
+  } finally {
+    await f.dispose();
+  }
+});
+
+test("H38: a correctly signed CRX still cannot publish a symlink entry", async () => {
+  const f = await fixture();
+  try {
+    const linkZip = createZip([
+      { name: "manifest.json", content: manifest },
+      { name: "link", content: "../../outside", mode: 0o120777 },
+    ]);
+    await writeFile(f.source, createCrx3(linkZip).bytes);
+
+    await assert.rejects(
+      unpackToStore({ source: f.source, storeRoot: f.store, origin: "file" }),
+      /ARCHIVE_LINK_NOT_ALLOWED/,
+    );
+    assert.deepEqual(await readdir(f.store).catch(() => []), []);
   } finally {
     await f.dispose();
   }

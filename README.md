@@ -60,11 +60,17 @@ profiles on the operator device.
   `license-capacity-v1` is deliberately not advertised because the live vendor session protocol,
   sidecar, and driver lifecycle are not connected. Real proxy/DNS/WebRTC evidence, human input,
   second-PC recovery, and canary gates remain open, so this is not rollout approval.
+- Release-readiness Phase 1 is verified locally on Windows as of 22 August 2026. The vulnerable
+  direct runtime dependency `extract-zip@2.0.1` is replaced by pinned `yauzl@3.4.0` behind an owned
+  fail-closed ZIP boundary for engine and CRX/ZIP extraction. Traversal, absolute and Windows device
+  paths, links and special entries, case-folded collisions, zip bombs, truncation, and CRC failures
+  are rejected before publication. CI audits production dependencies, and packaged verification
+  inspects `app.asar` to require `yauzl@3.4.0` and reject `extract-zip` metadata or files.
 - This build may be used for an owner-led technical demo with disposable profiles. It is not
   approved for real accounts, pilot distribution, or team rollout.
 - The current desktop package version is `0.3.12`. The Windows directory package was regenerated on
   22 August 2026 with SHA-256
-  `26074de0477d5401c4998e6cc1e5c20f727868e1d2b39deffb63cabfbbde9ce3`; typecheck, zero-warning
+  `6a3809d6ec83ad4f01459821b3de7cb0072483f42d67520dee8e729bdd2d2c69`; typecheck, zero-warning
   lint, the complete installer suite, build, and packaged runtime/profile-lifecycle verification
   passed. The repository's `yarn lint` enforces the workspace quality contract, strict TypeScript
   unused/fallthrough checks, and JavaScript syntax checks. The packaged verifier covers

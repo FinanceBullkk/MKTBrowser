@@ -17,7 +17,7 @@ const NATIVE_EXTERNALS = [
   "https-proxy-agent",
   "socks-proxy-agent",
   "proxy-chain",
-  "extract-zip",
+  "yauzl",
   "@modelcontextprotocol/sdk",
   "uuid",
   "zod",
