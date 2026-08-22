@@ -284,6 +284,47 @@ test("builds one hashed package and verifies that artifact in a fresh CI job", (
     workflow.includes("MKT_BROWSER_EXPECTED_ENGINE_VERSION: ${{ inputs.expected_engine_version }}"),
     "the stability dispatch must declare the engine version it expects",
   );
+});
+
+test("exposes one required merge gate that a push cannot satisfy and a skip cannot fake", () => {
+  const workflow = source(".github/workflows/release.yml");
+
+  assert.ok(
+    workflow.includes("mktbrowser-pr-release-gate:"),
+    "the required status check must exist under a stable name",
+  );
+
+  // A green push on a feature branch must never report the required name. That substitution is what
+  // let the branch read as releasable while the required check was failing on the same source tree.
+  assert.ok(
+    workflow.includes("if: always() && github.event_name == 'pull_request'"),
+    "the merge gate must run only on pull_request, and must run even when a dependency fails",
+  );
+  assert.ok(
+    workflow.includes("needs: [quality, package, packaged-contract]"),
+    "the merge gate must depend on every release job",
+  );
+
+  // GitHub treats a skipped required check as satisfied. Without always() plus an explicit result
+  // check, a failing pipeline would skip this job and the merge would be allowed.
+  for (const dependency of [
+    "QUALITY: ${{ needs.quality.result }}",
+    "PACKAGE: ${{ needs.package.result }}",
+    "PACKAGED_CONTRACT: ${{ needs.packaged-contract.result }}",
+  ]) {
+    assert.ok(workflow.includes(dependency), `the merge gate must inspect ${dependency}`);
+  }
+  assert.ok(
+    workflow.includes('if [ "$result" != "success" ]; then failed=1; fi'),
+    "the merge gate must fail unless every dependency reported success",
+  );
+
+  // The coverage floor only exists if the required pipeline runs it. A contract that lives in a
+  // script nobody invokes is the same shape of mistake as a check that never ran on the artifact.
+  assert.ok(
+    workflow.includes("run: yarn test:critical-coverage"),
+    "the required pipeline must run the critical coverage contract",
+  );
 
   // Phase 4 builds exactly one installer from a frozen tree. A stability dispatch must not emit a
   // second unsigned installer that could later be mistaken for the release artifact.

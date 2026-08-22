@@ -62,6 +62,11 @@ jobs:
       - name: Installer and runtime guard suites
         run: yarn test:installer
 
+      # Critical-path coverage, not a whole-repository percentage. See
+      # scripts/critical-coverage-contract.cjs for which modules are protected and why.
+      - name: Critical coverage contract
+        run: yarn test:critical-coverage
+
       - name: Typecheck
         run: yarn typecheck
 
@@ -219,3 +224,36 @@ jobs:
           name: mktbrowser-windows-installer
           path: apps/desktop/release/installer/*.exe
           if-no-files-found: error
+
+  # The single required status check for merging into the default branch.
+  #
+  # Two properties matter and both are easy to get wrong:
+  #
+  # 1. It runs only on pull_request, so a green push on a feature branch can never report this name
+  #    and can never stand in for the merge-tree result. That substitution is what let a branch look
+  #    releasable on 22 August while the required check was failing on the same source tree.
+  #
+  # 2. It runs with always(), and inspects each dependency explicitly. A job that is skipped because
+  #    a dependency failed reports "skipped", and GitHub treats a skipped required check as
+  #    satisfied. Without the explicit result check below, a failing pipeline would merge cleanly.
+  mktbrowser-pr-release-gate:
+    if: always() && github.event_name == 'pull_request'
+    needs: [quality, package, packaged-contract]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every release job to have succeeded
+        env:
+          QUALITY: ${{ needs.quality.result }}
+          PACKAGE: ${{ needs.package.result }}
+          PACKAGED_CONTRACT: ${{ needs.packaged-contract.result }}
+        run: |
+          echo "quality=$QUALITY package=$PACKAGE packaged-contract=$PACKAGED_CONTRACT"
+          failed=0
+          for result in "$QUALITY" "$PACKAGE" "$PACKAGED_CONTRACT"; do
+            if [ "$result" != "success" ]; then failed=1; fi
+          done
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::A required release job did not succeed. This merge tree is not releasable."
+            exit 1
+          fi
+          echo "All required release jobs succeeded for this merge tree."
