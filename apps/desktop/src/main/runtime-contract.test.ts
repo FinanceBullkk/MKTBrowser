@@ -271,6 +271,19 @@ test("builds one hashed package and verifies that artifact in a fresh CI job", (
   assert.match(workflow, /actions\/download-artifact@v5/);
   assert.match(workflow, /Get-FileHash[^\n]+SHA256/);
   assert.match(workflow, /verify-packaged-runtime-contract\.cjs --repeat/);
+
+  // Repeated stability runs are dispatched by hand, so the iteration count is an input. It must
+  // reach the verifier through the environment; interpolating it into the command line would let
+  // a dispatch input become shell syntax on the runner.
+  assert.match(workflow, /MKT_CONTRACT_ITERATIONS: \$\{\{.*inputs\.contract_iterations/);
+  assert.match(workflow, /--repeat "\$env:MKT_CONTRACT_ITERATIONS"/);
+
+  // Phase 4 builds exactly one installer from a frozen tree. A stability dispatch must not emit a
+  // second unsigned installer that could later be mistaken for the release artifact.
+  assert.match(
+    workflow,
+    /windows-installer:[\s\S]*?if: github\.event_name == 'workflow_dispatch' && inputs\.build_installer/,
+  );
 });
 
 test("keeps browser ownership until failed launches and shutdown sweeps finish", () => {

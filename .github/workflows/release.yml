@@ -6,6 +6,16 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      contract_iterations:
+        description: "Packaged runtime contract cold-launch iterations"
+        required: false
+        default: "20"
+      build_installer:
+        description: "Also build the combined Windows installer (Phase 4 only)"
+        type: boolean
+        required: false
+        default: false
   schedule:
     - cron: "17 19 * * *"
 
@@ -147,8 +157,13 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_ENV -Value "MKT_BROWSER_TIMINGS_OUTPUT=$(Join-Path $evidence 'timings.json')"
           Add-Content -LiteralPath $env:GITHUB_ENV -Value "MKT_BROWSER_DIAGNOSTICS_DIR=$(Join-Path $evidence 'diagnostics')"
 
+      # The iteration count reaches the verifier through the environment, never through string
+      # interpolation into the command line, so a dispatch input cannot become shell syntax.
+      # The verifier itself rejects anything that is not an integer from 1 to 100.
       - name: Verify packaged runtime contract repeatedly
-        run: node scripts/verify-packaged-runtime-contract.cjs --repeat ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 20 || 5 }}
+        env:
+          MKT_CONTRACT_ITERATIONS: ${{ github.event_name == 'workflow_dispatch' && inputs.contract_iterations || (github.event_name == 'schedule' && 20 || 5) }}
+        run: node scripts/verify-packaged-runtime-contract.cjs --repeat "$env:MKT_CONTRACT_ITERATIONS"
 
       - name: Upload packaged contract evidence
         if: always()
@@ -162,7 +177,9 @@ jobs:
           retention-days: 7
 
   windows-installer:
-    if: github.event_name == 'workflow_dispatch'
+    # Phase 4 builds exactly one installer from a frozen tree. Stability dispatch runs must not
+    # produce extra unsigned installers that could be mistaken for the release artifact.
+    if: github.event_name == 'workflow_dispatch' && inputs.build_installer
     needs: packaged-contract
     runs-on: windows-latest
     steps:
