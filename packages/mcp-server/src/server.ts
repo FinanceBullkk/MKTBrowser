@@ -28,6 +28,7 @@ import { ActivityLog } from "./ActivityLog.js";
 import {
   CdpPolicyError,
   managedProfileLocked,
+  unmanagedProfileLaunch,
   profileNotFound,
   profileNotRunning,
   toErrorCode,
@@ -658,7 +659,7 @@ async function dispatch(
     case "launch_managed_profile": {
       const { profile_id, proxy } = ManagedLaunchSchema.parse(args);
       const existing = assertProfileExists(profileManager, profile_id);
-      if (!existing.managed) throw managedProfileLocked(profile_id);
+      if (!existing.managed) throw unmanagedProfileLaunch(profile_id);
       return await launchManagedProfile(profile_id, proxy, { profileManager, browserDriver });
     }
     case "launch_profile": {
