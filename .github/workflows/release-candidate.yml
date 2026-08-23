@@ -182,3 +182,97 @@ jobs:
           path: release-provenance.json
           if-no-files-found: error
           retention-days: 90
+
+  # Phase 4 asks whether the candidate installs and uninstalls cleanly on a machine that has never
+  # had the product. A fresh runner is exactly that machine, and it is one we can have as often as
+  # we like, so the mechanical half of that question is answered here rather than by remembering to
+  # try it on a laptop.
+  #
+  # What this does not answer, stated so the green tick is not read as more than it is: no reboot, no
+  # power loss, no human at the keyboard, no real proxy, and no licence seat. Those are the Phase 5
+  # gates and they need hardware and an operator.
+  installed-contract:
+    needs: attest
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Download the attested candidate installer
+        uses: actions/download-artifact@v5
+        with:
+          name: candidate-installer
+          path: ${{ runner.temp }}/candidate
+
+      - name: Install silently, the way an operator's one download behaves
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Path "$env:RUNNER_TEMP/candidate" -Filter *.exe -Recurse |
+            Select-Object -First 1
+          if (-not $installer) { throw "No installer found in the attested candidate artifact." }
+          Write-Host "Installing $($installer.Name)"
+          $process = Start-Process -FilePath $installer.FullName -ArgumentList '/S' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Installer exited with $($process.ExitCode)." }
+
+      - name: Locate the installed application
+        shell: pwsh
+        run: |
+          # Per-user install, so the application lands under the local profile rather than Program
+          # Files. Discovered rather than hardcoded: a changed product name should fail loudly here
+          # instead of silently verifying a path that no longer exists.
+          $candidates = @(
+            (Join-Path $env:LOCALAPPDATA 'Programs'),
+            (Join-Path $env:LOCALAPPDATA 'Programs\MKT Browser')
+          ) | Where-Object { Test-Path $_ }
+          $exe = $null
+          foreach ($root in $candidates) {
+            $exe = Get-ChildItem -Path $root -Filter 'MKTBrowser.exe' -Recurse -ErrorAction SilentlyContinue |
+              Select-Object -First 1
+            if ($exe) { break }
+          }
+          if (-not $exe) { throw "Installed MKTBrowser.exe was not found under the local profile." }
+          Write-Host "Installed at $($exe.FullName)"
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "MKT_BROWSER_EXECUTABLE=$($exe.FullName)"
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "MKT_BROWSER_INSTALL_DIR=$($exe.Directory.FullName)"
+
+      - name: Verify the runtime contract against the installed application
+        env:
+          MKT_BROWSER_TIMINGS_OUTPUT: ${{ runner.temp }}/installed-timings.json
+          MKT_BROWSER_DIAGNOSTICS_DIR: ${{ runner.temp }}/installed-diagnostics
+        run: node scripts/verify-packaged-runtime-contract.cjs --repeat 2
+
+      - name: Uninstall, and require the application directory to be gone
+        shell: pwsh
+        run: |
+          $uninstaller = Get-ChildItem -Path $env:MKT_BROWSER_INSTALL_DIR -Filter 'Uninstall*.exe' |
+            Select-Object -First 1
+          if (-not $uninstaller) { throw "No uninstaller beside the installed application." }
+          $process = Start-Process -FilePath $uninstaller.FullName -ArgumentList '/S' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Uninstaller exited with $($process.ExitCode)." }
+          # The uninstaller returns before NSIS finishes removing its own directory.
+          $deadline = (Get-Date).AddSeconds(60)
+          while ((Test-Path $env:MKT_BROWSER_INSTALL_DIR) -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 2
+          }
+          if (Test-Path $env:MKT_BROWSER_INSTALL_DIR) {
+            $left = Get-ChildItem -Path $env:MKT_BROWSER_INSTALL_DIR -Recurse | Select-Object -First 20
+            throw "Uninstall left files behind:`n$($left.FullName -join "`n")"
+          }
+          Write-Host "Uninstall removed the application directory."
+
+      - name: Upload installed-contract evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: installed-contract-evidence
+          path: |
+            ${{ runner.temp }}/installed-timings.json
+            ${{ runner.temp }}/installed-diagnostics/**
+          if-no-files-found: warn
+          retention-days: 30
