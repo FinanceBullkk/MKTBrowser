@@ -12,6 +12,7 @@ import {
   Zap,
 } from "lucide-react";
 import { Pill } from "../atoms";
+import { AdditionalLicenceKeys } from "./AdditionalLicenceKeys";
 import type { AppSettings, ChromiumStatus, SystemInfo } from "../../types";
 
 interface Props {
@@ -72,7 +73,17 @@ export function Settings({ onImport }: Props): JSX.Element {
 
   async function saveLicence(): Promise<void> {
     const trimmed = licenceDraft.trim();
-    await patch({ cloakBrowserLicenseKey: trimmed });
+    // Replacing the primary must not leave the old key in the pool. The store folds the primary
+    // back into the list on read, so without this a swap would quietly keep both and rotation
+    // would spend an attempt — and a cooldown — on a key the operator has just retired.
+    const previous = settings?.cloakBrowserLicenseKey.trim() ?? "";
+    const kept = (settings?.cloakBrowserLicenseKeys ?? [])
+      .map((k) => k.trim())
+      .filter((k) => k.length > 0 && k !== previous && k !== trimmed);
+    await patch({
+      cloakBrowserLicenseKey: trimmed,
+      cloakBrowserLicenseKeys: trimmed ? [trimmed, ...kept] : kept,
+    });
     setLicenceDraft(trimmed);
     setLicenceSaved(true);
     window.setTimeout(() => setLicenceSaved(false), 1800);
@@ -305,6 +316,13 @@ export function Settings({ onImport }: Props): JSX.Element {
               </>
             )}
           </div>
+          {settings.cloakBrowserLicenseKey && (
+            <AdditionalLicenceKeys
+              keys={settings.cloakBrowserLicenseKeys}
+              primaryKey={settings.cloakBrowserLicenseKey}
+              onChange={(next) => patch({ cloakBrowserLicenseKeys: next })}
+            />
+          )}
           {settings.cloakBrowserLicenseKey ? (
             <div className="text-[11px] mt-2">
               <button
