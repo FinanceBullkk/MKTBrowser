@@ -22,11 +22,6 @@ on:
         required: false
         type: string
         default: ""
-      build_installer:
-        description: "Also build the combined Windows installer (Phase 4 only)"
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -192,40 +187,3 @@ jobs:
             ${{ runner.temp }}/mktbrowser-artifact/artifact-manifest.json
           if-no-files-found: error
           retention-days: 7
-
-  windows-installer:
-    # Phase 4 builds exactly one installer from a frozen tree. Stability dispatch runs must not
-    # produce extra unsigned installers that could be mistaken for the release artifact.
-    if: inputs.build_installer
-    needs: packaged-contract
-    runs-on: windows-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Setup Node.js 22
-        uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          package-manager-cache: false
-
-      - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@4.5.0 --activate
-
-      - name: Install dependencies
-        run: yarn install --immutable
-
-      - name: Build combined Windows installer
-        env:
-          MKTTOOL_RELEASE_TOKEN: ${{ secrets.MKTTOOL_RELEASE_TOKEN }}
-          MKT_BROWSER_ENGINE_RELEASE_FILE: ${{ github.workspace }}/apps/desktop/windows-engine-release.json
-        run: yarn workspace @mktbrowser/desktop build:win
-
-      - name: Upload combined Windows installer
-        uses: actions/upload-artifact@v4
-        with:
-          name: mktbrowser-windows-installer
-          path: apps/desktop/release/installer/*.exe
-          if-no-files-found: error

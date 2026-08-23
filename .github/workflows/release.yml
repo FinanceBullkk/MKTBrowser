@@ -20,11 +20,6 @@ on:
         description: "Engine version every run of a stability streak must report (blank records only)"
         required: false
         default: ""
-      build_installer:
-        description: "Also build the combined Windows installer (Phase 4 only)"
-        type: boolean
-        required: false
-        default: false
   schedule:
     - cron: "17 19 * * *"
 
@@ -38,4 +33,3 @@ jobs:
     with:
       contract_iterations: ${{ github.event_name == 'workflow_dispatch' && inputs.contract_iterations || (github.event_name == 'schedule' && '20' || '5') }}
       expected_engine_version: ${{ github.event_name == 'workflow_dispatch' && inputs.expected_engine_version || '' }}
-      build_installer: ${{ github.event_name == 'workflow_dispatch' && inputs.build_installer || false }}

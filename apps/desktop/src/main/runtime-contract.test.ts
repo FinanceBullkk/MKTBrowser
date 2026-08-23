@@ -332,16 +332,46 @@ test("exposes one required merge gate that a push cannot satisfy and a skip cann
     "the required pipeline must run the critical coverage contract",
   );
 
-  // Phase 4 builds exactly one installer from a frozen tree. A stability run must not emit a second
-  // one, and with an unsigned release the two are indistinguishable by inspection.
-  assert.ok(
-    pipeline.includes("if: inputs.build_installer"),
-    "the installer job must stay off unless a dispatch explicitly asks for it",
-  );
-  assert.ok(
-    push.includes("build_installer: ${{ github.event_name == 'workflow_dispatch' && inputs.build_installer || false }}"),
-    "only a manual dispatch may request an installer build",
-  );
+  // Phase 4 builds exactly one installer, from a frozen tree, in one place. With an unsigned release
+  // two installers are indistinguishable by inspection, so a second way to produce one is not a
+  // convenience but a way to lose track of which file is the release.
+  const surfaces: Array<{ name: string; contents: string }> = [
+    { name: "the reusable pipeline", contents: pipeline },
+    { name: "the push workflow", contents: push },
+    { name: "the gate workflow", contents: gate },
+  ];
+  for (const surface of surfaces) {
+    assert.ok(
+      !surface.contents.includes("build:win"),
+      `${surface.name} must not build an installer`,
+    );
+  }
+});
+
+test("builds the release candidate once, from a named commit, and never rebuilds it", () => {
+  const candidate = source(".github/workflows/release-candidate.yml");
+
+  // Manual only. A release that can start from a push starts from whatever the branch happened to
+  // be, and the artifact does not record which that was.
+  assert.ok(candidate.includes("on:\n  workflow_dispatch:"));
+  assert.ok(!candidate.includes("\n  push:"));
+  assert.ok(!candidate.includes("\n  pull_request:"));
+
+  // The operator names the commit being frozen and the run refuses a different one.
+  assert.ok(candidate.includes("confirm_commit:"));
+  assert.ok(candidate.includes('case "$GITHUB_SHA" in'));
+
+  // Two builds of one tree, compared on the payload rather than on the compressed installer.
+  assert.ok(candidate.includes("attempt: [a, b]"));
+  assert.ok(candidate.includes("normalized-payload-manifest.cjs --compare"));
+
+  // Only build A's installer is kept, and attestation consumes that uploaded file rather than
+  // building again. A rebuild between verification and attestation attests a different file.
+  assert.ok(candidate.includes("if: matrix.attempt == 'a'"));
+  assert.ok(candidate.includes("name: Download the verified candidate installer"));
+  assert.ok(candidate.includes("emit-release-provenance.cjs"));
+  const attestSection = candidate.slice(candidate.indexOf("  attest:"));
+  assert.ok(!attestSection.includes("build:win"), "attestation must not rebuild the installer");
 });
 
 test("keeps browser ownership until failed launches and shutdown sweeps finish", () => {
@@ -408,5 +438,10 @@ test("spawns the engine detached so a crashed app leaves a reclaimable browser",
 });
 
 function source(relativePath: string): string {
-  return readFileSync(new URL(relativePath, REPO_ROOT), "utf8");
+  // Line endings are normalized because Windows CI checks these files out with CRLF while a Linux
+  // checkout keeps LF. Without this, an assertion written with "\n" passes locally and fails on the
+  // runner, and — worse — a *negative* assertion written with "\n" passes everywhere for the wrong
+  // reason: the string it looks for can never appear, so it proves nothing. That happened here on
+  // 23 August, and the vacuous pass is the half that would have survived unnoticed.
+  return readFileSync(new URL(relativePath, REPO_ROOT), "utf8").replace(/\r\n/g, "\n");
 }

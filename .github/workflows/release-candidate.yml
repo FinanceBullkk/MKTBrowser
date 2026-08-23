@@ -1,0 +1,175 @@
+name: Release Candidate
+
+# Phase 4. Produces exactly one attested installer from a frozen tree.
+#
+# Manual only, and deliberately awkward to start: the operator has to type the commit they intend to
+# freeze, and the run refuses to proceed if the checked-out commit is a different one. A release
+# built from "whatever the branch happened to be" is the failure this guards against, and it is not
+# visible afterwards in the artifact.
+#
+# The tree is built twice on two clean runners and the payloads are compared. V1 ships unsigned, so
+# nothing in the file identifies its publisher: the reproducibility comparison and the published
+# SHA-256 are what stand in for a signature, and neither is optional.
+#
+# The installer that gets attested is the one build A produced. It is uploaded once and reused, never
+# rebuilt between verification and attestation, because a rebuild produces a different file than the
+# one that was checked.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_commit:
+        description: "Commit SHA being frozen (at least 8 characters, must match the checked-out commit)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  freeze:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse to build a commit other than the one named
+        env:
+          CONFIRM: ${{ inputs.confirm_commit }}
+        run: |
+          if [ "${#CONFIRM}" -lt 8 ]; then
+            echo "::error::Name at least 8 characters of the commit being frozen."
+            exit 1
+          fi
+          case "$GITHUB_SHA" in
+            "$CONFIRM"*) echo "Frozen commit confirmed: $GITHUB_SHA" ;;
+            *)
+              echo "::error::This run checked out $GITHUB_SHA, which does not start with $CONFIRM."
+              exit 1
+              ;;
+          esac
+
+  build:
+    needs: freeze
+    runs-on: windows-latest
+    strategy:
+      # Two independent builds of one tree. `fail-fast: false` so a failure in one still leaves the
+      # other's evidence to compare against when diagnosing.
+      fail-fast: false
+      matrix:
+        attempt: [a, b]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@4.5.0 --activate
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Audit production dependencies
+        run: yarn audit:production
+
+      - name: Build the combined Windows installer
+        env:
+          MKTTOOL_RELEASE_TOKEN: ${{ secrets.MKTTOOL_RELEASE_TOKEN }}
+          MKT_BROWSER_ENGINE_RELEASE_FILE: ${{ github.workspace }}/apps/desktop/windows-engine-release.json
+        run: yarn workspace @mktbrowser/desktop build:win
+
+      # The staged tree is what the installer delivers. Comparing it rather than the compressed
+      # installer keeps the comparison on the payload, where a difference means something.
+      - name: Emit normalized payload manifest
+        run: node scripts/normalized-payload-manifest.cjs --directory apps/desktop/release/installer/win-unpacked --output payload-manifest-${{ matrix.attempt }}.json
+
+      - name: Upload payload manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: payload-manifest-${{ matrix.attempt }}
+          path: payload-manifest-${{ matrix.attempt }}.json
+          if-no-files-found: error
+          retention-days: 30
+
+      # Only build A's installer is retained. Build B exists to be compared with, not to be shipped;
+      # keeping both would leave two candidate files that no signature can tell apart.
+      - name: Upload candidate installer
+        if: matrix.attempt == 'a'
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-installer
+          path: apps/desktop/release/installer/*.exe
+          if-no-files-found: error
+          retention-days: 30
+
+  compare:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Download both payload manifests
+        uses: actions/download-artifact@v5
+        with:
+          pattern: payload-manifest-*
+          merge-multiple: true
+          path: manifests
+
+      - name: Require two independent builds to produce the same payload
+        run: node scripts/normalized-payload-manifest.cjs --compare manifests/payload-manifest-a.json manifests/payload-manifest-b.json
+
+  attest:
+    needs: compare
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Download the verified candidate installer
+        uses: actions/download-artifact@v5
+        with:
+          name: candidate-installer
+          path: candidate
+
+      - name: Download payload manifest
+        uses: actions/download-artifact@v5
+        with:
+          name: payload-manifest-a
+          path: manifests
+
+      - name: Emit release provenance for the verified artifact
+        shell: bash
+        run: |
+          installer=$(find candidate -name '*.exe' -print -quit)
+          if [ -z "$installer" ]; then
+            echo "::error::No installer found in the downloaded candidate artifact."
+            exit 1
+          fi
+          node scripts/emit-release-provenance.cjs \
+            --installer "$installer" \
+            --payload-manifest manifests/payload-manifest-a.json \
+            --dependency-audit "yarn npm audit --environment production --severity high passed in both builds" \
+            --output release-provenance.json
+          cat release-provenance.json
+
+      - name: Upload release provenance
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-provenance
+          path: release-provenance.json
+          if-no-files-found: error
+          retention-days: 90
