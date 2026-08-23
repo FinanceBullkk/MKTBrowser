@@ -438,5 +438,10 @@ test("spawns the engine detached so a crashed app leaves a reclaimable browser",
 });
 
 function source(relativePath: string): string {
-  return readFileSync(new URL(relativePath, REPO_ROOT), "utf8");
+  // Line endings are normalized because Windows CI checks these files out with CRLF while a Linux
+  // checkout keeps LF. Without this, an assertion written with "\n" passes locally and fails on the
+  // runner, and — worse — a *negative* assertion written with "\n" passes everywhere for the wrong
+  // reason: the string it looks for can never appear, so it proves nothing. That happened here on
+  // 23 August, and the vacuous pass is the half that would have survived unnoticed.
+  return readFileSync(new URL(relativePath, REPO_ROOT), "utf8").replace(/\r\n/g, "\n");
 }
