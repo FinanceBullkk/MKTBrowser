@@ -116,6 +116,9 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: 22
+          # The action probes for a package-manager cache using the bundled Yarn 1, which refuses to
+          # run against a project pinned to yarn@4.5.0. Left on, the step fails before the job runs.
+          package-manager-cache: false
 
       - name: Download both payload manifests
         uses: actions/download-artifact@v5
@@ -138,6 +141,9 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: 22
+          # The action probes for a package-manager cache using the bundled Yarn 1, which refuses to
+          # run against a project pinned to yarn@4.5.0. Left on, the step fails before the job runs.
+          package-manager-cache: false
 
       - name: Download the verified candidate installer
         uses: actions/download-artifact@v5

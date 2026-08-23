@@ -374,6 +374,28 @@ test("builds the release candidate once, from a named commit, and never rebuilds
   assert.ok(!attestSection.includes("build:win"), "attestation must not rebuild the installer");
 });
 
+test("disables the setup-node package-manager cache in every workflow that uses it", () => {
+  // The action probes for a cache using its bundled Yarn 1, which refuses to run against a project
+  // pinned to yarn@4.5.0 through `packageManager`. On 23 August this took down the comparison and
+  // attestation jobs of the first real release-candidate run, before either had done any work, and
+  // the run read as a reproducibility failure when nothing had been compared at all.
+  for (const workflow of [
+    ".github/workflows/windows-pipeline.yml",
+    ".github/workflows/release-candidate.yml",
+    ".github/workflows/release.yml",
+    ".github/workflows/pr-release-gate.yml",
+  ]) {
+    const contents = source(workflow);
+    const setupSteps = contents.split("uses: actions/setup-node@").length - 1;
+    const disabled = contents.split("package-manager-cache: false").length - 1;
+    assert.equal(
+      disabled,
+      setupSteps,
+      `${workflow} has ${setupSteps} setup-node step(s) but disables the cache ${disabled} time(s)`,
+    );
+  }
+});
+
 test("keeps browser ownership until failed launches and shutdown sweeps finish", () => {
   const driver = source("apps/desktop/src/main/ChromiumBrowserDriver.ts");
 
