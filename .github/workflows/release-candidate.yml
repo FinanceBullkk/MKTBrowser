@@ -125,10 +125,11 @@ jobs:
         with:
           pattern: payload-manifest-*
           merge-multiple: true
-          path: manifests
+          path: ${{ runner.temp }}/manifests
 
       - name: Require two independent builds to produce the same payload
-        run: node scripts/normalized-payload-manifest.cjs --compare manifests/payload-manifest-a.json manifests/payload-manifest-b.json
+        run: node scripts/normalized-payload-manifest.cjs --compare "$RUNNER_TEMP/manifests/payload-manifest-a.json" "$RUNNER_TEMP/manifests/payload-manifest-b.json"
+        shell: bash
 
   attest:
     needs: compare
@@ -145,29 +146,31 @@ jobs:
           # run against a project pinned to yarn@4.5.0. Left on, the step fails before the job runs.
           package-manager-cache: false
 
+      # Downloaded outside the checkout on purpose. The provenance step refuses to attest a dirty
+      # working tree, and an artifact unpacked into the repository makes it dirty.
       - name: Download the verified candidate installer
         uses: actions/download-artifact@v5
         with:
           name: candidate-installer
-          path: candidate
+          path: ${{ runner.temp }}/candidate
 
       - name: Download payload manifest
         uses: actions/download-artifact@v5
         with:
           name: payload-manifest-a
-          path: manifests
+          path: ${{ runner.temp }}/manifests
 
       - name: Emit release provenance for the verified artifact
         shell: bash
         run: |
-          installer=$(find candidate -name '*.exe' -print -quit)
+          installer=$(find "$RUNNER_TEMP/candidate" -name '*.exe' -print -quit)
           if [ -z "$installer" ]; then
             echo "::error::No installer found in the downloaded candidate artifact."
             exit 1
           fi
           node scripts/emit-release-provenance.cjs \
             --installer "$installer" \
-            --payload-manifest manifests/payload-manifest-a.json \
+            --payload-manifest "$RUNNER_TEMP/manifests/payload-manifest-a.json" \
             --dependency-audit "yarn npm audit --environment production --severity high passed in both builds" \
             --output release-provenance.json
           cat release-provenance.json

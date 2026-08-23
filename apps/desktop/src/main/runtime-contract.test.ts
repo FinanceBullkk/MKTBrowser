@@ -372,6 +372,23 @@ test("builds the release candidate once, from a named commit, and never rebuilds
   assert.ok(candidate.includes("emit-release-provenance.cjs"));
   const attestSection = candidate.slice(candidate.indexOf("  attest:"));
   assert.ok(!attestSection.includes("build:win"), "attestation must not rebuild the installer");
+
+  // Provenance refuses to attest a dirty working tree, so nothing may be unpacked into the
+  // checkout. On 23 August the artifacts were downloaded into it, git reported untracked files, and
+  // the guard rejected a build that was in fact attestable. The guard was right; the download path
+  // was wrong, and a false alarm from a correct rule still teaches people to route around it.
+  // Only download destinations matter here. Upload steps name paths inside the checkout by
+  // definition, since that is where the build wrote them.
+  const downloadSections = candidate.split("uses: actions/download-artifact@").slice(1);
+  assert.ok(downloadSections.length >= 2, "the attest and compare jobs both download artifacts");
+  for (const section of downloadSections) {
+    const destination = section.match(/^\s+path: (\S.*)$/m)?.[1];
+    assert.ok(destination, "every artifact download must name where it lands");
+    assert.ok(
+      destination.startsWith("${{ runner.temp }}"),
+      `artifact downloads must land outside the checkout, found ${destination}`,
+    );
+  }
 });
 
 test("disables the setup-node package-manager cache in every workflow that uses it", () => {
