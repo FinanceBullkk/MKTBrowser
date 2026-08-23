@@ -51,6 +51,33 @@ import {
 } from "./devtools-port-discovery.ts";
 import { assertWindowsWebRtcFirewallProtection } from "./windows-webrtc-firewall.ts";
 import { licenseExitMessage } from "./cloakbrowser-pro-channel.ts";
+import {
+  SEAT_LIMIT_EXIT_CODE,
+  classifyLaunchExit,
+  isSeatRefusal,
+  settleLicenceVerdict,
+} from "./licence-verdict.ts";
+
+/**
+ * The right error for a child that died during launch.
+ *
+ * Built here rather than in `licence-verdict.ts` because `engineUnavailable` lives in the MCP
+ * package: the classification stays testable without a built workspace, and only the wrapping
+ * happens where the dependency already is.
+ *
+ * A licence exit carries `licenseExitCode` so the rotation loop can read the engine's verdict
+ * instead of the operator-facing wording, which is meant to be rewritten. `isSeatRefusal` is what
+ * narrows that to the single code worth trying another key for.
+ */
+function launchExitError(exitCode: number | null, stage: string): Error {
+  const { licenceReason, fallbackMessage } = classifyLaunchExit(exitCode, stage);
+  if (licenceReason) {
+    const refusal = engineUnavailable(licenceReason);
+    (refusal as { licenseExitCode?: number }).licenseExitCode = exitCode ?? undefined;
+    return refusal;
+  }
+  return new Error(fallbackMessage);
+}
 import { appendProfileLifecycleLine } from "./profile-lifecycle-log.ts";
 import { LicenseKeyPool, keyTail } from "./license-key-pool.ts";
 import { stableWindowsRuntime, win32PathEquals } from "./chromium-runtime-path.ts";
@@ -194,19 +221,6 @@ interface DriverEvents {
  * is responsible for parsing the page snapshot and producing selectors. MKT Browser never
  * calls any external API.
  */
-/** CloakBrowser's exit code for "this key already has a session open". */
-const SEAT_LIMIT_EXIT_CODE = 76;
-
-/**
- * Was this failure the engine refusing the key, rather than anything about the profile?
- *
- * Tagged at the throw site rather than matched on the message: the message is operator-facing and
- * will be rewritten, and a rotation loop that stops working because someone improved the wording
- * would be a quiet, expensive bug.
- */
-function isSeatRefusal(error: unknown): boolean {
-  return (error as { licenseExitCode?: number } | null)?.licenseExitCode === SEAT_LIMIT_EXIT_CODE;
-}
 
 export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver {
   private readonly running = new Map<ProfileId, RunningProcess>();
@@ -916,15 +930,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       // raw exit code it reads as a crash — that misreading cost an evening. LICENSE_EXIT_MESSAGES
       // already says what happened and what to do about it; say that instead, and classify it as
       // ENGINE_UNAVAILABLE so a caller sees an expected refusal rather than INTERNAL_ERROR.
-      const exitCode = launchProcess.childExit.exitCode;
-      const licenseReason = licenseExitMessage(exitCode);
-      if (licenseReason) {
-        const refusal = engineUnavailable(licenseReason);
-        // The rotation loop reads this to tell "try the next key" from "this will fail on every key".
-        (refusal as { licenseExitCode?: number }).licenseExitCode = exitCode ?? undefined;
-        throw refusal;
-      }
-      throw new Error(`Chromium exited during launch with code ${String(exitCode)}`);
+      throw launchExitError(launchProcess.childExit.exitCode, "launch");
     }
     const launchLogContext: ProfileLifecycleLogContext = { pid: trackedPid, port, startedAt };
 
@@ -1158,9 +1164,9 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       );
 
     if (launchProcess.childExit && trackedPid === child.pid && !isPidAlive(trackedPid)) {
-      throw new Error(
-        `Chromium exited during bootstrap with code ${String(launchProcess.childExit.exitCode)}`,
-      );
+      // Tagged, not bare: a refusal that reaches this point is still a refusal, and throwing an
+      // untagged Error here is what stopped the rotation loop from reaching the next free key.
+      throw launchExitError(launchProcess.childExit.exitCode, "bootstrap");
     }
 
     // Wire the companion's "Add to MKT Browser" channel for this profile — scoped
@@ -1186,6 +1192,20 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     // process keeps running with zero windows. We poll /json/list and force-
     // kill the child when that happens, which then fires child.on('exit') and
     // emits the running-changed event.
+    // Last gate before this launch is called a success: give the licence verdict time to arrive.
+    //
+    // Every earlier check for a refusal sampled `childExit` at a moment the child was still alive,
+    // because the engine serves CDP before the licence server has answered. Waiting for the window
+    // to close is what turns "resolved with a pid for a browser that is about to die" into a thrown
+    // refusal the rotation loop can act on. Skipped for engines with no licence channel, and it
+    // returns immediately once the child exits, so a refusal is detected as fast as it happens.
+    if (engine === "cloakbrowser") {
+      await settleLicenceVerdict(launchProcess, child, spawnedAtMs);
+      if (launchProcess.childExit && trackedPid === child.pid && !isPidAlive(trackedPid)) {
+        throw launchExitError(launchProcess.childExit.exitCode, "licence verification");
+      }
+    }
+
     // Latch so the 1s watcher signals termination + shuts down exactly once,
     // not on every tick while pages stay at zero during the ~1.5–4s wind-down.
     let signalledClose = false;

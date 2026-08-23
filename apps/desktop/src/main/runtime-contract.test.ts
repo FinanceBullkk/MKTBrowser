@@ -448,12 +448,20 @@ test("reports a licence refusal as a refusal, not as a crash", () => {
   // reaches the launch path as a process that started, passed readiness, and then vanished. Left
   // as `Chromium exited during launch with code 76` it reads as an engine crash and sends whoever
   // sees it hunting for one. The mapped text names the session limit and what to do about it.
+  // The verdict is classified in licence-verdict.ts, which has behavioural tests of its own, and
+  // wrapped here because engineUnavailable lives in the MCP package.
   const driver = source("apps/desktop/src/main/ChromiumBrowserDriver.ts");
-  assert.match(driver, /const licenseReason = licenseExitMessage\(exitCode\);/);
-  assert.match(driver, /const refusal = engineUnavailable\(licenseReason\);/);
+  assert.match(driver, /classifyLaunchExit\(exitCode, stage\)/);
+  assert.match(driver, /const refusal = engineUnavailable\(licenceReason\);/);
   // Tagged with the exit code so key rotation can tell a seat refusal from a real failure
   // without matching on operator-facing wording that is meant to be rewritten.
   assert.match(driver, /licenseExitCode\?: number \}\)\.licenseExitCode = exitCode/);
+
+  // Every during-launch exit is classified, and the licence verdict is waited for before a launch
+  // is called a success. Sampling `childExit` once, while the engine was still alive, is exactly
+  // how a refused key came back as a running profile with a pid and an endpoint.
+  assert.doesNotMatch(driver, /throw new Error\(\s*`Chromium exited during/);
+  assert.match(driver, /await settleLicenceVerdict\(launchProcess, child, spawnedAtMs\)/);
 
   // The mapping is only useful if it still covers the codes the engine actually exits with.
   const channel = source("apps/desktop/src/main/cloakbrowser-pro-channel.ts");
