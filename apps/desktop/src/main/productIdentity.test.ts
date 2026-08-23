@@ -61,6 +61,10 @@ test("keeps desktop packaging metadata aligned with the product identity", () =>
     new URL("../../../../.github/workflows/windows-pipeline.yml", import.meta.url),
     "utf8",
   );
+  const releaseCandidateWorkflow = readFileSync(
+    new URL("../../../../.github/workflows/release-candidate.yml", import.meta.url),
+    "utf8",
+  );
   const viteConfig = readFileSync(
     new URL("../../electron.vite.config.ts", import.meta.url),
     "utf8",
@@ -135,7 +139,11 @@ test("keeps desktop packaging metadata aligned with the product identity", () =>
   // `MKTTOOL_RELEASE_COOKIE` env line that nothing read, so the installer job ran with no
   // Authorization header and the pinned Relay download failed closed — a break nobody saw because
   // that job only runs on workflow_dispatch. Pin the name the workflow actually passes.
-  assert.match(releaseWorkflow, /MKTTOOL_RELEASE_TOKEN: \$\{\{ secrets\.MKTTOOL_RELEASE_TOKEN \}\}/);
+  assert.match(
+    releaseCandidateWorkflow,
+    /MKTTOOL_RELEASE_TOKEN: \$\{\{ secrets\.MKTTOOL_RELEASE_TOKEN \}\}/,
+  );
+  assert.doesNotMatch(releaseCandidateWorkflow, /MKTTOOL_RELEASE_COOKIE/);
   assert.doesNotMatch(releaseWorkflow, /MKTTOOL_RELEASE_COOKIE/);
   assert.match(installerInclude, /install-relay\.ps1/);
   assert.match(installerInclude, /MKT Browser\.lnk/);
