@@ -68,6 +68,7 @@ import { CdpSession } from "@mktbrowser/cdp-driver";
 import { appendProfileLifecycleLine } from "./profile-lifecycle-log.ts";
 import { LicenseKeyPool } from "./license-key-pool.ts";
 import { LicenseLeaseJournal } from "./license-lease-journal.ts";
+import { LicenseLeaseRecorder } from "./license-lease-recorder.ts";
 import { sweepOrphanedProfileBrowsers } from "./startup-orphan-sweep.ts";
 import {
   createIpcRuntimeRegistration,
@@ -444,9 +445,17 @@ app
 
     // One session per licence key, so the pool is what decides how many profiles can be open at
     // once. Built from settings on startup; changing keys needs a restart, same as the engine.
+    // Seeded from the journal, not from settings alone. A browser killed by a crash, a Stop, or a
+    // power loss never hands its session back, and the vendor keeps counting that seat for the
+    // rest of its lease — so a pool rebuilt as all-idle would offer a key the engine then refuses.
+    // On a one-key install that is every launch failing with nothing running to explain it.
     licenseKeyPool = new LicenseKeyPool({
       keys: cachedSettings.cloakBrowserLicenseKeys,
       cooldownMs: 17 * 60_000,
+      leaseRecords: licenseLeaseJournal.snapshot(),
+    });
+    const licenseLeaseRecorder = new LicenseLeaseRecorder(licenseLeaseJournal, (message) => {
+      console.warn(message);
     });
     const licenseCapacity = () =>
       chromiumBootstrap.getEngine() === "cloakbrowser"
@@ -458,6 +467,7 @@ app
       chromiumBootstrap,
       extensionStoreRoot,
       licenseKeyPool,
+      licenseLeaseRecorder,
       startupBarrier: startupOrphanSweep,
       // The companion's "Add to MKT Browser" button routes here (profile-scoped).
       // Confirm natively first: any script on the store page could trigger the

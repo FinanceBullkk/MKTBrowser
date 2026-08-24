@@ -51,12 +51,7 @@ import {
 } from "./devtools-port-discovery.ts";
 import { assertWindowsWebRtcFirewallProtection } from "./windows-webrtc-firewall.ts";
 import { licenseExitMessage } from "./cloakbrowser-pro-channel.ts";
-import {
-  SEAT_LIMIT_EXIT_CODE,
-  classifyLaunchExit,
-  isSeatRefusal,
-  settleLicenceVerdict,
-} from "./licence-verdict.ts";
+import { classifyLaunchExit, isSeatRefusal, settleLicenceVerdict } from "./licence-verdict.ts";
 
 /**
  * The right error for a child that died during launch.
@@ -80,6 +75,8 @@ function launchExitError(exitCode: number | null, stage: string): Error {
 }
 import { appendProfileLifecycleLine } from "./profile-lifecycle-log.ts";
 import { LicenseKeyPool, keyTail } from "./license-key-pool.ts";
+import { LicenseLeaseRecorder } from "./license-lease-recorder.ts";
+import { licenseSeatWaitMessage } from "./license-seat-wait-message.ts";
 import { stableWindowsRuntime, win32PathEquals } from "./chromium-runtime-path.ts";
 import { disableFeaturesArg, networkPrivacySwitches } from "./chromium-network-privacy-flags.ts";
 
@@ -190,6 +187,12 @@ export interface ChromiumBrowserDriverOptions {
    */
   licenseKeyPool?: LicenseKeyPool;
   /**
+   * Persists which seats this machine may still be holding, so a browser that died without
+   * flushing its shutdown is still known about after a restart. Optional: an install with no
+   * licensed engine has no leases to record.
+   */
+  licenseLeaseRecorder?: LicenseLeaseRecorder;
+  /**
    * Called when the companion extension's "Add to MKT Browser" button is clicked
    * inside a running profile. `profileId` is the profile that made the call
    * (the CDP session is profile-scoped). The host installs the extension.
@@ -233,6 +236,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
   private readonly onCompanionInstall?: (profileId: ProfileId, extensionId: string) => void;
   private readonly extensionStoreRoot: string;
   private readonly licenseKeyPool?: LicenseKeyPool;
+  private readonly licenseLeaseRecorder?: LicenseLeaseRecorder;
   private readonly startupBarrier: Promise<void>;
 
   constructor(opts: ChromiumBrowserDriverOptions) {
@@ -242,6 +246,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     this.onCompanionInstall = opts.onCompanionInstall;
     this.extensionStoreRoot = opts.extensionStoreRoot;
     this.licenseKeyPool = opts.licenseKeyPool;
+    this.licenseLeaseRecorder = opts.licenseLeaseRecorder;
     this.startupBarrier = opts.startupBarrier ?? Promise.resolve();
   }
 
@@ -322,13 +327,24 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
         // Nothing left to try. Report the refusal the engine gave us if there was one, so the
         // message names the real reason rather than an empty pool.
         if (lastRefusal) throw lastRefusal;
+        // The engine's own exit-76 wording tells the operator to close a running profile, which is
+        // wrong — and unactionable — when the seat is resting after a browser that never flushed
+        // its shutdown. Say which of the two it is.
         throw engineUnavailable(
-          licenseExitMessage(SEAT_LIMIT_EXIT_CODE) ?? "No licence key is free.",
+          licenseSeatWaitMessage({
+            snapshot: pool.snapshot(),
+            nextFreeAtMs: pool.nextFreeAtMs(),
+            nowMs: Date.now(),
+            describeProfile: (id) => this.profileManager.get(id as ProfileId)?.name ?? null,
+          }),
         );
       }
       const key = pool?.keyFor(profileId) ?? null;
+      if (key) await this.licenseLeaseRecorder?.reserved(profileId, key);
       try {
-        return await this.launchTracked(profileId);
+        const launched = await this.launchTracked(profileId);
+        await this.licenseLeaseRecorder?.active(profileId);
+        return launched;
       } catch (error) {
         await this.cleanupFailedLaunch(profileId, error);
         if (!pool || !isSeatRefusal(error)) {
@@ -337,6 +353,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
         }
         // This key is spoken for. Rest it and let the loop reach for the next.
         lastRefusal = error;
+        await this.licenseLeaseRecorder?.refused(profileId);
         if (key) {
           pool.markRefused(key);
           appendProfileLifecycleLine({
@@ -826,6 +843,10 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       browserDataDir,
     };
     this.launchingProcesses.set(profileId, launchProcess);
+    // From here the engine may open a licence session, so the journal has to say so before
+    // anything else can go wrong. A crash between spawn and this write is the one case that still
+    // loses a seat to the lease TTL.
+    await this.licenseLeaseRecorder?.started(profileId, child.pid);
     child.stderr?.on("data", (chunk: Buffer) => {
       const line = chunk.toString("utf8").trim();
       if (line) process.stderr.write(`[chromium ${child.pid}] ${line}\n`);
@@ -1297,7 +1318,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     }
 
     const outcome = await terminateBrowserProcess(profileId, pending);
-    this.releaseLicenseKey(profileId, outcome.shutdownMethod);
+    await this.releaseLicenseKey(profileId, outcome.shutdownMethod);
     if (outcome.terminated) {
       if (this.launchingProcesses.get(profileId) === pending) {
         this.launchingProcesses.delete(profileId);
@@ -1314,9 +1335,12 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
    * signalled kill as a clean release would send the very next launch at a seat the server still
    * counts as taken — so a killed browser rests its key for the lease instead.
    */
-  private releaseLicenseKey(profileId: ProfileId, method: ShutdownMethod): void {
+  private async releaseLicenseKey(profileId: ProfileId, method: ShutdownMethod): Promise<void> {
     const seatReleased = method === "Browser.close" || method === "already-exited";
     this.licenseKeyPool?.release(profileId, seatReleased);
+    // The pool forgets this the moment the app exits. The journal is what carries a resting seat
+    // into the next run, so the same verdict has to reach both.
+    await this.licenseLeaseRecorder?.released(profileId, seatReleased);
   }
 
   private shutdownRunningProfile(
@@ -1331,7 +1355,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     record.windowWatcher.stop();
     const shutdown = (async () => {
       const outcome = await terminateBrowserProcess(profileId, record);
-      this.releaseLicenseKey(profileId, outcome.shutdownMethod);
+      await this.releaseLicenseKey(profileId, outcome.shutdownMethod);
       if (!outcome.terminated) {
         throw new Error(`Chromium pid ${record.pid} survived shutdown escalation`);
       }
@@ -1367,7 +1391,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     this.closing.add(profileId);
     const shutdown = (async () => {
       const outcome = await terminateBrowserProcess(profileId, pending);
-      this.releaseLicenseKey(profileId, outcome.shutdownMethod);
+      await this.releaseLicenseKey(profileId, outcome.shutdownMethod);
       if (!outcome.terminated) {
         throw new Error(`Chromium pid ${pending.pid} survived shutdown escalation`);
       }

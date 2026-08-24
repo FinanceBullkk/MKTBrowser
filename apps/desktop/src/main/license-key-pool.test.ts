@@ -168,3 +168,88 @@ test("capacity treats an unreconciled reservation as pending instead of free", (
     },
   );
 });
+
+test("a lease left unreleased by an earlier run starts its key cooling, not idle", () => {
+  // The bug this exists to stop: the pool was rebuilt from settings alone, so a seat the vendor was
+  // still counting came back as `idle`, the next launch picked it, and the engine refused it.
+  const clock = { t: 10 * 60_000 };
+  const pool = new LicenseKeyPool({
+    keys: KEYS,
+    cooldownMs: 17 * 60_000,
+    now: () => clock.t,
+    leaseRecords: [
+      {
+        keyFingerprint: fingerprintLicenseKey(KEYS[0]!),
+        state: "pending-recovery",
+        updatedAt: new Date(clock.t - 60_000).toISOString(),
+      },
+    ],
+  });
+
+  assert.equal(pool.availableCount(), 2);
+  assert.equal(pool.snapshot().keys[0]!.state, "cooling");
+  assert.notEqual(pool.acquire("p1"), KEYS[0], "a resting key must not be handed out");
+});
+
+test("cooling is counted from when the lease last moved, not from startup", () => {
+  // A lease that went quiet 16 minutes before this process started has one minute left, not
+  // seventeen. Measuring from startup would punish every restart with a full fresh lease.
+  const clock = { t: 100 * 60_000 };
+  const pool = new LicenseKeyPool({
+    keys: KEYS,
+    cooldownMs: 17 * 60_000,
+    now: () => clock.t,
+    leaseRecords: [
+      {
+        keyFingerprint: fingerprintLicenseKey(KEYS[0]!),
+        state: "cooling",
+        updatedAt: new Date(clock.t - 16 * 60_000).toISOString(),
+      },
+    ],
+  });
+
+  assert.equal(pool.availableCount(), 2);
+  clock.t += 61_000;
+  assert.equal(pool.availableCount(), 3, "the key must return on the vendor's clock");
+});
+
+test("a confirmed release and an unstarted reservation both leave the key idle", () => {
+  // `confirmed-released` proves the seat came back. `reserved` never reached the engine, so no
+  // session was ever opened — resting either one would withhold capacity the operator has.
+  const clock = { t: 0 };
+  const pool = new LicenseKeyPool({
+    keys: KEYS,
+    cooldownMs: 17 * 60_000,
+    now: () => clock.t,
+    leaseRecords: [
+      {
+        keyFingerprint: fingerprintLicenseKey(KEYS[0]!),
+        state: "confirmed-released",
+        updatedAt: new Date(clock.t).toISOString(),
+      },
+      {
+        keyFingerprint: fingerprintLicenseKey(KEYS[1]!),
+        state: "reserved",
+        updatedAt: new Date(clock.t).toISOString(),
+      },
+    ],
+  });
+
+  assert.equal(pool.availableCount(), 3);
+});
+
+test("nextFreeAtMs names the wait only when every key is resting", () => {
+  const clock = { t: 0 };
+  const pool = poolAt(clock, [KEYS[0]!], 1000);
+
+  assert.equal(pool.nextFreeAtMs(), null, "a free key is not a wait");
+
+  pool.acquire("p1");
+  assert.equal(pool.nextFreeAtMs(), null, "a key held by an open profile has no deadline");
+
+  pool.release("p1", false);
+  assert.equal(pool.nextFreeAtMs(), 1000);
+
+  clock.t = 1000;
+  assert.equal(pool.nextFreeAtMs(), null, "the cooldown has run");
+});

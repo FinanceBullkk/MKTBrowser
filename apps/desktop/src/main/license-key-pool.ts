@@ -9,10 +9,16 @@
  * Two facts about the engine shape everything here.
  *
  * A key is not free the moment its profile closes. The seat is released during the browser's own
- * shutdown flush, so a close that reached SIGKILL leaves the seat held on the server for the 7-17
- * minutes the lease takes to expire, while this process has no way to release it — session/end
- * wants a lease_id and an instance_id that died with the browser. Such a key goes to `cooling`, not
- * `idle`, or the next launch would pick it and be refused.
+ * shutdown flush, so a close that reached SIGKILL leaves the seat held on the server until the
+ * lease expires, while this process has no way to release it — session/end wants a lease_id and an
+ * instance_id that died with the browser. Such a key goes to `cooling`, not `idle`, or the next
+ * launch would pick it and be refused.
+ *
+ * That expiry was measured on 24 August 2026 by abandoning a lease and asking for it back every
+ * 30s: reclaimed after 15.1 minutes, against the `lease_ttl_seconds: 900` the server declares — so
+ * the vendor enforces its stated TTL to within seconds, and an independent 15m19s observation in
+ * the acceptance matrix agrees. The 17-minute cooldown below is that 900s plus two minutes of
+ * margin for clock skew. Do not shorten it below 15 minutes.
  *
  * And the pool's view can be wrong. A seat can be held by something outside this app entirely — a
  * browser left by an earlier crash, another machine on the same key. So `markRefused` exists: when
@@ -53,6 +59,17 @@ export interface LicenseCapacityLeaseRecord {
   state: LicenseLeaseState;
 }
 
+/**
+ * A persisted lease, used to rebuild seat state after a restart.
+ *
+ * `updatedAt` is when the lease last moved. The seat the vendor still counts expires a lease TTL
+ * after that moment, not a TTL after this process happened to start, so cooling has to be measured
+ * from the record rather than from now.
+ */
+export interface LicenseSeatLeaseRecord extends LicenseCapacityLeaseRecord {
+  updatedAt: string;
+}
+
 interface Slot {
   key: string;
   profileId: string | null;
@@ -64,11 +81,31 @@ export interface LicenseKeyPoolOptions {
   /** How long a key rests after a close that did not release its seat. */
   cooldownMs?: number;
   now?: () => number;
+  /**
+   * Leases persisted by an earlier run.
+   *
+   * Without these the pool starts every key `idle`, which is only true if the last run closed every
+   * browser cleanly. After a crash, a kill, or a power loss the vendor still counts those seats, so
+   * a fresh pool hands out a key that the engine then refuses — and on a one-key install that is
+   * the whole product unavailable for a lease, with no explanation the operator can act on.
+   */
+  leaseRecords?: readonly LicenseSeatLeaseRecord[];
 }
 
 /** Enough to identify a key in a log without being able to reuse it. */
 export function keyTail(key: string): string {
   return key.length <= 6 ? "*".repeat(key.length) : key.slice(-6);
+}
+
+/**
+ * Might the vendor still be counting a seat for a lease left in this state?
+ *
+ * `reserved` is the one non-final state that never reached the engine: a key was picked but no
+ * process was spawned, so no session was ever opened. Everything from `starting` onwards may have
+ * opened one, and only `confirmed-released` proves it was given back.
+ */
+function holdsSeat(state: LicenseLeaseState): boolean {
+  return state !== "confirmed-released" && state !== "reserved";
 }
 
 export class LicenseKeyPool {
@@ -83,6 +120,32 @@ export class LicenseKeyPool {
     this.slots = unique.map((key) => ({ key, profileId: null, coolingUntilMs: null }));
     this.cooldownMs = opts.cooldownMs ?? 17 * 60_000;
     this.now = opts.now ?? Date.now;
+    if (opts.leaseRecords?.length) this.seedFromLeases(opts.leaseRecords);
+  }
+
+  /**
+   * Start keys whose last recorded lease never reached a confirmed release in `cooling`.
+   *
+   * A lease still resting when it was written is one this process cannot release: `session/end`
+   * wants a lease_id and an instance_id that died with the browser. All this can do is decline to
+   * offer the key until the vendor's own TTL has run, counted from when the lease last moved.
+   *
+   * An unparseable or future timestamp is treated as "just now", which errs towards resting a key
+   * that may in fact be free. That costs a wait; the other direction costs a refused launch the
+   * operator cannot explain.
+   */
+  private seedFromLeases(records: readonly LicenseSeatLeaseRecord[]): void {
+    const t = this.now();
+    for (const record of records) {
+      if (!holdsSeat(record.state)) continue;
+      const slot = this.slots.find((s) => fingerprintLicenseKey(s.key) === record.keyFingerprint);
+      if (!slot) continue;
+      const movedAtMs = Date.parse(record.updatedAt);
+      const restedFromMs = Number.isNaN(movedAtMs) ? t : Math.min(movedAtMs, t);
+      const until = restedFromMs + this.cooldownMs;
+      if (until <= t) continue;
+      slot.coolingUntilMs = Math.max(slot.coolingUntilMs ?? 0, until);
+    }
   }
 
   private refresh(): void {
@@ -144,6 +207,23 @@ export class LicenseKeyPool {
   availableCount(): number {
     this.refresh();
     return this.slots.filter((s) => this.stateOf(s) === "idle").length;
+  }
+
+  /**
+   * When the next key becomes usable, for telling an operator how long the wait is.
+   *
+   * Null means the wait has no deadline this pool can name: either a key is free already, or every
+   * key is held by a profile that is still open and will free it whenever it is closed. Only a
+   * cooling key has a time attached, because only a cooling key is waiting on the vendor's clock
+   * rather than on the operator.
+   */
+  nextFreeAtMs(): number | null {
+    this.refresh();
+    if (this.slots.some((s) => this.stateOf(s) === "idle")) return null;
+    const cooling = this.slots
+      .filter((s) => this.stateOf(s) === "cooling")
+      .map((s) => s.coolingUntilMs as number);
+    return cooling.length > 0 ? Math.min(...cooling) : null;
   }
 
   snapshot(): LicenseKeyPoolSnapshot {
