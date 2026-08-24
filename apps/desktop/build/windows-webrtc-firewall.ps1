@@ -36,33 +36,84 @@ param(
 # embedded in an NSIS define capped at 8192 characters, and forty lines of comment once pushed it
 # over that limit and broke every install with an unintelligible code. The installer now runs this
 # file directly with -File, so that cap is gone and the reasoning belongs next to the rule.
+
+# Why every read here goes through the NetSecurity cmdlets and not HNetCfg.FwPolicy2.
+#
+# Microsoft Defender quarantined the 23 August installer candidate mid-install as
+# `Behavior:Win32/PShellCobStager.A` -- a *behavioural* detection, not a signature match, whose name
+# is literally "PowerShell COM stager". The installer's shape matched it: an unsigned executable
+# dropped .ps1 files into a temp directory, ran them with -ExecutionPolicy Bypass, elevated one of
+# them through runas, and that script built `New-Object -ComObject HNetCfg.FwPolicy2` to touch the
+# firewall. Defender remediated, the install stopped at 129 files with no Relay and zero rules, and
+# the clean combined-install gate was invalidated.
+#
+# The writes in this file already used the NetSecurity cmdlets; only the reads used COM, for no
+# reason beyond convenience. So the COM object buys nothing and costs the product its ability to
+# install. Removing it does not by itself prove Defender is satisfied -- the dropped-script and
+# elevation shape remain, and signing is still the real fix -- but it removes the one trigger the
+# signature is named after.
+#
+# Do not reintroduce `New-Object -ComObject` here. It reads as tidier and it is measurably not.
 $ErrorActionPreference = "Stop"
 $group = "MKT Browser WebRTC Protection"
 $prefix = "MKT Browser WebRTC UDP Block"
 
+# Every rule lookup below is written inline as `@(Get-NetFirewallRule ... -ErrorAction
+# SilentlyContinue)`, never behind a helper that returns the array.
+#
+# Two reasons, both load-bearing. `Get-NetFirewallRule` throws when nothing matches and this script
+# runs under -ErrorAction Stop, so a missing rule -- a normal answer at almost every call site --
+# has to be asked for quietly. And a function that does `return @(...)` has its array unrolled by
+# the pipeline on the way out, so a single match arrives at the caller as a bare object whose
+# `.Count` is $null. `$null -ne 1` is true, which reads as "wrong number of rules"; worse,
+# `$null -ne 0` is false, which would have let VerifyAbsent report a still-present rule as removed.
+# A fail-closed check must not depend on that subtlety, so the @() stays at the assignment.
 function Assert-Rule([string]$Name, [string]$Program) {
-  $policy = New-Object -ComObject HNetCfg.FwPolicy2
-  $rules = @($policy.Rules | Where-Object { $_.Name -eq $Name })
+  $rules = @(Get-NetFirewallRule -DisplayName $Name -ErrorAction SilentlyContinue)
   if ($rules.Count -ne 1) { throw "rule-count" }
   $rule = $rules[0]
-  if ([string]::IsNullOrWhiteSpace($rule.ApplicationName) -or
-      -not [IO.Path]::GetFullPath($rule.ApplicationName).Equals(
+
+  $application = Get-NetFirewallApplicationFilter -AssociatedNetFirewallRule $rule
+  if ([string]::IsNullOrWhiteSpace($application.Program) -or
+      $application.Program -eq "Any" -or
+      -not [IO.Path]::GetFullPath($application.Program).Equals(
         $Program,
         [StringComparison]::OrdinalIgnoreCase
       )) { throw "program-invalid" }
-  if ($rule.Protocol -ne 17) { throw "protocol-invalid" }
-  # Wildcard ports is the old block-everything rule; it must read as invalid so
-  # an upgrade replaces it instead of judging it correct.
-  if ($rule.RemotePorts -eq "*") { throw "ports-invalid" }
-  if (-not $rule.Enabled -or $rule.Direction -ne 2 -or $rule.Action -ne 0 -or
-      ($rule.Profiles -band 7) -ne 7) { throw "rule-invalid" }
-  Assert-FirewallProfiles $policy
+
+  $port = Get-NetFirewallPortFilter -AssociatedNetFirewallRule $rule
+  if ("$($port.Protocol)" -ne "UDP") { throw "protocol-invalid" }
+  # A wildcard remote port is the old block-everything rule; it must read as invalid so an upgrade
+  # replaces it instead of judging it correct. COM reported that as "*", the cmdlets as "Any".
+  if ("$($port.RemotePort)" -eq "Any" -or "$($port.RemotePort)" -eq "*") { throw "ports-invalid" }
+
+  # Every one of these is compared as a string on purpose: the cmdlets return enum values whose
+  # numeric backing differs from the COM constants this replaced, and "$(...)" pins the comparison
+  # to the documented names rather than to an ordinal that could shift.
+  if ("$($rule.Enabled)" -ne "True" -or
+      "$($rule.Direction)" -ne "Outbound" -or
+      "$($rule.Action)" -ne "Block") { throw "rule-invalid" }
+
+  # The COM check was `($rule.Profiles -band 7) -ne 7` -- all of Domain, Private and Public. The
+  # cmdlets report either "Any" or a comma-separated subset, so all three must be named unless the
+  # rule applies to every profile.
+  $profileValue = "$($rule.Profile)"
+  if ($profileValue -ne "Any") {
+    foreach ($required in @("Domain", "Private", "Public")) {
+      if ($profileValue -notmatch "(^|,\s*)$required(\s*,|$)") { throw "rule-invalid" }
+    }
+  }
+
+  Assert-FirewallProfiles
 }
 
-function Assert-FirewallProfiles($Policy = $null) {
-  if ($null -eq $Policy) { $Policy = New-Object -ComObject HNetCfg.FwPolicy2 }
-  foreach ($profile in @(1, 2, 4)) {
-    if (-not $Policy.FirewallEnabled($profile)) { throw "firewall-profile-disabled" }
+function Assert-FirewallProfiles {
+  # Domain, Private and Public -- the COM bitmask 1, 2, 4 this replaced.
+  foreach ($name in @("Domain", "Private", "Public")) {
+    $profile = Get-NetFirewallProfile -Name $name -ErrorAction SilentlyContinue
+    if ($null -eq $profile -or "$($profile.Enabled)" -ne "True") {
+      throw "firewall-profile-disabled"
+    }
   }
 }
 
@@ -72,13 +123,22 @@ function Owned-Rules {
     $inventory = Get-Content -LiteralPath $OwnedRuleInventoryPath -Raw | ConvertFrom-Json
     return @($inventory.Rules)
   }
-  $policy = New-Object -ComObject HNetCfg.FwPolicy2
-  return @($policy.Rules | Where-Object { $_.Grouping -eq $group })
+  # Shaped to carry `ApplicationName` so the inventory branch above and this one stay
+  # interchangeable for `Assert-FirewallOwnership`.
+  return @(Get-NetFirewallRule -Group $group -ErrorAction SilentlyContinue | ForEach-Object {
+    [pscustomobject]@{
+      ApplicationName = (Get-NetFirewallApplicationFilter -AssociatedNetFirewallRule $_).Program
+    }
+  })
 }
 
 function Assert-FirewallOwnership([string]$Cft, [string]$Cloak) {
   foreach ($rule in @(Owned-Rules)) {
-    if ([string]::IsNullOrWhiteSpace($rule.ApplicationName)) { throw "different-user-owner" }
+    # "Any" is the cmdlets' word for a rule bound to no program at all. It must fail closed exactly
+    # like a blank did under COM, and never reach GetFullPath, which would resolve it against the
+    # working directory and compare a nonsense path.
+    if ([string]::IsNullOrWhiteSpace($rule.ApplicationName) -or
+        $rule.ApplicationName -eq "Any") { throw "different-user-owner" }
     $program = [IO.Path]::GetFullPath($rule.ApplicationName)
     if (-not $program.Equals($Cft, [StringComparison]::OrdinalIgnoreCase) -and
         -not $program.Equals($Cloak, [StringComparison]::OrdinalIgnoreCase)) {
@@ -94,9 +154,8 @@ try {
   }
 
   if ($Mode -eq "VerifyAbsent") {
-    $policy = New-Object -ComObject HNetCfg.FwPolicy2
-    $ownedRules = @($policy.Rules | Where-Object { $_.Grouping -eq $group })
-    if ($ownedRules.Count -ne 0) { throw "rule-still-present" }
+    $owned = @(Get-NetFirewallRule -Group $group -ErrorAction SilentlyContinue)
+    if ($owned.Count -ne 0) { throw "rule-still-present" }
     exit 0
   }
 

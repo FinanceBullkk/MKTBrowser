@@ -59,9 +59,21 @@ test("runs installer PowerShell from explicit script files instead of a staged c
   assert.match(firewall, /Action Block/);
   assert.match(firewall, /Protocol UDP/);
   assert.match(firewall, /Profile Any/);
-  assert.match(firewall, /\(\$rule\.Profiles -band 7\) -ne 7/);
+  // All three Windows firewall profiles must be named, or the rule must apply to every profile.
+  // Replaces the COM bitmask check `($rule.Profiles -band 7) -ne 7`.
+  assert.match(firewall, /foreach \(\$required in @\("Domain", "Private", "Public"\)\)/);
   assert.match(firewall, /firewall-profile-disabled/);
-  assert.match(firewall, /HNetCfg\.FwPolicy2/);
+  // Defender quarantined the 23 Aug candidate as Behavior:Win32/PShellCobStager.A -- a behavioural
+  // detection named for PowerShell COM staging. The elevated firewall script must never build a
+  // COM object again; the NetSecurity cmdlets read the same state.
+  // Asserted against code only: the file carries a comment telling the next reader not to bring
+  // COM back, and a guard that trips on its own warning is a guard nobody keeps.
+  const firewallCode = firewall.replace(/^\s*#.*$/gm, "");
+  assert.doesNotMatch(firewallCode, /New-Object\s+-ComObject/);
+  assert.doesNotMatch(firewallCode, /HNetCfg\.FwPolicy2/);
+  assert.match(firewall, /Get-NetFirewallApplicationFilter/);
+  assert.match(firewall, /Get-NetFirewallPortFilter/);
+  assert.match(firewall, /Get-NetFirewallProfile/);
   assert.match(firewall, /Assert-FirewallOwnership/);
   assert.match(firewall, /different-user-owner/);
   assert.match(installer, /verification failed \(code \$0\)/);
