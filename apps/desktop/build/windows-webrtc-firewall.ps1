@@ -7,6 +7,35 @@ param(
   [string]$OwnedRuleInventoryPath
 )
 
+# Why the rule blocks all outbound UDP except 53 and 443.
+#
+# WebRTC's STUN/TURN and its media streams sit on 3478 and on ephemeral high ports, and stay
+# blocked. Two ports are left open, each for its own measured reason. Do not "tidy" either one
+# away: closing 53 does not harden anything, it stops the browser from starting at all.
+#
+# 53, because blocking it broke the browser. Blocking every UDP port also blocked DNS, and
+# Chromium resolves names itself rather than calling the OS resolver, so it could not look up its
+# own licence host and exited reporting the licence server as unreachable -- on a machine whose
+# network was fine, with a key the server confirmed valid. The message sent the operator to check
+# their key and their connection, neither of which was wrong.
+#
+# Measured in order on 19 August 2026: all UDP blocked exits 78; the same rule with
+# --disable-features=AsyncDns exits 76, which is the licence server answering through the OS
+# resolver; the rule rebuilt with 53 open exits 76 with no flag at all. An earlier attempt that
+# opened only 443 still exited 78, which is what ruled QUIC out as the cause.
+#
+# 443, because never using it is itself a tell. A real Chrome negotiates HTTP/3 where it is
+# offered, and one that never can is deviating from what it claims to be -- visible to exactly the
+# sites this tool exists to blend into.
+#
+# TURN relayed over UDP 443 slips through this gap, so the firewall is not the only layer:
+# profiles launch with --fingerprint-webrtc-ip, which replaces the address WebRTC would report at
+# the source. A browser that refuses to start protects nothing at all.
+#
+# This prose used to live in scripts/generate-windows-firewall-commands.cjs because the script was
+# embedded in an NSIS define capped at 8192 characters, and forty lines of comment once pushed it
+# over that limit and broke every install with an unintelligible code. The installer now runs this
+# file directly with -File, so that cap is gone and the reasoning belongs next to the rule.
 $ErrorActionPreference = "Stop"
 $group = "MKT Browser WebRTC Protection"
 $prefix = "MKT Browser WebRTC UDP Block"
@@ -104,9 +133,7 @@ try {
       continue
     } catch {}
     Get-NetFirewallRule -DisplayName $entry.Candidate -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-    # All outbound UDP except 53 and 443. Why those two, and what it costs:
-    # see generate-windows-firewall-commands.cjs. This file is embedded in the
-    # installer command line and must stay small.
+    # Block all outbound UDP except DNS and HTTP/3.
     New-NetFirewallRule -DisplayName $entry.Candidate -Group $group -Enabled True `
       -Direction Outbound -Action Block -Program $entry.Program -Protocol UDP `
       -RemotePort @("1-52", "54-442", "444-65535") -Profile Any | Out-Null

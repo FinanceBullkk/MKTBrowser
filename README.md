@@ -60,6 +60,14 @@ profiles on the operator device.
   `license-capacity-v1` is deliberately not advertised because the live vendor session protocol,
   sidecar, and driver lifecycle are not connected. Real proxy/DNS/WebRTC evidence, human input,
   second-PC recovery, and canary gates remain open, so this is not rollout approval.
+- Lifecycle and installer evidence was reconciled on 24 August 2026. A current local directory
+  artifact passed another disposable no-proxy normal-close run: lifecycle logs reached
+  `Browser.close`, child exit 0, and `SHUTDOWN-COMPLETE`, and the used seat returned without adding
+  pending-recovery or cooling state. Hard kill, Electron crash, Relay restart, and reboot remain
+  open. The older candidate's receive-side hash passes, but its clean combined install/repair/
+  uninstall claim was invalidated because the harness stopped after Browser files appeared and
+  before mandatory Relay/firewall completion. Defender then blocked the repair environment; it was
+  not disabled or allow-listed.
 - Release-readiness Phase 1 is verified locally on Windows as of 22 August 2026. The vulnerable
   direct runtime dependency `extract-zip@2.0.1` is replaced by pinned `yauzl@3.4.0` behind an owned
   fail-closed ZIP boundary for engine and CRX/ZIP extraction. Traversal, absolute and Windows device
@@ -75,10 +83,10 @@ profiles on the operator device.
   Windows runner runs remain open, so Phase 2 is not complete.
 - This build may be used for an owner-led technical demo with disposable profiles. It is not
   approved for real accounts, pilot distribution, or team rollout.
-- The current desktop package version is `0.3.12`. The Windows directory package was regenerated on
-  22 August 2026 with SHA-256
-  `b62642a57c2651c071a59fe210fa2fe9633df584d16fa49e3abd855e747bc1a7`; packaged `app.asar` SHA-256
-  is `8a2310fbd9341b0b45ae829a45b9fdbb40a31da5aa821513fb01e9209a919da7`. Typecheck, zero-warning
+- The current desktop package version is `0.3.12`. The local Windows directory package measured on
+  24 August 2026 has SHA-256
+  `9c269536b6203f7fda54214813074c8ccb964a637b658225ec0afd928f8bae7b`; packaged `app.asar` SHA-256
+  is `37ba4a0aa551404f77e42184c37c7d6531c01b11279f0c4a564b313c19b20f8c`. Typecheck, zero-warning
   lint, the complete installer suite, build, and packaged runtime/profile-lifecycle verification
   passed. The repository's `yarn lint` enforces the workspace quality contract, strict TypeScript
   unused/fallthrough checks, and JavaScript syntax checks. The packaged verifier covers
@@ -87,9 +95,10 @@ profiles on the operator device.
   launcher-PID handoff, OS-assigned owned DevTools discovery, per-stage timing, bounded verifier HTTP
   requests, sanitized failure snapshots, process-confirmed close, and clean process exit. It remains
   unsigned. The
-  combined installer under `apps/desktop/release/installer/` was last built on 21 August: it embeds
-  the verified Relay v15 archive but predates the 22 August P0 hardening, so it is not the current
-  rollout artifact and must not be distributed.
+  attested installer was built on 23 August from older source `eac77f8f` / tree `cce7b897`. It
+  embeds the verified Relay v15 archive but predates four local Browser fixes, and its supported
+  combined install/repair/uninstall gate remains open, so it is not the current rollout artifact
+  and must not be distributed.
 
 ## Owned product and local contract
 

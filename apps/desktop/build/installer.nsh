@@ -1,7 +1,16 @@
 !define MKT_BROWSER_INSTALLER_REPAIR_KEY "Software\MKTTool\MKTBrowser\InstallerRepair"
 !define /ifndef UNINSTALL_REGISTRY_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${UNINSTALL_APP_KEY}"
 !include "LogicLib.nsh"
-!include "${PROJECT_DIR}\.installer-generated\windows-webrtc-firewall-commands.nsh"
+
+!macro stageFirewallScript
+  InitPluginsDir
+  File /oname=$PLUGINSDIR\windows-webrtc-firewall.ps1 "${PROJECT_DIR}\build\windows-webrtc-firewall.ps1"
+!macroend
+
+!macro stageRelayInstallScript
+  InitPluginsDir
+  File /oname=$PLUGINSDIR\windows-install-relay-payload.ps1 "${PROJECT_DIR}\build\windows-install-relay-payload.ps1"
+!macroend
 
 !ifndef BUILD_UNINSTALLER
 !macro preserveRelayOwnershipForUpgrade
@@ -27,7 +36,8 @@
 !macroend
 
 Function MktBrowserInspectInstallConflicts
-  nsExec::ExecToStack 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${MKT_BROWSER_FIREWALL_CHECK_OWNER_COMMAND}'
+  !insertmacro stageFirewallScript
+  nsExec::ExecToStack 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-webrtc-firewall.ps1" -Mode CheckOwner -CftPath "$LOCALAPPDATA\MKTTool\MKTBrowser\chromium\cft\runtime\chrome.exe" -CloakBrowserPath "$LOCALAPPDATA\MKTTool\MKTBrowser\chromium\cloakbrowser\runtime\chrome.exe"'
   Pop $0
   Pop $1
   ${If} $0 == 17
@@ -99,7 +109,8 @@ FunctionEnd
 
 !macro customInstall
   DetailPrint "Installing mandatory WebRTC containment rules"
-  nsExec::ExecToStack 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${MKT_BROWSER_FIREWALL_CHECK_PROFILES_COMMAND}'
+  !insertmacro stageFirewallScript
+  nsExec::ExecToStack 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-webrtc-firewall.ps1" -Mode CheckProfiles'
   Pop $0
   Pop $1
   ${If} $0 == 15
@@ -111,7 +122,7 @@ FunctionEnd
   ${EndIf}
 
   ClearErrors
-  ExecShellWait "runas" "powershell.exe" "-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${MKT_BROWSER_FIREWALL_INSTALL_COMMAND}" SW_HIDE $0
+  ExecShellWait "runas" "powershell.exe" '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-webrtc-firewall.ps1" -Mode Install -CftPath "$LOCALAPPDATA\MKTTool\MKTBrowser\chromium\cft\runtime\chrome.exe" -CloakBrowserPath "$LOCALAPPDATA\MKTTool\MKTBrowser\chromium\cloakbrowser\runtime\chrome.exe"' SW_HIDE $0
   ${If} ${Errors}
     MessageBox MB_ICONSTOP "Administrator approval is required to install WebRTC protection. MKT Browser was not installed."
     Abort
@@ -122,7 +133,7 @@ FunctionEnd
     MessageBox MB_ICONSTOP "WebRTC protection installation failed (code $0). MKT Browser was not installed."
     Abort
   ${EndIf}
-  nsExec::ExecToStack 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${MKT_BROWSER_FIREWALL_VERIFY_COMMAND}'
+  nsExec::ExecToStack 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-webrtc-firewall.ps1" -Mode Verify -CftPath "$LOCALAPPDATA\MKTTool\MKTBrowser\chromium\cft\runtime\chrome.exe" -CloakBrowserPath "$LOCALAPPDATA\MKTTool\MKTBrowser\chromium\cloakbrowser\runtime\chrome.exe"'
   Pop $0
   Pop $1
   ${If} $0 != 0
@@ -148,8 +159,9 @@ FunctionEnd
   ${EndIf}
 
   DetailPrint "Installing verified MKTTool Relay payload"
+  !insertmacro stageRelayInstallScript
   CreateDirectory "$PLUGINSDIR\mkttool-relay"
-  nsExec::ExecToStack 'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -LiteralPath $\"$INSTDIR\resources\relay\MKTTool-Relay.zip$\" -DestinationPath $\"$PLUGINSDIR\mkttool-relay$\" -Force; $$env:RELAY_SKIP_BROWSER=$\"1$\"; & $\"$PLUGINSDIR\mkttool-relay\install-relay.ps1$\""'
+  nsExec::ExecToStack 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-install-relay-payload.ps1" -ArchivePath "$INSTDIR\resources\relay\MKTTool-Relay.zip" -StagingDirectory "$PLUGINSDIR\mkttool-relay"'
   Pop $0
   Pop $1
   ${If} $0 != 0
@@ -167,8 +179,9 @@ FunctionEnd
   # Remove containment first. If later cleanup fails, Browser launch remains fail-closed because
   # its pre-launch check refuses to run without the exact firewall rules.
   DetailPrint "Removing MKT Browser WebRTC containment rules"
+  !insertmacro stageFirewallScript
   ClearErrors
-  ExecShellWait "runas" "powershell.exe" "-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${MKT_BROWSER_FIREWALL_UNINSTALL_COMMAND}" SW_HIDE $0
+  ExecShellWait "runas" "powershell.exe" '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-webrtc-firewall.ps1" -Mode Uninstall -CftPath "$LOCALAPPDATA\MKTTool\MKTBrowser\chromium\cft\runtime\chrome.exe" -CloakBrowserPath "$LOCALAPPDATA\MKTTool\MKTBrowser\chromium\cloakbrowser\runtime\chrome.exe"' SW_HIDE $0
   ${If} ${Errors}
     MessageBox MB_ICONSTOP "Administrator approval is required to remove MKT Browser WebRTC protection. Uninstall was stopped."
     Abort
@@ -179,7 +192,7 @@ FunctionEnd
     MessageBox MB_ICONSTOP "MKT Browser WebRTC protection removal failed (code $0). Uninstall was stopped."
     Abort
   ${EndIf}
-  nsExec::ExecToStack 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${MKT_BROWSER_FIREWALL_VERIFY_ABSENT_COMMAND}'
+  nsExec::ExecToStack 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-webrtc-firewall.ps1" -Mode VerifyAbsent'
   Pop $0
   Pop $1
   ${If} $0 != 0

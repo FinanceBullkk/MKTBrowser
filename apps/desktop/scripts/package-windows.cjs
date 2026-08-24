@@ -38,7 +38,6 @@ const {
   assertWorkspaceQualityContract,
 } = require("../../../scripts/workspace-quality-contract.cjs");
 const { fetchPinnedRelay } = require("./fetch-pinned-relay.cjs");
-const { generateWindowsFirewallCommands } = require("./generate-windows-firewall-commands.cjs");
 const {
   emitWindowsCompatibilityEvidence,
 } = require("./emit-windows-compatibility-evidence.cjs");
@@ -90,11 +89,6 @@ async function packageWindows({ builderArgs, label, includeRelay = false }) {
   assertSupportedNodeVersion();
   assertWorkspaceQualityContract(repoRoot);
   runPrepackageQualityGates(label);
-
-  if (includeRelay) {
-    generateWindowsFirewallCommands();
-    process.stdout.write(`[${label}] generated self-contained WebRTC firewall commands.\n`);
-  }
 
   if (includeRelay) {
     const { manifest, archivePath } = await fetchPinnedRelay();
