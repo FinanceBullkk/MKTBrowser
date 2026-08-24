@@ -35,6 +35,11 @@ test("runs installer PowerShell from explicit script files instead of a staged c
     /File \/oname=\$PLUGINSDIR\\windows-install-relay-payload\.ps1[\s\S]*build\\windows-install-relay-payload\.ps1/,
   );
   assert.doesNotMatch(installer, /-EncodedCommand/);
+  // -ExecutionPolicy Bypass is the flag malware reaches for, and Defender's behavioural engine
+  // weighs it. RemoteSigned permits a locally written unsigned script just the same -- NSIS `File`
+  // extraction carries no Mark-of-the-Web -- and was measured to run this script to exit 0.
+  assert.doesNotMatch(installer, /-ExecutionPolicy Bypass/);
+  assert.match(installer, /-ExecutionPolicy RemoteSigned/);
   assert.doesNotMatch(installer, /\s-Command\s/);
   assert.doesNotMatch(installer, /ScriptBlock.*Create|GzipStream/);
   for (const mode of [
