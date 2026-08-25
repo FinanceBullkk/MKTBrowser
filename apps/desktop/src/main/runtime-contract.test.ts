@@ -499,7 +499,7 @@ test("routes every GitHub Actions job through approved self-hosted runner pools"
 
     for (const match of workflow.matchAll(/^\s*runs-on:\s*(.+)$/gm)) {
       runsOnCount += 1;
-      assert.match(match[1], /\bself-hosted\b/, `${workflowPath} contains a hosted runner job`);
+      assert.match(match[1]!, /\bself-hosted\b/, `${workflowPath} contains a hosted runner job`);
     }
   }
 
