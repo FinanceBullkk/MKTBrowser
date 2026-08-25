@@ -484,6 +484,33 @@ test("spawns the engine detached so a crashed app leaves a reclaimable browser",
   assert.match(index, /sweepOrphanedProfileBrowsers\(/);
 });
 
+test("routes every GitHub Actions job through approved self-hosted runner pools", () => {
+  const workflowPaths = [
+    ".github/workflows/pr-release-gate.yml",
+    ".github/workflows/release-candidate.yml",
+    ".github/workflows/release.yml",
+    ".github/workflows/windows-pipeline.yml",
+  ];
+  let runsOnCount = 0;
+
+  for (const workflowPath of workflowPaths) {
+    const workflow = source(workflowPath);
+    assert.doesNotMatch(workflow, /\b(?:ubuntu|windows|macos)-latest\b/i);
+
+    for (const match of workflow.matchAll(/^\s*runs-on:\s*(.+)$/gm)) {
+      runsOnCount += 1;
+      assert.match(match[1], /\bself-hosted\b/, `${workflowPath} contains a hosted runner job`);
+    }
+  }
+
+  assert.equal(runsOnCount, 9);
+  const windowsPipeline = source(".github/workflows/windows-pipeline.yml");
+  assert.equal(
+    windowsPipeline.match(/runs-on: \[self-hosted, Windows, X64\]/g)?.length,
+    3,
+  );
+});
+
 function source(relativePath: string): string {
   // Line endings are normalized because Windows CI checks these files out with CRLF while a Linux
   // checkout keeps LF. Without this, an assertion written with "\n" passes locally and fails on the

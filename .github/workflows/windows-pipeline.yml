@@ -28,7 +28,7 @@ permissions:
 
 jobs:
   quality:
-    runs-on: windows-latest
+    runs-on: [self-hosted, Windows, X64]
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -72,7 +72,7 @@ jobs:
 
   package:
     needs: quality
-    runs-on: windows-latest
+    runs-on: [self-hosted, Windows, X64]
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -107,8 +107,8 @@ jobs:
             archive = "mktbrowser-win-unpacked.zip"
             sha256 = $sha256
             node = (node --version)
-            runnerImage = $env:ImageOS
-            runnerImageVersion = $env:ImageVersion
+            runnerImage = if ($env:ImageOS) { $env:ImageOS } else { "self-hosted-$env:RUNNER_OS" }
+            runnerImageVersion = if ($env:ImageVersion) { $env:ImageVersion } else { $env:RUNNER_ARCH }
           }
           $manifest | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $artifactRoot "artifact-manifest.json") -Encoding utf8NoBOM
 
@@ -122,7 +122,7 @@ jobs:
 
   packaged-contract:
     needs: package
-    runs-on: windows-latest
+    runs-on: [self-hosted, Windows, X64]
     steps:
       - name: Checkout
         uses: actions/checkout@v5

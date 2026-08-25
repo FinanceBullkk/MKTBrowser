@@ -7,9 +7,10 @@ name: Release Candidate
 # built from "whatever the branch happened to be" is the failure this guards against, and it is not
 # visible afterwards in the artifact.
 #
-# The tree is built twice on two clean runners and the payloads are compared. V1 ships unsigned, so
-# nothing in the file identifies its publisher: the reproducibility comparison and the published
-# SHA-256 are what stand in for a signature, and neither is optional.
+# The tree is built twice in separate self-hosted runner jobs and the payloads are compared. V1
+# ships unsigned, so nothing in the file identifies its publisher: the reproducibility comparison
+# and the published SHA-256 are what stand in for a signature, and neither is optional. Runner image
+# hygiene is an external prerequisite; the workflow provides clean checkouts, not clean machines.
 #
 # The installer that gets attested is the one build A produced. It is uploaded once and reused, never
 # rebuilt between verification and attestation, because a rebuild produces a different file than the
@@ -27,7 +28,7 @@ permissions:
 
 jobs:
   freeze:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Refuse to build a commit other than the one named
         env:
@@ -47,7 +48,7 @@ jobs:
 
   build:
     needs: freeze
-    runs-on: windows-latest
+    runs-on: [self-hosted, Windows, X64]
     strategy:
       # Two independent builds of one tree. `fail-fast: false` so a failure in one still leaves the
       # other's evidence to compare against when diagnosing.
@@ -107,7 +108,7 @@ jobs:
 
   compare:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -133,7 +134,7 @@ jobs:
 
   attest:
     needs: compare
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -184,16 +185,16 @@ jobs:
           retention-days: 90
 
   # Phase 4 asks whether the candidate installs and uninstalls cleanly on a machine that has never
-  # had the product. A fresh runner is exactly that machine, and it is one we can have as often as
-  # we like, so the mechanical half of that question is answered here rather than by remembering to
-  # try it on a laptop.
+  # had the product. This job therefore requires a disposable self-hosted Windows VM restored to a
+  # clean snapshot before the run. GitHub Actions cleans the checkout, but it cannot make a reused
+  # host equivalent to a fresh machine.
   #
   # What this does not answer, stated so the green tick is not read as more than it is: no reboot, no
   # power loss, no human at the keyboard, no real proxy, and no licence seat. Those are the Phase 5
   # gates and they need hardware and an operator.
   installed-contract:
     needs: attest
-    runs-on: windows-latest
+    runs-on: [self-hosted, Windows, X64]
     steps:
       - name: Checkout
         uses: actions/checkout@v5
