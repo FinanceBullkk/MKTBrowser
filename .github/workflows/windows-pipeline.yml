@@ -44,6 +44,13 @@ jobs:
           corepack enable
           corepack prepare yarn@4.5.0 --activate
 
+      - name: Isolate native dependency cache
+        shell: pwsh
+        run: |
+          $npmCache = Join-Path $env:RUNNER_TEMP ("npm-cache-" + [guid]::NewGuid().ToString("N"))
+          New-Item -ItemType Directory -Force -Path $npmCache | Out-Null
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "npm_config_cache=$npmCache"
+
       - name: Install dependencies
         run: yarn install --immutable
 
@@ -87,6 +94,13 @@ jobs:
         run: |
           corepack enable
           corepack prepare yarn@4.5.0 --activate
+
+      - name: Isolate native dependency cache
+        shell: pwsh
+        run: |
+          $npmCache = Join-Path $env:RUNNER_TEMP ("npm-cache-" + [guid]::NewGuid().ToString("N"))
+          New-Item -ItemType Directory -Force -Path $npmCache | Out-Null
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "npm_config_cache=$npmCache"
 
       - name: Install dependencies
         run: yarn install --immutable
@@ -137,6 +151,13 @@ jobs:
         run: |
           corepack enable
           corepack prepare yarn@4.5.0 --activate
+
+      - name: Isolate native dependency cache
+        shell: pwsh
+        run: |
+          $npmCache = Join-Path $env:RUNNER_TEMP ("npm-cache-" + [guid]::NewGuid().ToString("N"))
+          New-Item -ItemType Directory -Force -Path $npmCache | Out-Null
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "npm_config_cache=$npmCache"
 
       - name: Install dependencies without rebuilding the package
         run: yarn install --immutable
