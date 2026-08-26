@@ -69,7 +69,11 @@ import { appendProfileLifecycleLine } from "./profile-lifecycle-log.ts";
 import { LicenseKeyPool } from "./license-key-pool.ts";
 import { LicenseLeaseJournal } from "./license-lease-journal.ts";
 import { LicenseLeaseRecorder } from "./license-lease-recorder.ts";
-import { sweepOrphanedProfileBrowsers } from "./startup-orphan-sweep.ts";
+import {
+  sweepOrphanedProfileBrowsers,
+  type OrphanSweepOutcome,
+} from "./startup-orphan-sweep.ts";
+import { reconcileStartupOrphanLeases } from "./startup-license-lease-reconciliation.ts";
 import {
   createIpcRuntimeRegistration,
   type IpcRuntimeHandler,
@@ -376,10 +380,15 @@ app
     // profiles running and every launch truthfully fails, and nothing joins those two facts up for
     // the operator. The window is not delayed, but the driver waits on this promise before its first
     // launch so a slow process listing cannot sweep a browser that was created after startup.
-    let startupOrphanSweep: Promise<void> = Promise.resolve();
+    let startupOrphanSweepOutcome: Promise<OrphanSweepOutcome> = Promise.resolve({
+      closed: [],
+      killed: [],
+      enumerated: true,
+      recoveries: [],
+    });
     if (cachedSettings.startupOrphanSweep) {
       const profilesRoot = join(dataRoot, "profiles");
-      startupOrphanSweep = sweepOrphanedProfileBrowsers(profilesRoot, {
+      startupOrphanSweepOutcome = sweepOrphanedProfileBrowsers(profilesRoot, {
         isAlive: (pid) => {
           try {
             process.kill(pid, 0);
@@ -415,12 +424,7 @@ app
           }
         },
         log: (event) => appendProfileLifecycleLine({ ...event, profilesRoot }),
-      }).then(
-        () => {},
-        () => {
-          // Reclaiming a seat is best-effort; failing to must never stop the app from starting.
-        },
-      );
+      });
     }
 
     // Chromium bootstrap — picks the engine from user settings (CFT default,
@@ -457,6 +461,19 @@ app
     const licenseLeaseRecorder = new LicenseLeaseRecorder(licenseLeaseJournal, (message) => {
       console.warn(message);
     });
+    const startupOrphanSweep = startupOrphanSweepOutcome.then(
+      async (outcome) => {
+        await reconcileStartupOrphanLeases(outcome, {
+          journal: licenseLeaseJournal,
+          pool: licenseKeyPool!,
+          recorder: licenseLeaseRecorder,
+          log: (message) => console.warn(message),
+        });
+      },
+      () => {
+        // Reclaiming a seat is best-effort; failing to must never stop the app from starting.
+      },
+    );
     const licenseCapacity = () =>
       chromiumBootstrap.getEngine() === "cloakbrowser"
         ? (licenseKeyPool?.capacitySnapshot(licenseLeaseJournal.snapshot()) ?? null)

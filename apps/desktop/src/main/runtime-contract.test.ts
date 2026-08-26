@@ -453,12 +453,16 @@ test("keeps browser ownership until failed launches and shutdown sweeps finish",
   const driver = source("apps/desktop/src/main/ChromiumBrowserDriver.ts");
 
   assert.match(driver, /launchingProcesses = new Map<ProfileId, LaunchingProcess>/);
-  assert.match(driver, /await this\.cleanupFailedLaunch\(profileId, error\)/);
+  assert.match(
+    driver,
+    /await this\.cleanupFailedLaunch\([\s\S]*?profileId,[\s\S]*?error,[\s\S]*?seatRefused \? false : undefined,[\s\S]*?leaseReserved,[\s\S]*?\)/,
+  );
   assert.match(driver, /pending\.childExit = \{ exitCode: code, signal \}/);
   assert.match(driver, /writeProfileLifecycleLog\(profileId, pending, "CHILD-EXIT", childExit\)/);
   assert.match(driver, /await terminateBrowserProcess\(profileId, pending\)/);
   // Ownership is dropped only once termination reports success, whatever shape that check takes.
-  assert.match(driver, /if \(outcome\.terminated\)/);
+  assert.match(driver, /if \(!outcome\.terminated\) \{/);
+  assert.match(driver, /survived failed-launch cleanup/);
   assert.match(driver, /record\.windowWatcher\.stop\(\)/);
   assert.match(driver, /await terminateBrowserProcess\(profileId, record\)/);
   assert.match(driver, /this\.running\.delete\(profileId\)/);
@@ -518,6 +522,8 @@ test("spawns the engine detached so a crashed app leaves a reclaimable browser",
   // The sweep is the other half: without it a detached browser is just a stray window.
   const index = source("apps/desktop/src/main/index.ts");
   assert.match(index, /sweepOrphanedProfileBrowsers\(/);
+  assert.match(index, /reconcileStartupOrphanLeases\(/);
+  assert.match(index, /startupBarrier: startupOrphanSweep/);
 });
 
 test("routes every GitHub Actions job through approved self-hosted runner pools", () => {

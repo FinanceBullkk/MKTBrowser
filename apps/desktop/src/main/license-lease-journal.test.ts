@@ -249,3 +249,65 @@ test("serializes concurrent reservations without losing a durable record", async
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("starts a fresh lifecycle after a cooling lease has expired in the allocator", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mkt-browser-lease-journal-"));
+  const file = join(root, "license-leases.json");
+  const ids = ["old-lifecycle", "new-lifecycle"];
+  const key = "cb_live_secret_abcdef123456";
+
+  try {
+    const journal = await LicenseLeaseJournal.open(file, { idFactory: () => ids.shift()! });
+    await journal.reserve({ profileId: "profile-a", key });
+    await journal.transition("profile-a", "starting", { childPid: 4123 });
+    await journal.transition("profile-a", "active");
+    await journal.transition("profile-a", "ending");
+    await journal.transition("profile-a", "cooling", { childPid: null });
+
+    const next = await journal.reserve({
+      profileId: "profile-a",
+      key,
+      staleLeaseExpired: true,
+    });
+
+    assert.equal(next.id, "new-lifecycle");
+    assert.equal(next.state, "reserved");
+    assert.equal(next.childPid, null);
+    assert.equal(next.lastErrorCode, null);
+    assert.deepEqual(
+      journal.snapshot().map(({ id, state }) => ({ id, state })),
+      [
+        { id: "old-lifecycle", state: "expired" },
+        { id: "new-lifecycle", state: "reserved" },
+      ],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("retires an expired refused owner before assigning its key to another profile", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mkt-browser-lease-journal-"));
+  const file = join(root, "license-leases.json");
+  const key = "cb_live_secret_abcdef123456";
+
+  try {
+    const journal = await LicenseLeaseJournal.open(file);
+    await journal.reserve({ profileId: "profile-a", key });
+    await journal.transition("profile-a", "terminal-refused", {
+      lastErrorCode: "LICENCE_SEAT_REFUSED",
+    });
+
+    const next = await journal.reserve({
+      profileId: "profile-b",
+      key,
+      staleLeaseExpired: true,
+    });
+
+    assert.equal(journal.get("profile-a")?.state, "expired");
+    assert.equal(next.state, "reserved");
+    assert.equal(next.profileId, "profile-b");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

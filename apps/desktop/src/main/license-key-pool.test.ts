@@ -213,6 +213,28 @@ test("cooling is counted from when the lease last moved, not from startup", () =
   assert.equal(pool.availableCount(), 3, "the key must return on the vendor's clock");
 });
 
+test("an old active record never expires by timestamp because the browser may have kept heartbeating", () => {
+  const clock = { t: 100 * 60_000 };
+  const pool = new LicenseKeyPool({
+    keys: KEYS,
+    cooldownMs: 17 * 60_000,
+    now: () => clock.t,
+    leaseRecords: [
+      {
+        keyFingerprint: fingerprintLicenseKey(KEYS[0]!),
+        state: "active",
+        updatedAt: new Date(clock.t - 60 * 60_000).toISOString(),
+      },
+    ],
+  });
+
+  assert.equal(pool.availableCount(), 2, "an orphan may have heartbeated after the old journal time");
+  clock.t += 16 * 60_000;
+  assert.equal(pool.availableCount(), 2);
+  clock.t += 60 * 60_000;
+  assert.equal(pool.availableCount(), 2, "only explicit recovery may free an active record");
+});
+
 test("a confirmed release and an unstarted reservation both leave the key idle", () => {
   // `confirmed-released` proves the seat came back. `reserved` never reached the engine, so no
   // session was ever opened — resting either one would withhold capacity the operator has.

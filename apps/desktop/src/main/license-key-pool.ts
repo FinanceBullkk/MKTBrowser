@@ -57,6 +57,7 @@ export interface LicenseCapacitySnapshot {
 export interface LicenseCapacityLeaseRecord {
   keyFingerprint: string;
   state: LicenseLeaseState;
+  updatedAt?: string;
 }
 
 /**
@@ -74,6 +75,7 @@ interface Slot {
   key: string;
   profileId: string | null;
   coolingUntilMs: number | null;
+  blockedByUnreconciledLease: boolean;
 }
 
 export interface LicenseKeyPoolOptions {
@@ -105,7 +107,7 @@ export function keyTail(key: string): string {
  * opened one, and only `confirmed-released` proves it was given back.
  */
 function holdsSeat(state: LicenseLeaseState): boolean {
-  return state !== "confirmed-released" && state !== "reserved";
+  return state !== "confirmed-released" && state !== "reserved" && state !== "expired";
 }
 
 export class LicenseKeyPool {
@@ -117,7 +119,12 @@ export class LicenseKeyPool {
     // Duplicates would advertise capacity the engine will not honour: the same key twice is still
     // one seat, and the second launch would be refused after the operator was told it was free.
     const unique = [...new Set(opts.keys.map((k) => k.trim()).filter((k) => k.length > 0))];
-    this.slots = unique.map((key) => ({ key, profileId: null, coolingUntilMs: null }));
+    this.slots = unique.map((key) => ({
+      key,
+      profileId: null,
+      coolingUntilMs: null,
+      blockedByUnreconciledLease: false,
+    }));
     this.cooldownMs = opts.cooldownMs ?? 17 * 60_000;
     this.now = opts.now ?? Date.now;
     if (opts.leaseRecords?.length) this.seedFromLeases(opts.leaseRecords);
@@ -140,6 +147,12 @@ export class LicenseKeyPool {
       if (!holdsSeat(record.state)) continue;
       const slot = this.slots.find((s) => fingerprintLicenseKey(s.key) === record.keyFingerprint);
       if (!slot) continue;
+      if (["starting", "active", "ending", "pending-recovery"].includes(record.state)) {
+        // These records may describe a browser that kept heartbeating after the app died. Its old
+        // journal timestamp is not a lease-expiry clock, so only explicit recovery may free it.
+        slot.blockedByUnreconciledLease = true;
+        continue;
+      }
       const movedAtMs = Date.parse(record.updatedAt);
       const restedFromMs = Number.isNaN(movedAtMs) ? t : Math.min(movedAtMs, t);
       const until = restedFromMs + this.cooldownMs;
@@ -157,7 +170,7 @@ export class LicenseKeyPool {
 
   private stateOf(slot: Slot): LicenseKeyState {
     if (slot.profileId !== null) return "in-use";
-    return slot.coolingUntilMs === null ? "idle" : "cooling";
+    return slot.coolingUntilMs === null && !slot.blockedByUnreconciledLease ? "idle" : "cooling";
   }
 
   /**
@@ -203,6 +216,17 @@ export class LicenseKeyPool {
     slot.coolingUntilMs = this.now() + this.cooldownMs;
   }
 
+  /** Apply the verified outcome of a persisted lease reconciled during startup. */
+  reconcilePersistedLease(keyFingerprint: string, seatReleased: boolean): void {
+    const slot = this.slots.find(
+      (candidate) => fingerprintLicenseKey(candidate.key) === keyFingerprint,
+    );
+    if (!slot) return;
+    slot.profileId = null;
+    slot.blockedByUnreconciledLease = false;
+    slot.coolingUntilMs = seatReleased ? null : this.now() + this.cooldownMs;
+  }
+
   /** Keys that could be handed out right now. */
   availableCount(): number {
     this.refresh();
@@ -221,7 +245,7 @@ export class LicenseKeyPool {
     this.refresh();
     if (this.slots.some((s) => this.stateOf(s) === "idle")) return null;
     const cooling = this.slots
-      .filter((s) => this.stateOf(s) === "cooling")
+      .filter((s) => this.stateOf(s) === "cooling" && s.coolingUntilMs !== null)
       .map((s) => s.coolingUntilMs as number);
     return cooling.length > 0 ? Math.min(...cooling) : null;
   }
@@ -251,8 +275,10 @@ export class LicenseKeyPool {
     const pendingFingerprints = new Set<string>();
     const coolingFingerprints = new Set<string>();
     for (const record of leaseRecords) {
-      if (record.state === "confirmed-released") continue;
+      if (record.state === "confirmed-released" || record.state === "expired") continue;
       if (record.state === "cooling" || record.state === "terminal-refused") {
+        const updatedAt = record.updatedAt === undefined ? Number.NaN : Date.parse(record.updatedAt);
+        if (!Number.isNaN(updatedAt) && updatedAt + this.cooldownMs <= this.now()) continue;
         coolingFingerprints.add(record.keyFingerprint);
       } else {
         pendingFingerprints.add(record.keyFingerprint);

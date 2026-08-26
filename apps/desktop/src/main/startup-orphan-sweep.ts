@@ -9,6 +9,7 @@ import {
   parseDevToolsActivePort,
   readDevToolsActivePortRecord,
 } from "./devtools-port-discovery.ts";
+import { relative, sep } from "node:path";
 
 /**
  * Close browsers left behind by an app that did not exit cleanly.
@@ -43,6 +44,13 @@ export interface OrphanSweepOutcome {
   closed: number[];
   killed: number[];
   enumerated: boolean;
+  recoveries: OrphanLeaseRecovery[];
+}
+
+export interface OrphanLeaseRecovery {
+  pid: number;
+  profileId: string;
+  seatReleased: boolean;
 }
 
 export interface OrphanSweepDeps {
@@ -90,17 +98,18 @@ export async function sweepOrphanedProfileBrowsers(
     // Not "nothing to sweep" — "could not look". Killing on a guess here would be the worst of
     // both: no orphan cleared and possibly a live profile taken down.
     deps.log({ reason: "ORPHAN-SWEEP-DISCOVERY-FAILED" });
-    return { closed: [], killed: [], enumerated: false };
+    return { closed: [], killed: [], enumerated: false, recoveries: [] };
   }
 
   const orphans = processes.filter((p) => isBrowserProcess(p) && !exclude.has(p.pid));
   if (orphans.length === 0) {
     deps.log({ reason: "ORPHAN-SWEEP-NONE" });
-    return { closed: [], killed: [], enumerated: true };
+    return { closed: [], killed: [], enumerated: true, recoveries: [] };
   }
 
   const closed: number[] = [];
   const killed: number[] = [];
+  const recoveries: OrphanLeaseRecovery[] = [];
   const ownedPids = new Set(processes.map((process) => process.pid));
 
   for (const orphan of orphans) {
@@ -132,6 +141,8 @@ export async function sweepOrphanedProfileBrowsers(
 
     if (politeFailure === null) {
       closed.push(orphan.pid);
+      const profileId = licensedProfileId(profilesRoot, orphan.commandLine);
+      if (profileId) recoveries.push({ pid: orphan.pid, profileId, seatReleased: true });
       deps.log({ reason: "ORPHAN-SWEEP-CLOSED", pid: orphan.pid, port });
       continue;
     }
@@ -139,10 +150,31 @@ export async function sweepOrphanedProfileBrowsers(
     // Consolation prize: the window goes away, the seat does not.
     deps.kill(orphan.pid);
     killed.push(orphan.pid);
+    const profileId = licensedProfileId(profilesRoot, orphan.commandLine);
+    if (profileId) recoveries.push({ pid: orphan.pid, profileId, seatReleased: false });
     deps.log({ reason: "ORPHAN-SWEEP-KILLED", pid: orphan.pid, port, detail: politeFailure });
   }
 
-  return { closed, killed, enumerated: true };
+  return { closed, killed, enumerated: true, recoveries };
+}
+
+/** Resolve only the owned CloakBrowser layout; CFT has no licence seat to reconcile. */
+function licensedProfileId(profilesRoot: string, commandLine: string): string | null {
+  const dataDir = dataDirFromCommandLine(commandLine);
+  if (!dataDir) return null;
+  const parts = relative(profilesRoot, dataDir).split(/[\\/]+/);
+  if (
+    parts.length !== 3 ||
+    !parts[0] ||
+    parts[0] === ".." ||
+    parts[1]?.toLowerCase() !== "engines" ||
+    parts[2]?.toLowerCase() !== "cloakbrowser"
+  ) {
+    return null;
+  }
+  // `relative` can preserve a platform-specific traversal prefix not caught by split alone.
+  if (relative(profilesRoot, dataDir).startsWith(`..${sep}`)) return null;
+  return parts[0];
 }
 
 function requestBrowserClose(

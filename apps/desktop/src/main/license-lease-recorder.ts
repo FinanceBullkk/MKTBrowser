@@ -8,10 +8,9 @@
  *
  * Two rules shape it.
  *
- * A journal write must never fail a launch that would otherwise work. The journal exists to make
- * the *next* run correct; refusing to open a browser because a bookkeeping file could not be
- * written would trade a real capability for a hypothetical one. So every entry point here reports
- * failure to a logger and returns.
+ * A journal write must fail a licensed launch before the browser can create a vendor session.
+ * Launching without durable seat truth makes the next restart unsafe, so failures are logged and
+ * rethrown. Shutdown callers convert a failed release write into an in-memory cooling verdict.
  *
  * And a transition must be legal from wherever the record actually is. The driver reaches these
  * from several paths — a clean close, a kill, a refusal, a launch that died before it spawned —
@@ -24,7 +23,11 @@ import type { LicenseLeaseRecord, LicenseLeaseState } from "./license-lease-jour
 /** The part of `LicenseLeaseJournal` this module uses. Narrowed so tests need no real file. */
 export interface LeaseJournalLike {
   get(profileId: string): LicenseLeaseRecord | null;
-  reserve(input: { profileId: string; key: string }): Promise<LicenseLeaseRecord>;
+  reserve(input: {
+    profileId: string;
+    key: string;
+    staleLeaseExpired?: boolean;
+  }): Promise<LicenseLeaseRecord>;
   transition(
     profileId: string,
     nextState: LicenseLeaseState,
@@ -36,8 +39,6 @@ export interface LeaseJournalLike {
 export type LeaseRecorderLogger = (message: string) => void;
 
 /** States from which the browser may already hold a session the vendor is counting. */
-const STARTED_STATES: readonly LicenseLeaseState[] = ["starting", "active"];
-
 export class LicenseLeaseRecorder {
   // Written out rather than as constructor parameter properties: the main-process tests run under
   // Node's strip-only TypeScript mode, which rejects that syntax.
@@ -53,22 +54,25 @@ export class LicenseLeaseRecorder {
     try {
       await run();
     } catch (error) {
-      // Deliberately swallowed, deliberately loud. A lost write costs the next run its seat
-      // truth, which is worth knowing about, but it is not worth a refused launch now.
       this.log(
         `[mkt-browser] lease journal ${what} failed for profile=${profileId}: ${String(error)}`,
       );
+      throw new Error(`License lease journal ${what} failed.`, { cause: error });
     }
   }
 
   /** A key has been picked for this profile, but nothing has been spawned yet. */
   async reserved(profileId: string, key: string): Promise<void> {
-    await this.attempt("reserve", profileId, () => this.journal.reserve({ profileId, key }));
+    await this.attempt("reserve", profileId, () =>
+      this.journal.reserve({ profileId, key, staleLeaseExpired: true }),
+    );
   }
 
-  /** The engine process exists, so a session may now be open on the vendor. */
+  /** The engine is about to spawn, so a vendor session may exist after the next instruction. */
   async started(profileId: string, childPid: number | null): Promise<void> {
-    if (this.journal.get(profileId)?.state !== "reserved") return;
+    if (this.journal.get(profileId)?.state !== "reserved") {
+      throw new Error(`License lease journal starting failed for profile=${profileId}.`);
+    }
     await this.attempt("starting", profileId, () =>
       this.journal.transition(profileId, "starting", { childPid }),
     );
@@ -76,7 +80,9 @@ export class LicenseLeaseRecorder {
 
   /** The launch completed and the browser is serving. */
   async active(profileId: string): Promise<void> {
-    if (this.journal.get(profileId)?.state !== "starting") return;
+    if (this.journal.get(profileId)?.state !== "starting") {
+      throw new Error(`License lease journal active failed for profile=${profileId}.`);
+    }
     await this.attempt("active", profileId, () => this.journal.transition(profileId, "active"));
   }
 
@@ -87,9 +93,9 @@ export class LicenseLeaseRecorder {
    * flushed itself hands the session back. Anything else leaves the seat resting, and recording it
    * as released is what makes the next launch pick a key the server still counts as taken.
    */
-  async released(profileId: string, seatReleased: boolean): Promise<void> {
+  async released(profileId: string, seatReleased: boolean): Promise<boolean> {
     const state = this.journal.get(profileId)?.state;
-    if (state === undefined) return;
+    if (state === undefined) return seatReleased;
 
     if (state === "reserved") {
       // Never spawned, so no session was ever opened — and leaving the reservation behind would
@@ -97,28 +103,39 @@ export class LicenseLeaseRecorder {
       await this.attempt("release-unstarted", profileId, () =>
         this.journal.releaseUnstartedReservation(profileId),
       );
-      return;
+      return true;
     }
-    if (!STARTED_STATES.includes(state)) return;
+    if (state === "confirmed-released" || state === "expired") return true;
+    if (state === "cooling" || state === "terminal-refused") return false;
 
     await this.attempt("ending", profileId, async () => {
       // A browser that died while still `starting` never reached `active`, and the journal has no
       // direct route from there to `ending` — it insists such a lease be marked for recovery
       // first, which is exactly what an unfinished launch is.
-      if (state === "starting") {
+      let currentState = state;
+      if (currentState === "starting") {
         await this.journal.transition(profileId, "pending-recovery", {
           lastErrorCode: "LAUNCH_ENDED_EARLY",
         });
+        currentState = "pending-recovery";
         if (!seatReleased) {
           await this.journal.transition(profileId, "cooling", { childPid: null });
           return;
         }
       }
-      await this.journal.transition(profileId, "ending");
+      if (currentState === "active" || currentState === "pending-recovery") {
+        await this.journal.transition(profileId, "ending");
+        currentState = "ending";
+      }
+      if (currentState !== "ending") {
+        throw new Error(`A license lease in ${currentState} cannot complete release.`);
+      }
       await this.journal.transition(profileId, seatReleased ? "confirmed-released" : "cooling", {
         childPid: null,
+        lastErrorCode: seatReleased ? null : undefined,
       });
     });
+    return seatReleased;
   }
 
   /**
@@ -129,7 +146,10 @@ export class LicenseLeaseRecorder {
    */
   async refused(profileId: string, errorCode = "LICENCE_SEAT_REFUSED"): Promise<void> {
     const state = this.journal.get(profileId)?.state;
-    if (state !== "reserved" && state !== "starting") return;
+    if (state === "terminal-refused") return;
+    if (state !== "reserved" && state !== "starting") {
+      throw new Error(`License lease journal terminal-refused failed for profile=${profileId}.`);
+    }
     await this.attempt("terminal-refused", profileId, () =>
       this.journal.transition(profileId, "terminal-refused", {
         childPid: null,

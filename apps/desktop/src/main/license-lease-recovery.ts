@@ -31,7 +31,11 @@ export async function recoverLicenseLeases<TProfile>(
   const summary: LicenseLeaseRecoverySummary = { confirmed: 0, pending: 0, skipped: 0 };
 
   for (const snapshot of journal.snapshot()) {
-    if (snapshot.state === "confirmed-released" || snapshot.state === "terminal-refused") {
+    if (
+      snapshot.state === "confirmed-released" ||
+      snapshot.state === "terminal-refused" ||
+      snapshot.state === "expired"
+    ) {
       summary.skipped += 1;
       continue;
     }

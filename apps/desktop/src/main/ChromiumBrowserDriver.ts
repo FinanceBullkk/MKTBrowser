@@ -76,6 +76,7 @@ function launchExitError(exitCode: number | null, stage: string): Error {
 import { appendProfileLifecycleLine } from "./profile-lifecycle-log.ts";
 import { LicenseKeyPool, keyTail } from "./license-key-pool.ts";
 import { LicenseLeaseRecorder } from "./license-lease-recorder.ts";
+import { didBrowserExitReleaseSeat } from "./license-seat-exit-verdict.ts";
 import { licenseSeatWaitMessage } from "./license-seat-wait-message.ts";
 import { stableWindowsRuntime, win32PathEquals } from "./chromium-runtime-path.ts";
 import { disableFeaturesArg, networkPrivacySwitches } from "./chromium-network-privacy-flags.ts";
@@ -340,20 +341,36 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
         );
       }
       const key = pool?.keyFor(profileId) ?? null;
-      if (key) await this.licenseLeaseRecorder?.reserved(profileId, key);
+      let leaseReserved = false;
       try {
-        const launched = await this.launchTracked(profileId);
-        await this.licenseLeaseRecorder?.active(profileId);
-        return launched;
-      } catch (error) {
-        await this.cleanupFailedLaunch(profileId, error);
-        if (!pool || !isSeatRefusal(error)) {
-          pool?.release(profileId, true);
-          throw error;
+        if (key) {
+          await this.licenseLeaseRecorder?.reserved(profileId, key);
+          leaseReserved = true;
         }
+        return await this.launchTracked(profileId, key !== null);
+      } catch (error) {
+        const seatRefused = pool !== undefined && isSeatRefusal(error);
+        let refusalWriteError: unknown = null;
+        if (seatRefused && leaseReserved) {
+          try {
+            // Persist the vendor verdict before cleanup sees an already-exited child and mistakes
+            // that for a seat this launch released.
+            await this.licenseLeaseRecorder?.refused(profileId);
+          } catch (journalError) {
+            refusalWriteError = journalError;
+          }
+        }
+
+        await this.cleanupFailedLaunch(
+          profileId,
+          error,
+          seatRefused ? false : undefined,
+          leaseReserved,
+        );
+        if (!seatRefused) throw error;
+
         // This key is spoken for. Rest it and let the loop reach for the next.
         lastRefusal = error;
-        await this.licenseLeaseRecorder?.refused(profileId);
         if (key) {
           pool.markRefused(key);
           appendProfileLifecycleLine({
@@ -363,12 +380,16 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
             keysLeft: pool.availableCount(),
           });
         }
+        if (refusalWriteError) throw refusalWriteError;
       }
     }
     throw lastRefusal ?? engineUnavailable("No licence key could start a browser.");
   }
 
-  private async launchTracked(profileId: ProfileId): Promise<LaunchedProfile> {
+  private async launchTracked(
+    profileId: ProfileId,
+    hasLicensedLease: boolean,
+  ): Promise<LaunchedProfile> {
     const profile = this.profileManager.get(profileId);
     if (!profile) throw profileNotFound(profileId);
     if (profile.deletionPending) throw new ProfileDeletionPendingError(profileId);
@@ -801,6 +822,9 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     // owned profile directory. Remove a crash-era record immediately before spawn so freshness is
     // based on the current launch, never a reachable port left by an unrelated process.
     await clearStaleDevToolsActivePort(browserDataDir);
+    // Starting is durable before spawn. If Electron dies in the next instruction, recovery blocks
+    // the key instead of reconstructing it as idle while the vendor may have accepted a session.
+    if (hasLicensedLease) await this.licenseLeaseRecorder?.started(profileId, null);
     const spawnedAtMs = Date.now();
     const startedAt = new Date(spawnedAtMs).toISOString();
     const child = spawn(chromiumPath, args, {
@@ -843,10 +867,6 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       browserDataDir,
     };
     this.launchingProcesses.set(profileId, launchProcess);
-    // From here the engine may open a licence session, so the journal has to say so before
-    // anything else can go wrong. A crash between spawn and this write is the one case that still
-    // loses a seat to the lease TTL.
-    await this.licenseLeaseRecorder?.started(profileId, child.pid);
     child.stderr?.on("data", (chunk: Buffer) => {
       const line = chunk.toString("utf8").trim();
       if (line) process.stderr.write(`[chromium ${child.pid}] ${line}\n`);
@@ -1226,6 +1246,8 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       }
     }
 
+    if (hasLicensedLease) await this.licenseLeaseRecorder?.active(profileId);
+
     // Latch so the 1s watcher signals termination + shuts down exactly once,
     // not on every tick while pages stay at zero during the ~1.5–4s wind-down.
     let signalledClose = false;
@@ -1250,11 +1272,14 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
         if (signalledClose) return;
         signalledClose = true;
         writeProfileLifecycleLog(profileId, record, shutdownReason.reason, shutdownReason);
-        void this.shutdownRunningProfile(profileId, record, "external-exit").catch(
-          (error: unknown) => {
-            console.error("[mkt-browser] watcher shutdown failed:", error);
-          },
-        );
+        void this.shutdownRunningProfile(
+          profileId,
+          record,
+          "external-exit",
+          shutdownReason.reason === "CDP-UNREACHABLE" ? false : undefined,
+        ).catch((error: unknown) => {
+          console.error("[mkt-browser] watcher shutdown failed:", error);
+        });
       },
     );
     this.running.set(profileId, record);
@@ -1286,13 +1311,23 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
 
     writeProfileLifecycleLog(profileId, record, "CHILD-EXIT", { exitCode, signal });
     if (this.running.get(profileId) === record && !this.closing.has(profileId)) {
-      await this.shutdownRunningProfile(profileId, record, "external-exit").catch(
-        (error: unknown) => console.error("[mkt-browser] child-exit cleanup failed:", error),
+      await this.shutdownRunningProfile(
+        profileId,
+        record,
+        "external-exit",
+        didBrowserExitReleaseSeat(exitCode, signal, record.pid === record.child.pid),
+      ).catch((error: unknown) =>
+        console.error("[mkt-browser] child-exit cleanup failed:", error),
       );
     }
   }
 
-  private async cleanupFailedLaunch(profileId: ProfileId, error: unknown): Promise<void> {
+  private async cleanupFailedLaunch(
+    profileId: ProfileId,
+    error: unknown,
+    seatReleasedOverride?: boolean,
+    leaseReserved = false,
+  ): Promise<void> {
     const activeShutdown = this.shutdowns.get(profileId);
     if (activeShutdown) {
       await activeShutdown.catch(() => {});
@@ -1300,6 +1335,14 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     }
     const pending = this.launchingProcesses.get(profileId);
     if (!pending) {
+      // A journal reservation can fail because an older unreconciled lease already owns this
+      // profile. Release only the new in-memory allocation in that case; mutating the journal would
+      // falsely mark the older vendor session as released.
+      if (leaseReserved) {
+        await this.releaseLicenseKey(profileId, "already-exited", seatReleasedOverride ?? true);
+      } else {
+        this.licenseKeyPool?.release(profileId, true);
+      }
       await withTimeout(stopBridgeForProfile(profileId), 2000);
       return;
     }
@@ -1317,13 +1360,25 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     }
 
     const outcome = await terminateBrowserProcess(profileId, pending);
-    await this.releaseLicenseKey(profileId, outcome.shutdownMethod);
-    if (outcome.terminated) {
-      if (this.launchingProcesses.get(profileId) === pending) {
-        this.launchingProcesses.delete(profileId);
-      }
-      await withTimeout(stopBridgeForProfile(profileId), 2000);
+    if (!outcome.terminated) {
+      throw new Error(`Chromium pid ${pending.pid} survived failed-launch cleanup`);
     }
+    const observedExitReleased = pending.childExit
+      ? didBrowserExitReleaseSeat(
+          pending.childExit.exitCode,
+          pending.childExit.signal,
+          pending.pid === pending.child.pid,
+        )
+      : undefined;
+    await this.releaseLicenseKey(
+      profileId,
+      outcome.shutdownMethod,
+      seatReleasedOverride ?? observedExitReleased,
+    );
+    if (this.launchingProcesses.get(profileId) === pending) {
+      this.launchingProcesses.delete(profileId);
+    }
+    await withTimeout(stopBridgeForProfile(profileId), 2000);
   }
 
   /**
@@ -1334,18 +1389,34 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
    * signalled kill as a clean release would send the very next launch at a seat the server still
    * counts as taken — so a killed browser rests its key for the lease instead.
    */
-  private async releaseLicenseKey(profileId: ProfileId, method: ShutdownMethod): Promise<void> {
-    const seatReleased = method === "Browser.close" || method === "already-exited";
-    this.licenseKeyPool?.release(profileId, seatReleased);
+  private async releaseLicenseKey(
+    profileId: ProfileId,
+    method: ShutdownMethod,
+    seatReleasedOverride?: boolean,
+  ): Promise<void> {
+    // CFT has no vendor seat lifecycle. The recorder is process-global, so key ownership is the
+    // guard that prevents a CFT failure from mutating an older CloakBrowser lease for this profile.
+    if (this.licenseKeyPool?.keyFor(profileId) === null || !this.licenseKeyPool) return;
+    const seatReleased = seatReleasedOverride ?? method === "Browser.close";
     // The pool forgets this the moment the app exits. The journal is what carries a resting seat
-    // into the next run, so the same verdict has to reach both.
-    await this.licenseLeaseRecorder?.released(profileId, seatReleased);
+    // into the next run, so durable state changes before in-memory capacity becomes available.
+    try {
+      const durableSeatReleased =
+        (await this.licenseLeaseRecorder?.released(profileId, seatReleased)) ?? seatReleased;
+      this.licenseKeyPool?.release(profileId, durableSeatReleased);
+    } catch (error) {
+      // The process is gone, but durable truth is uncertain. Cooling is conservative and avoids
+      // both a false-running UI entry and a false-idle seat.
+      console.error("[mkt-browser] durable license release failed; cooling seat:", error);
+      this.licenseKeyPool?.release(profileId, false);
+    }
   }
 
   private shutdownRunningProfile(
     profileId: ProfileId,
     record: RunningProcess,
     reason: "user-close" | "external-exit",
+    seatReleasedOverride?: boolean,
   ): Promise<void> {
     const existing = this.shutdowns.get(profileId);
     if (existing) return existing;
@@ -1354,10 +1425,10 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     record.windowWatcher.stop();
     const shutdown = (async () => {
       const outcome = await terminateBrowserProcess(profileId, record);
-      await this.releaseLicenseKey(profileId, outcome.shutdownMethod);
       if (!outcome.terminated) {
         throw new Error(`Chromium pid ${record.pid} survived shutdown escalation`);
       }
+      await this.releaseLicenseKey(profileId, outcome.shutdownMethod, seatReleasedOverride);
 
       if (this.running.get(profileId) === record) this.running.delete(profileId);
       await withTimeout(stopBridgeForProfile(profileId), 2000);
@@ -1390,10 +1461,10 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     this.closing.add(profileId);
     const shutdown = (async () => {
       const outcome = await terminateBrowserProcess(profileId, pending);
-      await this.releaseLicenseKey(profileId, outcome.shutdownMethod);
       if (!outcome.terminated) {
         throw new Error(`Chromium pid ${pending.pid} survived shutdown escalation`);
       }
+      await this.releaseLicenseKey(profileId, outcome.shutdownMethod);
       if (this.launchingProcesses.get(profileId) === pending) {
         this.launchingProcesses.delete(profileId);
       }
@@ -1915,7 +1986,7 @@ async function gracefulShutdown(
       // on a plan that has exactly one. Give the untracked browser the same 4s Browser.close budget
       // the tracked path gets; the sweep is still there for whatever ignores it.
       await waitForDataDirProcessesToExit(r.browserDataDir, 4000);
-      return "already-exited";
+      return "Browser.close";
     }
     // Chromium needs ~500ms–2s to flush session-restore on macOS; 4s is margin.
     if (await waitForPidDeath(pid, 4000)) {

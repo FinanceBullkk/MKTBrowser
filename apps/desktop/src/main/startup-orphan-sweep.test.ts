@@ -53,6 +53,9 @@ test("closes an orphan through its own DevTools port so the seat comes back", as
 
   assert.deepEqual(out.closed, [101]);
   assert.deepEqual(out.killed, []);
+  assert.deepEqual(out.recoveries, [
+    { pid: 101, profileId: "p101", seatReleased: true },
+  ]);
   assert.deepEqual(h.closedPorts, [9222]);
   assert.deepEqual(
     h.killedPids,
@@ -71,6 +74,9 @@ test("kills only when the polite close is impossible, and says which it was", as
   noPort.alive.add(102);
   const a = await sweepOrphanedProfileBrowsers(ROOT, noPort.deps);
   assert.deepEqual(a.killed, [102]);
+  assert.deepEqual(a.recoveries, [
+    { pid: 102, profileId: "p102", seatReleased: false },
+  ]);
   assert.equal(noPort.events[0]?.reason, "ORPHAN-SWEEP-KILLED");
   assert.match(String(noPort.events[0]?.detail), /no owned DevTools port/);
 
@@ -195,4 +201,27 @@ test("reports an empty sweep without pretending it failed", async () => {
   assert.equal(out.enumerated, true);
   assert.deepEqual(out.closed, []);
   assert.equal(h.events[0]?.reason, "ORPHAN-SWEEP-NONE");
+});
+
+test("does not create licence recovery evidence for a non-CloakBrowser layout", async () => {
+  const cft = {
+    pid: 401,
+    commandLine: `chrome.exe --user-data-dir="${ROOT}/p401" --remote-debugging-port=9222`,
+  };
+  const nested = {
+    pid: 402,
+    commandLine:
+      `chrome.exe --user-data-dir="${ROOT}/p402/nested/engines/cloakbrowser"` +
+      " --remote-debugging-port=9223",
+  };
+  const h = harness({
+    enumerate: async () => ({ processes: [cft, nested], enumerated: true }),
+  });
+  h.alive.add(401);
+  h.alive.add(402);
+
+  const out = await sweepOrphanedProfileBrowsers(ROOT, h.deps);
+
+  assert.deepEqual(out.closed, [401, 402]);
+  assert.deepEqual(out.recoveries, []);
 });

@@ -3,14 +3,19 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { LicenseLeaseJournal } from "./license-lease-journal.ts";
+import {
+  LicenseLeaseJournal,
+  type LicenseLeaseJournalOptions,
+} from "./license-lease-journal.ts";
 import { LicenseLeaseRecorder } from "./license-lease-recorder.ts";
 
 const KEY = "cb_aaaaaa111111";
 
-async function journalIn(): Promise<{ journal: LicenseLeaseJournal; cleanup: () => Promise<void> }> {
+async function journalIn(
+  options: LicenseLeaseJournalOptions = {},
+): Promise<{ journal: LicenseLeaseJournal; cleanup: () => Promise<void> }> {
   const dir = await mkdtemp(join(tmpdir(), "mkt-lease-recorder-"));
-  const journal = await LicenseLeaseJournal.open(join(dir, "license-leases.json"));
+  const journal = await LicenseLeaseJournal.open(join(dir, "license-leases.json"), options);
   return { journal, cleanup: () => rm(dir, { recursive: true, force: true }) };
 }
 
@@ -60,6 +65,21 @@ test("a launch that never spawned frees the key for other profiles", async () =>
   }
 });
 
+test("a pre-spawn starting record can close cleanly without leaving recovery noise", async () => {
+  const { journal, cleanup } = await journalIn();
+  try {
+    const recorder = new LicenseLeaseRecorder(journal);
+    await recorder.reserved("p1", KEY);
+    await recorder.started("p1", null);
+
+    assert.equal(await recorder.released("p1", true), true);
+    assert.equal(journal.get("p1")?.state, "confirmed-released");
+    assert.equal(journal.get("p1")?.lastErrorCode, null);
+  } finally {
+    await cleanup();
+  }
+});
+
 test("a refusal is recorded terminally so a restart keeps resting the key", async () => {
   const { journal, cleanup } = await journalIn();
   try {
@@ -69,13 +89,31 @@ test("a refusal is recorded terminally so a restart keeps resting the key", asyn
     await recorder.refused("p1");
 
     assert.equal(journal.get("p1")?.state, "terminal-refused");
+    assert.equal(await recorder.released("p1", true), false);
+    assert.equal(journal.get("p1")?.state, "terminal-refused");
   } finally {
     await cleanup();
   }
 });
 
-test("a journal failure is logged and never thrown at the launch", async () => {
-  // A bookkeeping write must not be able to stop a browser that would otherwise open.
+test("retries a release that was already durably moved to ending", async () => {
+  const { journal, cleanup } = await journalIn();
+  try {
+    const recorder = new LicenseLeaseRecorder(journal);
+    await recorder.reserved("p1", KEY);
+    await recorder.started("p1", 4123);
+    await recorder.active("p1");
+    await journal.transition("p1", "ending");
+
+    assert.equal(await recorder.released("p1", true), true);
+    assert.equal(journal.get("p1")?.state, "confirmed-released");
+  } finally {
+    await cleanup();
+  }
+});
+
+test("a journal failure is logged and fails the licensed launch closed", async () => {
+  // Launching without durable seat truth makes the next restart unsafe. The browser must not spawn.
   const logged: string[] = [];
   const broken = {
     get: () => null,
@@ -85,7 +123,7 @@ test("a journal failure is logged and never thrown at the launch", async () => {
   };
   const recorder = new LicenseLeaseRecorder(broken as never, (m) => logged.push(m));
 
-  await recorder.reserved("p1", KEY);
+  await assert.rejects(recorder.reserved("p1", KEY), /lease journal reserve failed/i);
 
   assert.equal(logged.length, 1);
   assert.match(logged[0]!, /reserve failed for profile=p1/);
