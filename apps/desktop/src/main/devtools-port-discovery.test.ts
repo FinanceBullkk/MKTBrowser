@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import type { BrowserProcessInfo } from "./browser-process-discovery.ts";
 import {
+  clearStaleDevToolsActivePort,
   DevToolsPortDiscoveryError,
   parseDevToolsActivePort,
   waitForOwnedDevToolsEndpoint,
@@ -29,22 +33,34 @@ test("parses only the bounded Chromium DevToolsActivePort schema", () => {
   }
 });
 
-test("rejects a stale record until the current launch publishes an owned endpoint", async () => {
+test("removes the crash-era record before launch and tolerates an already-clean profile", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mkt-browser-active-port-"));
+  const activePortPath = join(root, "DevToolsActivePort");
+  try {
+    await writeFile(activePortPath, "55497\n/devtools/browser/stale\n", "utf8");
+    await clearStaleDevToolsActivePort(root);
+    await assert.rejects(stat(activePortPath), hasCode("ENOENT"));
+    await clearStaleDevToolsActivePort(root);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("authenticates a reappeared record by process and listener ownership, not file time", async () => {
   const clock = createClock();
   let reads = 0;
   const deps = harnessDeps(clock, {
-    readActivePortRecord: async () => ({
-      contents: "55497\n/devtools/browser/current\n",
-      modifiedAtMs: ++reads === 1 ? 900 : 1_001,
-    }),
+    readActivePortRecord: async () => {
+      reads += 1;
+      return { contents: "55497\n/devtools/browser/current\n" };
+    },
   });
 
   const result = await discover(deps, 250);
 
-  assert.equal(reads, 2);
+  assert.equal(reads, 1);
   assert.equal(result.port, 55497);
   assert.equal(result.primaryPid, 20);
-  assert.ok(result.timings.activePortMs > 0);
   assert.equal(
     result.timings.totalMs,
     result.timings.activePortMs + result.timings.processMs + result.timings.ownershipMs,
@@ -144,7 +160,7 @@ function createClock(): { now: () => number; sleep: (ms: number) => Promise<void
 function harnessDeps(
   clock: ReturnType<typeof createClock>,
   options: {
-    activePortRecord?: { contents: string; modifiedAtMs: number } | null;
+    activePortRecord?: { contents: string } | null;
     readActivePortRecord?: DevToolsPortDiscoveryDeps["readActivePortRecord"];
     processes?: BrowserProcessInfo[];
     ownerPids?: number[];
@@ -154,7 +170,6 @@ function harnessDeps(
 ): DevToolsPortDiscoveryDeps {
   const defaultRecord = {
     contents: "55497\n/devtools/browser/current\n",
-    modifiedAtMs: 1_001,
   };
   return {
     now: clock.now,
@@ -179,7 +194,11 @@ function harnessDeps(
 
 function discover(deps: DevToolsPortDiscoveryDeps, budgetMs = 120) {
   return waitForOwnedDevToolsEndpoint(
-    { dataDir: DATA_DIR, childPid: 20, startedAtMs: 1_000, budgetMs },
+    { dataDir: DATA_DIR, childPid: 20, budgetMs },
     deps,
   );
+}
+
+function hasCode(expected: string) {
+  return (error: unknown) => (error as NodeJS.ErrnoException).code === expected;
 }

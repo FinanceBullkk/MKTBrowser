@@ -286,6 +286,42 @@ test("builds one hashed package and verifies that artifact in a fresh CI job", (
   );
 });
 
+test("prepares a pinned verifier engine on self-hosted Windows jobs", () => {
+  const workflow = source(".github/workflows/windows-pipeline.yml");
+  const release = source(".github/workflows/release-candidate.yml");
+  const fixture = source("scripts/system-chrome-engine-fixture.cjs");
+  const preparation = source(".github/scripts/prepare-windows-packaged-verifier.ps1");
+
+  assert.match(
+    workflow,
+    /Prepare pinned packaged verifier engine[\s\S]+prepare-windows-packaged-verifier\.ps1/,
+  );
+  assert.match(preparation, /chromeVersion = "152\.0\.7977\.64"/);
+  assert.match(
+    preparation,
+    /chromeSha256 = "b0db25dea445822429d8ebd36d53344cadcd63127308759456964029bbe18004"/,
+  );
+  assert.match(
+    preparation,
+    /chromeExecutableSha256 = "79832d1e60cbad9323c07339f9608bc0ce93cb9242b9b5481c04a0c536720980"/,
+  );
+  assert.ok(
+    preparation.indexOf("Get-FileHash") < preparation.indexOf("Expand-Archive"),
+    "the verifier must authenticate the archive before extraction",
+  );
+  assert.match(
+    preparation,
+    /extracted = Join-Path \$env:RUNNER_TEMP [^\n]+[\s\S]+Remove-Item[^\n]+\$extracted[\s\S]+Expand-Archive/,
+  );
+  assert.match(preparation, /MKT_BROWSER_SYSTEM_CHROME=\$executable/);
+  assert.match(fixture, /process\.env\.MKT_BROWSER_SYSTEM_CHROME/);
+  assert.ok(
+    release.indexOf("Prepare pinned packaged verifier engine") <
+      release.indexOf("Verify the runtime contract against the installed application"),
+    "the installed-contract job must prepare its engine before running the verifier",
+  );
+});
+
 test("exposes one required merge gate that a push cannot satisfy and a skip cannot fake", () => {
   const gate = source(".github/workflows/pr-release-gate.yml");
   const push = source(".github/workflows/release.yml");
@@ -500,15 +536,32 @@ test("routes every GitHub Actions job through approved self-hosted runner pools"
     for (const match of workflow.matchAll(/^\s*runs-on:\s*(.+)$/gm)) {
       runsOnCount += 1;
       assert.match(match[1]!, /\bself-hosted\b/, `${workflowPath} contains a hosted runner job`);
+      assert.match(
+        match[1]!,
+        /\bmktbrowser\b/,
+        `${workflowPath} is not restricted to the MKT Browser runner pool`,
+      );
     }
   }
 
   assert.equal(runsOnCount, 9);
   const windowsPipeline = source(".github/workflows/windows-pipeline.yml");
   assert.equal(
-    windowsPipeline.match(/runs-on: \[self-hosted, Windows, X64\]/g)?.length,
+    windowsPipeline.match(/runs-on: \[self-hosted, Windows, X64, mktbrowser\]/g)?.length,
     3,
   );
+});
+
+test("does not send fork pull requests to persistent self-hosted jobs or inherit secrets", () => {
+  const gate = source(".github/workflows/pr-release-gate.yml");
+  const push = source(".github/workflows/release.yml");
+
+  assert.match(
+    gate,
+    /windows:[\s\S]+if: github\.event\.pull_request\.head\.repo\.full_name == github\.repository[\s\S]+uses: \.\/\.github\/workflows\/windows-pipeline\.yml/,
+  );
+  assert.equal(gate.includes("secrets: inherit"), false);
+  assert.equal(push.includes("secrets: inherit"), false);
 });
 
 function source(relativePath: string): string {

@@ -17,7 +17,7 @@ on:
         required: false
         default: "20"
       expected_engine_version:
-        description: "Engine version every run of a stability streak must report (blank records only)"
+        description: "Packaged-verifier engine version to require"
         required: false
         default: ""
   schedule:
@@ -29,7 +29,6 @@ permissions:
 jobs:
   windows:
     uses: ./.github/workflows/windows-pipeline.yml
-    secrets: inherit
     with:
       contract_iterations: ${{ github.event_name == 'workflow_dispatch' && inputs.contract_iterations || (github.event_name == 'schedule' && '20' || '5') }}
       expected_engine_version: ${{ github.event_name == 'workflow_dispatch' && inputs.expected_engine_version || '' }}

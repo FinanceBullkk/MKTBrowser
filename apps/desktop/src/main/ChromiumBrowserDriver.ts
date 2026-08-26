@@ -904,7 +904,6 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       endpoint = await waitForOwnedDevToolsEndpoint({
         dataDir: browserDataDir,
         childPid: child.pid,
-        startedAtMs: spawnedAtMs,
         budgetMs: discoveryBudgetMs,
       });
     } catch (error) {

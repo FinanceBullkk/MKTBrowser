@@ -28,7 +28,7 @@ permissions:
 
 jobs:
   freeze:
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, Linux, X64, mktbrowser]
     steps:
       - name: Refuse to build a commit other than the one named
         env:
@@ -48,7 +48,7 @@ jobs:
 
   build:
     needs: freeze
-    runs-on: [self-hosted, Windows, X64]
+    runs-on: [self-hosted, Windows, X64, mktbrowser]
     strategy:
       # Two independent builds of one tree. `fail-fast: false` so a failure in one still leaves the
       # other's evidence to compare against when diagnosing.
@@ -112,7 +112,7 @@ jobs:
 
   compare:
     needs: build
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, Linux, X64, mktbrowser]
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -138,7 +138,7 @@ jobs:
 
   attest:
     needs: compare
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, Linux, X64, mktbrowser]
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -198,7 +198,7 @@ jobs:
   # gates and they need hardware and an operator.
   installed-contract:
     needs: attest
-    runs-on: [self-hosted, Windows, X64]
+    runs-on: [self-hosted, Windows, X64, mktbrowser]
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -208,6 +208,10 @@ jobs:
         with:
           node-version: 22
           package-manager-cache: false
+
+      - name: Prepare pinned packaged verifier engine
+        shell: pwsh
+        run: ./.github/scripts/prepare-windows-packaged-verifier.ps1
 
       - name: Download the attested candidate installer
         uses: actions/download-artifact@v5

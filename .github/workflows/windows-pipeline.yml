@@ -18,7 +18,7 @@ on:
         type: string
         default: "5"
       expected_engine_version:
-        description: "Engine version every run of a stability streak must report (blank records only)"
+        description: "Packaged-verifier engine version to require"
         required: false
         type: string
         default: ""
@@ -28,7 +28,7 @@ permissions:
 
 jobs:
   quality:
-    runs-on: [self-hosted, Windows, X64]
+    runs-on: [self-hosted, Windows, X64, mktbrowser]
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -76,7 +76,7 @@ jobs:
 
   package:
     needs: quality
-    runs-on: [self-hosted, Windows, X64]
+    runs-on: [self-hosted, Windows, X64, mktbrowser]
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -130,7 +130,7 @@ jobs:
 
   packaged-contract:
     needs: package
-    runs-on: [self-hosted, Windows, X64]
+    runs-on: [self-hosted, Windows, X64, mktbrowser]
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -152,6 +152,10 @@ jobs:
 
       - name: Install dependencies without rebuilding the package
         run: yarn install --immutable
+
+      - name: Prepare pinned packaged verifier engine
+        shell: pwsh
+        run: ./.github/scripts/prepare-windows-packaged-verifier.ps1
 
       - name: Download exact directory package
         uses: actions/download-artifact@v5
@@ -184,8 +188,8 @@ jobs:
       - name: Verify packaged runtime contract repeatedly
         env:
           MKT_CONTRACT_ITERATIONS: ${{ inputs.contract_iterations }}
-          # Blank on push and pull request, so ordinary runs still record whatever Chrome the image
-          # ships. A stability streak declares one version and any drift fails that run.
+          # The engine archive is pinned by the preparation script. A manual streak may repeat the
+          # version assertion so the declaration is recorded beside its dispatch inputs.
           MKT_BROWSER_EXPECTED_ENGINE_VERSION: ${{ inputs.expected_engine_version }}
         run: node scripts/verify-packaged-runtime-contract.cjs --repeat "$env:MKT_CONTRACT_ITERATIONS"
 

@@ -63,7 +63,6 @@ export class DevToolsPortDiscoveryError extends Error {
 
 export interface DevToolsActivePortRecord {
   contents: string;
-  modifiedAtMs: number;
 }
 
 export interface DevToolsPortDiscoveryDeps {
@@ -118,7 +117,7 @@ export async function readDevToolsActivePortRecord(
     if (Buffer.byteLength(contents, "utf8") > MAX_ACTIVE_PORT_BYTES) {
       throw new Error("DevToolsActivePort exceeded the bounded read size");
     }
-    return { contents, modifiedAtMs: fileStat.mtimeMs };
+    return { contents };
   } finally {
     await handle.close();
   }
@@ -146,7 +145,6 @@ export async function waitForOwnedDevToolsEndpoint(
   options: {
     dataDir: string;
     childPid: number;
-    startedAtMs: number;
     budgetMs: number;
   },
   deps: DevToolsPortDiscoveryDeps = defaultDeps,
@@ -170,7 +168,10 @@ export async function waitForOwnedDevToolsEndpoint(
         deadlineMs,
         "active-port",
       );
-      if (record && record.modifiedAtMs >= options.startedAtMs) {
+      // The caller removes DevToolsActivePort immediately before spawn. Treat its reappearance as
+      // fresh, then authenticate it with the exact profile process set and listener ownership.
+      // Filesystem timestamps are deliberately absent from this contract.
+      if (record) {
         candidate = parseDevToolsActivePort(record.contents);
         activePortReadyAtMs ??= deps.now();
       } else {
