@@ -24,6 +24,13 @@
  * browser left by an earlier crash, another machine on the same key. So `markRefused` exists: when
  * a launch comes back with exit 76 the caller reports it, that key goes cooling, and the caller can
  * try the next one. The pool is a good guess that corrects itself, never an authority.
+ *
+ * Every hold here therefore has to end on some clock, bar one. A lease rebuilt from the journal
+ * that was still mid-flight when it was written describes a browser that may have outlived the app
+ * and may still be heartbeating, so no timestamp settles it and the key is held back until someone
+ * says what became of that browser. `reconcilePersistedLease` is that verdict, and it is owed on
+ * every start — a hold with no clock and nobody to end it is permanent, and on a one-key install a
+ * permanent hold is the whole product.
  */
 
 import { fingerprintLicenseKey, type LicenseLeaseState } from "./license-lease-journal.ts";
@@ -94,6 +101,14 @@ export interface LicenseKeyPoolOptions {
   leaseRecords?: readonly LicenseSeatLeaseRecord[];
 }
 
+/**
+ * How long a key rests after a close that did not hand its seat back.
+ *
+ * The vendor's measured lease TTL is 900s; this is that plus two minutes for clock skew. Do not
+ * shorten it below 15 minutes.
+ */
+export const LICENSE_SEAT_COOLDOWN_MS = 17 * 60_000;
+
 /** Enough to identify a key in a log without being able to reuse it. */
 export function keyTail(key: string): string {
   return key.length <= 6 ? "*".repeat(key.length) : key.slice(-6);
@@ -125,7 +140,7 @@ export class LicenseKeyPool {
       coolingUntilMs: null,
       blockedByUnreconciledLease: false,
     }));
-    this.cooldownMs = opts.cooldownMs ?? 17 * 60_000;
+    this.cooldownMs = opts.cooldownMs ?? LICENSE_SEAT_COOLDOWN_MS;
     this.now = opts.now ?? Date.now;
     if (opts.leaseRecords?.length) this.seedFromLeases(opts.leaseRecords);
   }
@@ -149,16 +164,21 @@ export class LicenseKeyPool {
       if (!slot) continue;
       if (["starting", "active", "ending", "pending-recovery"].includes(record.state)) {
         // These records may describe a browser that kept heartbeating after the app died. Its old
-        // journal timestamp is not a lease-expiry clock, so only explicit recovery may free it.
+        // journal timestamp is not a lease-expiry clock, so only explicit recovery may free it —
+        // which startup reconciliation owes on every start, however that browser ended.
         slot.blockedByUnreconciledLease = true;
         continue;
       }
       const movedAtMs = Date.parse(record.updatedAt);
-      const restedFromMs = Number.isNaN(movedAtMs) ? t : Math.min(movedAtMs, t);
-      const until = restedFromMs + this.cooldownMs;
-      if (until <= t) continue;
-      slot.coolingUntilMs = Math.max(slot.coolingUntilMs ?? 0, until);
+      this.rest(slot, Number.isNaN(movedAtMs) ? t : Math.min(movedAtMs, t), t);
     }
+  }
+
+  /** Hold a key back until `restingSinceMs` plus a cooldown, unless that moment has already passed. */
+  private rest(slot: Slot, restingSinceMs: number, nowMs: number): void {
+    const until = restingSinceMs + this.cooldownMs;
+    if (until <= nowMs) return;
+    slot.coolingUntilMs = Math.max(slot.coolingUntilMs ?? 0, until);
   }
 
   private refresh(): void {
@@ -216,15 +236,26 @@ export class LicenseKeyPool {
     slot.coolingUntilMs = this.now() + this.cooldownMs;
   }
 
-  /** Apply the verified outcome of a persisted lease reconciled during startup. */
-  reconcilePersistedLease(keyFingerprint: string, seatReleased: boolean): void {
+  /**
+   * Apply the verified outcome of a persisted lease reconciled during startup.
+   *
+   * `restingSinceMs` is when the seat started resting, for a caller that can prove the browser
+   * died earlier than this moment — a machine boot, say. Omitted means it died just now, which is
+   * the safe assumption whenever nothing better is known.
+   */
+  reconcilePersistedLease(
+    keyFingerprint: string,
+    seatReleased: boolean,
+    restingSinceMs?: number,
+  ): void {
     const slot = this.slots.find(
       (candidate) => fingerprintLicenseKey(candidate.key) === keyFingerprint,
     );
     if (!slot) return;
     slot.profileId = null;
     slot.blockedByUnreconciledLease = false;
-    slot.coolingUntilMs = seatReleased ? null : this.now() + this.cooldownMs;
+    slot.coolingUntilMs = null;
+    if (!seatReleased) this.rest(slot, restingSinceMs ?? this.now(), this.now());
   }
 
   /** Keys that could be handed out right now. */

@@ -66,7 +66,14 @@ profiles on the operator device.
   crash leaves the owned browser alive so startup can close it through `Browser.close`, reconcile
   the durable lease to `confirmed-released`, and reuse the same seat. Clean combined install passed
   9/9, repair 13/13, and uninstall 15/15 on the updated Defender snapshot without detections or
-  policy changes. Relay restart and reboot/startup recovery remain open.
+  policy changes. Relay restart remains open. The reboot defect measured on 25 August 2026 as
+  `FAIL - REBOOT_LEASE_STUCK_PENDING_RECOVERY` is fixed in code on 26 August 2026: startup now
+  settles a lease no surviving browser can answer for, taking the boot time as proof that whatever
+  held that seat cannot still be heartbeating, and rests the key for the vendor lease TTL counted
+  from the boot instead of holding it with no deadline. Measured on the packaged app against a
+  reconstructed reboot: the pre-fix build reproduces the 25 August verdict exactly, journal `active`
+  and capacity 0 free / 1 pending, while the fixed bundle on the same runtime settles the lease and
+  reports 1 free. A real power cycle on a real key is still owed, so `G3-RECOVERY` stays open.
 - Release-readiness Phase 1 is verified locally on Windows as of 22 August 2026. The vulnerable
   direct runtime dependency `extract-zip@2.0.1` is replaced by pinned `yauzl@3.4.0` behind an owned
   fail-closed ZIP boundary for engine and CRX/ZIP extraction. Traversal, absolute and Windows device

@@ -9,6 +9,7 @@ import {
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync, mkdirSync } from "node:fs";
+import { uptime } from "node:os";
 import {
   ProfileManager,
   exportProfile,
@@ -66,7 +67,7 @@ import { COMPATIBILITY_SMOKE_SWITCH } from "./compatibility-smoke-authorization.
 import { runPackagedCompatibilitySmoke } from "./compatibility-smoke-cli.ts";
 import { CdpSession } from "@mktbrowser/cdp-driver";
 import { appendProfileLifecycleLine } from "./profile-lifecycle-log.ts";
-import { LicenseKeyPool } from "./license-key-pool.ts";
+import { LICENSE_SEAT_COOLDOWN_MS, LicenseKeyPool } from "./license-key-pool.ts";
 import { LicenseLeaseJournal } from "./license-lease-journal.ts";
 import { LicenseLeaseRecorder } from "./license-lease-recorder.ts";
 import {
@@ -383,7 +384,9 @@ app
     let startupOrphanSweepOutcome: Promise<OrphanSweepOutcome> = Promise.resolve({
       closed: [],
       killed: [],
-      enumerated: true,
+      // Not "nothing was running" — nothing was looked at. Lease reconciliation reads an
+      // enumerated sweep's silence as proof a browser is gone, which this is not.
+      enumerated: false,
       recoveries: [],
     });
     if (cachedSettings.startupOrphanSweep) {
@@ -453,9 +456,13 @@ app
     // power loss never hands its session back, and the vendor keeps counting that seat for the
     // rest of its lease — so a pool rebuilt as all-idle would offer a key the engine then refuses.
     // On a one-key install that is every launch failing with nothing running to explain it.
+    // The boot time is what makes a lease left mid-flight by a restart recoverable: its browser
+    // cannot have outlived the reboot, so the vendor's clock has been running since then, and
+    // startup reconciliation can end a hold no surviving browser will ever come back to end.
+    const bootedAtMs = Date.now() - uptime() * 1000;
     licenseKeyPool = new LicenseKeyPool({
       keys: cachedSettings.cloakBrowserLicenseKeys,
-      cooldownMs: 17 * 60_000,
+      cooldownMs: LICENSE_SEAT_COOLDOWN_MS,
       leaseRecords: licenseLeaseJournal.snapshot(),
     });
     const licenseLeaseRecorder = new LicenseLeaseRecorder(licenseLeaseJournal, (message) => {
@@ -468,6 +475,7 @@ app
           pool: licenseKeyPool!,
           recorder: licenseLeaseRecorder,
           log: (message) => console.warn(message),
+          bootedAtMs,
         });
       },
       () => {
