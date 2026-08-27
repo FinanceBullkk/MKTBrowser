@@ -1773,6 +1773,28 @@ function buildCloakBrowserFingerprintArgs(profileId: ProfileId, fp: FingerprintC
     `--fingerprint-timezone=${fp.timezone}`,
     `--fingerprint-screen-width=${fp.screen.width}`,
     `--fingerprint-screen-height=${fp.screen.height}`,
+    // Take the HOST's display scaling out of the persona's screen.
+    //
+    // The preload that spoofs `screen.*` in JS is skipped on CloakBrowser, so these two switches
+    // are the only thing describing the screen, and the host's device scale factor reaches one half
+    // of the answer but not the other. Measured 27 August 2026 on a host at 150%
+    // (`AppliedDPI 144`): `-screen-width=1536 -screen-height=864 -taskbar-height=48` reported
+    // `screen` 2304x1296 — the declared size times 1.5 — while `availWidth/availHeight` stayed
+    // 1536x816, the declared size untouched. A second profile at 1680x1050 inflated by the same
+    // 1.5. The driver's older note recorded the switch as honoured exactly on CloakBrowser 146,
+    // which is consistent: at 100% scaling the multiplier is invisible.
+    //
+    // The result is a screen no machine can have. `availWidth` ends up SMALLER than `width`, which
+    // a horizontal Windows taskbar cannot produce, and `height - availHeight` becomes 480px against
+    // a real taskbar of 40 to 72. It also unpins the persona from itself: the same profile reports
+    // a different screen on every host with different scaling, so a profile is not portable between
+    // operator machines and every profile on one host carries that host's scaling.
+    //
+    // Pinning the scale to the persona's own `dpr` removes the host from the calculation. A
+    // persona claiming a 1536x864 screen at dpr 1 should render exactly as that machine would.
+    // The visible cost is that the browser no longer follows the operator's Windows scaling, which
+    // is the point rather than a side effect.
+    `--force-device-scale-factor=${fp.dpr}`,
     `--fingerprint-hardware-concurrency=${fp.hardwareConcurrency}`,
     `--fingerprint-device-memory=${deviceMemoryApiValue(fp.deviceMemory)}`,
   ];
