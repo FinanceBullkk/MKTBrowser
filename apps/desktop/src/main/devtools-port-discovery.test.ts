@@ -81,6 +81,66 @@ test("never attaches when the listener belongs to a foreign process", async () =
   });
 });
 
+test("rejects a listener owner whose process identity changes between OS snapshots", async () => {
+  const clock = createClock();
+  let processReads = 0;
+  const deps = harnessDeps(clock);
+  deps.enumerateProcesses = async () => {
+    processReads += 1;
+    return {
+      processes:
+        processReads % 2 === 1
+          ? [browser(20)]
+          : [{ pid: 20, commandLine: `foreign.exe --user-data-dir="${DATA_DIR}"` }],
+      enumerated: true,
+    };
+  };
+
+  await assert.rejects(discover(deps, 220), (error: unknown) => {
+    assert.ok(error instanceof DevToolsPortDiscoveryError);
+    assert.equal(error.diagnostics.stage, "process");
+    assert.ok(processReads >= 2);
+    return true;
+  });
+});
+
+test("rejects a listener that changes owners during authentication", async () => {
+  const clock = createClock();
+  let ownerReads = 0;
+  const deps = harnessDeps(clock);
+  deps.enumeratePortOwners = async () => {
+    ownerReads += 1;
+    return { inspected: true, pids: ownerReads === 1 ? [20] : [30] };
+  };
+
+  await assert.rejects(discover(deps, 220), (error: unknown) => {
+    assert.ok(error instanceof DevToolsPortDiscoveryError);
+    assert.equal(error.diagnostics.stage, "ownership");
+    assert.ok(ownerReads >= 2);
+    assert.deepEqual(error.diagnostics.portOwnerPids, [30]);
+    return true;
+  });
+});
+
+test("rejects a duplicate owner set that could mask a new PID", async () => {
+  const clock = createClock();
+  let ownerReads = 0;
+  const deps = harnessDeps(clock, {
+    processes: [browser(20), browser(30)],
+  });
+  deps.enumeratePortOwners = async () => {
+    ownerReads += 1;
+    return { inspected: true, pids: ownerReads % 2 === 1 ? [20, 20] : [20, 30] };
+  };
+
+  await assert.rejects(discover(deps, 220), (error: unknown) => {
+    assert.ok(error instanceof DevToolsPortDiscoveryError);
+    assert.equal(error.diagnostics.stage, "ownership");
+    assert.ok(ownerReads >= 2);
+    return true;
+  });
+});
+
 test("follows a Windows launcher handoff to the owned primary process", async () => {
   const clock = createClock();
   const deps = harnessDeps(clock, {

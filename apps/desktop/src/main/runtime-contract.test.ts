@@ -258,6 +258,12 @@ test("lets Chromium assign the DevTools port instead of consuming fixed ports", 
     driver,
     /discoveryBudgetMs = readinessBudgetMs - \(Date\.now\(\) - readinessStartedAtMs\)/,
   );
+  assert.match(processDiscovery, /System32.*netstat\.exe/);
+  assert.match(processDiscovery, /System32.*WindowsPowerShell.*powershell\.exe/);
+  assert.match(processDiscovery, /Get-CimInstance -Query \$query -ErrorAction Stop/);
+  assert.match(processDiscovery, /Console\]::OutputEncoding = \[System\.Text\.UTF8Encoding\]/);
+  assert.match(processDiscovery, /maxBuffer: MAX_WINDOWS_PROCESS_OUTPUT_BYTES/);
+  assert.doesNotMatch(processDiscovery, /Get-NetTCPConnection/);
   assert.doesNotMatch(processDiscovery, /LocalAddress -in @\('127\.0\.0\.1','0\.0\.0\.0'\)/);
 });
 

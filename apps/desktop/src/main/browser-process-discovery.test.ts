@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { createServer } from "node:net";
 import test from "node:test";
 import {
   commandLineUsesDataDir,
   commandLineUsesDataDirUnder,
   debugPortFromCommandLine,
+  enumerateBrowserProcessesUsingDataDir,
+  enumerateLoopbackPortOwners,
+  parseLoopbackPortOwners,
   selectPrimaryBrowserPid,
+  windowsSystemRootFromEnv,
 } from "./browser-process-discovery.ts";
 
 const DATA_DIR = "C:\\Users\\operator\\MKT Browser\\profile-1";
@@ -57,6 +64,80 @@ test("reads the DevTools port an orphaned browser was started with", () => {
   // A flag that merely starts with the same text is a different flag.
   assert.equal(debugPortFromCommandLine("chrome.exe --remote-debugging-port-x=9222"), null);
 });
+
+test("parses only exact IPv4 loopback listeners from native netstat output", () => {
+  const raw = [
+    "  TCP    127.0.0.1:47822        0.0.0.0:0              LISTENING       20",
+    "  TCP    127.0.0.1:47822        0.0.0.0:0              LISTENING       20",
+    "  TCP    127.0.0.1:47822        127.0.0.1:53100        ESTABLISHED     30",
+    "  TCP    127.0.0.1:47823        0.0.0.0:0              LISTENING       40",
+    "  TCP    0.0.0.0:47822          0.0.0.0:0              LISTENING       50",
+    "  TCP    [::1]:47822            [::]:0                 LISTENING       60",
+    "  TCP    127.0.0.1:47824        0.0.0.0:0              LOCALIZED      70",
+  ].join("\r\n");
+
+  assert.deepEqual(parseLoopbackPortOwners(raw, 47822), [20]);
+  assert.deepEqual(parseLoopbackPortOwners(raw, 47823), [40]);
+  // State labels are localized by Windows; the wildcard foreign endpoint is the invariant.
+  assert.deepEqual(parseLoopbackPortOwners(raw, 47824), [70]);
+  assert.deepEqual(parseLoopbackPortOwners(raw, 0), []);
+  assert.deepEqual(parseLoopbackPortOwners("x".repeat(1_048_577), 47822), []);
+});
+
+test("accepts only a drive-qualified local Windows system root", () => {
+  assert.equal(windowsSystemRootFromEnv({ SystemRoot: "C:\\Windows" }), "C:\\Windows");
+  assert.equal(
+    windowsSystemRootFromEnv({ SystemRoot: "", WINDIR: "D:\\Windows\\" }),
+    "D:\\Windows",
+  );
+  assert.equal(windowsSystemRootFromEnv({ SystemRoot: "\\Windows" }), null);
+  assert.equal(windowsSystemRootFromEnv({ SystemRoot: "\\\\server\\share\\Windows" }), null);
+  assert.equal(windowsSystemRootFromEnv({ SystemRoot: "Windows" }), null);
+});
+
+test(
+  "attributes a real Windows loopback listener to the owning process",
+  { skip: process.platform !== "win32" },
+  async () => {
+    const server = createServer();
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = server.address();
+      assert.notEqual(address, null);
+      assert.equal(typeof address, "object");
+      if (address === null || typeof address !== "object") throw new Error("listener did not bind");
+      const result = await enumerateLoopbackPortOwners(address.port);
+      assert.equal(result.inspected, true);
+      assert.deepEqual(result.pids, [process.pid]);
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+  },
+);
+
+test(
+  "finds a real Windows process by its exact user-data directory",
+  { skip: process.platform !== "win32" },
+  async () => {
+    const dataDir = "C:\\g3\\h\u1ed3-s\u01a1-process-inspection";
+    const child = spawn(
+      process.execPath,
+      ["-e", "setInterval(() => {}, 1000)", "--", `--user-data-dir=${dataDir}`],
+      { stdio: "ignore", windowsHide: true },
+    );
+    await once(child, "spawn");
+    try {
+      const result = await enumerateBrowserProcessesUsingDataDir(dataDir);
+      assert.equal(result.enumerated, true);
+      assert.equal(result.processes.some((candidate) => candidate.pid === child.pid), true);
+    } finally {
+      child.kill();
+      await once(child, "exit");
+    }
+  },
+);
 
 test("matches profiles beneath the app root without reaching past it", () => {
   assert.equal(

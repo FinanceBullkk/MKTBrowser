@@ -57,23 +57,21 @@ profiles on the operator device.
 - P0 automated proxy, lease-journal, and readiness hardening is green as of 22 August 2026. Proxied
   launch fails closed on unverifiable egress; lease storage is atomic, schema-validated,
   crash-recoverable, serialized, and redacted; aggregate capacity contains no key/profile identity.
-  `license-capacity-v1` remains deliberately unadvertised while Relay-restart and reboot recovery
-  are incomplete, even though driver journal writes and active Electron-crash startup recovery now
-  pass. Real proxy/DNS/WebRTC evidence, human input, second-PC recovery, and canary gates remain
-  open, so this is not rollout approval.
-- Lifecycle and installer evidence is current through 25 August 2026. Normal close returns the
+  Packaged Relay v15 restart and real VirtualBox power-cycle recovery passed on 27 August 2026 using
+  a disposable licensed profile. `license-capacity-v1` remains deliberately unadvertised because
+  live vendor schema/sidecar integration, real proxy/DNS/WebRTC evidence, human input, second-PC
+  recovery, and canary gates remain open, so this is not rollout approval.
+- Lifecycle and installer evidence is current through 27 August 2026. Normal close returns the
   seat; an exact Browser hard kill persists cooling and blocks false reuse; an active Electron
   crash leaves the owned browser alive so startup can close it through `Browser.close`, reconcile
   the durable lease to `confirmed-released`, and reuse the same seat. Clean combined install passed
   9/9, repair 13/13, and uninstall 15/15 on the updated Defender snapshot without detections or
-  policy changes. Relay restart remains open. The reboot defect measured on 25 August 2026 as
-  `FAIL - REBOOT_LEASE_STUCK_PENDING_RECOVERY` is fixed in code on 26 August 2026: startup now
-  settles a lease no surviving browser can answer for, taking the boot time as proof that whatever
-  held that seat cannot still be heartbeating, and rests the key for the vendor lease TTL counted
-  from the boot instead of holding it with no deadline. Measured on the packaged app against a
-  reconstructed reboot: the pre-fix build reproduces the 25 August verdict exactly, journal `active`
-  and capacity 0 free / 1 pending, while the fixed bundle on the same runtime settles the lease and
-  reports 1 free. A real power cycle on a real key is still owed, so `G3-RECOVERY` stays open.
+  policy changes. Relay v15 preserved device identity and spent-ticket replay protection across
+  restart. The final disposable-VM power-cycle gate validated an active lease before one real
+  `VBoxManage controlvm poweroff`, found no Browser process after boot while the exact lease remained
+  active, converged through `cooling` with `pendingRecovery=0`, returned capacity after TTL, and
+  relaunched and cleanly released the same profile. Evidence:
+  `local-test-artifacts/phase5/real-power-cycle-recovery-evidence-20260827-ownership-fix-r2.json`.
 - Release-readiness Phase 1 is verified locally on Windows as of 22 August 2026. The vulnerable
   direct runtime dependency `extract-zip@2.0.1` is replaced by pinned `yauzl@3.4.0` behind an owned
   fail-closed ZIP boundary for engine and CRX/ZIP extraction. Traversal, absolute and Windows device
@@ -89,12 +87,12 @@ profiles on the operator device.
   Windows runner runs remain open, so Phase 2 is not complete.
 - This build may be used for an owner-led technical demo with disposable profiles. It is not
   approved for real accounts, pilot distribution, or team rollout.
-- The current desktop package version is `0.3.12`. The local Windows directory package measured on
-  25 August 2026 has SHA-256
-  `50b0ccb3ae470d7089203877f8cbf0e3b17718dabde693182fbc4be688655469`; packaged `app.asar` SHA-256
-  is `7160c85a49afe0095a06e7e9df80ef5d07e2fc80f50df54ffb95b7102a1aa557`. Node `22.23.2`
-  verification passes `test:mkb02` `120/120`, critical coverage `93/93` at 88.66% lines, 83.74%
-  branches, and 87.78% functions, typecheck, zero-warning lint, the complete installer/build gate,
+- The current desktop package version is `0.3.12`. The final 27 August Windows directory package
+  from Browser source `55b858779e8cabce2fb7ed722575d5556479f0d6` has SHA-256
+  `beed3ea849d39bddb41b050bc945744dea1fdc21dd1432f86ca767f2a3fe7c3e`; packaged `app.asar`
+  SHA-256 is `ea583f0e2c5f90a5f6f7fe2730726f17cae791a5c524fa386a5c2b5c20cc07b2`. Node `22.23.2`
+  verification passes `test:mkb02` `135/135`, targeted Windows ownership/runtime checks `42/42`,
+  typecheck, and zero-warning lint, alongside the complete installer/build gate,
   the active Electron-crash recovery gate, and packaged runtime/profile-lifecycle verification.
   The repository's `yarn lint` enforces the workspace quality contract, strict TypeScript
   unused/fallthrough checks, and JavaScript syntax checks. The packaged verifier covers

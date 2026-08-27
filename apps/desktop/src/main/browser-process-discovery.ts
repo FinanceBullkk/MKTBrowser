@@ -1,7 +1,11 @@
 import { execFile } from "node:child_process";
+import { join, win32 } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+const MAX_NETSTAT_OUTPUT_BYTES = 1_048_576;
+const MAX_WINDOWS_PROCESS_OUTPUT_BYTES = 1_048_576;
+const WINDOWS_PROCESS_INSPECTION_TIMEOUT_MS = 5_000;
 
 export interface BrowserProcessInfo {
   pid: number;
@@ -130,6 +134,23 @@ export function commandLineUsesDataDir(commandLine: string, dataDir: string): bo
   return value !== null && normalizePath(value) === expected;
 }
 
+/** Parse bounded netstat rows; the wildcard foreign endpoint identifies a listener across locales. */
+export function parseLoopbackPortOwners(raw: string, port: number): number[] {
+  if (!Number.isInteger(port) || port <= 0 || port >= 65_536) return [];
+  if (Buffer.byteLength(raw, "utf8") > MAX_NETSTAT_OUTPUT_BYTES) return [];
+
+  const owners = new Set<number>();
+  for (const line of raw.split(/\r?\n/)) {
+    const match = line.match(
+      /^\s*TCP\s+127\.0\.0\.1:(\d+)\s+0\.0\.0\.0:0\s+\S+\s+(\d+)\s*$/i,
+    );
+    if (!match || Number(match[1]) !== port) continue;
+    const pid = Number(match[2]);
+    if (Number.isInteger(pid) && pid > 0) owners.add(pid);
+  }
+  return [...owners];
+}
+
 /** Enumerate every Windows process listening specifically on 127.0.0.1 for `port`. */
 export async function enumerateLoopbackPortOwners(
   port: number,
@@ -138,42 +159,48 @@ export async function enumerateLoopbackPortOwners(
   if (!Number.isInteger(port) || port <= 0 || port >= 65_536) {
     return { inspected: true, pids: [] };
   }
+  const systemRoot = windowsSystemRootFromEnv();
+  if (!systemRoot) return { inspected: false, pids: [] };
 
-  const script = [
-    `$items = @(Get-NetTCPConnection -State Listen -ErrorAction Stop | Where-Object { $_.LocalPort -eq ${port} -and $_.LocalAddress -eq '127.0.0.1' } | Select-Object -ExpandProperty OwningProcess -Unique)`,
-    "$result = [pscustomobject]@{ inspected = $true; pids = @($items | ForEach-Object { [int]$_ }) }",
-    "[Console]::Out.Write(($result | ConvertTo-Json -Compress))",
-  ].join("; ");
   try {
     const { stdout } = await execFileAsync(
-      "powershell.exe",
-      ["-NoProfile", "-NonInteractive", "-Command", script],
-      { encoding: "utf8", windowsHide: true, timeout: 3000 },
+      join(systemRoot, "System32", "netstat.exe"),
+      ["-ano", "-p", "tcp"],
+      {
+        encoding: "utf8",
+        windowsHide: true,
+        timeout: 3000,
+        maxBuffer: MAX_NETSTAT_OUTPUT_BYTES,
+      },
     );
-    const parsed = JSON.parse(stdout) as { inspected?: unknown; pids?: unknown };
-    if (parsed.inspected !== true || !Array.isArray(parsed.pids)) {
-      return { inspected: false, pids: [] };
-    }
-    return {
-      inspected: true,
-      pids: parsed.pids.map(Number).filter((pid) => Number.isInteger(pid) && pid > 0),
-    };
+    return { inspected: true, pids: parseLoopbackPortOwners(stdout, port) };
   } catch {
     return { inspected: false, pids: [] };
   }
 }
 
 async function listWindowsProcesses(): Promise<BrowserProcessInfo[]> {
+  const systemRoot = windowsSystemRootFromEnv();
+  if (!systemRoot) throw new Error("Windows system root is unavailable");
   const script = [
-    "$items = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*--user-data-dir=*' } | ForEach-Object { [pscustomobject]@{ pid = [int]$_.ProcessId; commandLine = [string]$_.CommandLine } }",
-    "if ($items) { ConvertTo-Json -InputObject @($items) -Compress }",
+    "$ErrorActionPreference = 'Stop'",
+    "$ProgressPreference = 'SilentlyContinue'",
+    "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
+    "$query = \"SELECT ProcessId, CommandLine FROM Win32_Process WHERE CommandLine LIKE '%--user-data-dir=%'\"",
+    "$items = Get-CimInstance -Query $query -ErrorAction Stop | ForEach-Object { [pscustomobject]@{ pid = [int]$_.ProcessId; commandLine = [string]$_.CommandLine } }",
+    "if ($items) { [Console]::Out.Write((ConvertTo-Json -InputObject @($items) -Compress)) }",
   ].join("; ");
 
   try {
     const { stdout } = await execFileAsync(
-      "powershell.exe",
+      join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
       ["-NoProfile", "-NonInteractive", "-Command", script],
-      { encoding: "utf8", windowsHide: true, timeout: 3000 },
+      {
+        encoding: "utf8",
+        windowsHide: true,
+        timeout: WINDOWS_PROCESS_INSPECTION_TIMEOUT_MS,
+        maxBuffer: MAX_WINDOWS_PROCESS_OUTPUT_BYTES,
+      },
     );
     if (!stdout.trim()) return [];
     const parsed = JSON.parse(stdout) as BrowserProcessInfo[] | BrowserProcessInfo;
@@ -182,6 +209,16 @@ async function listWindowsProcesses(): Promise<BrowserProcessInfo[]> {
     // Propagate: the one caller that cannot tolerate a false empty checks for it.
     throw new Error("could not enumerate Windows processes", { cause });
   }
+}
+
+export function windowsSystemRootFromEnv(
+  env: Partial<Pick<NodeJS.ProcessEnv, "SystemRoot" | "WINDIR">> = process.env,
+): string | null {
+  const candidate = env.SystemRoot || env.WINDIR;
+  if (!candidate) return null;
+  if (!/^[A-Za-z]:[\\/]/.test(candidate)) return null;
+  const normalized = win32.resolve(candidate);
+  return normalized;
 }
 
 async function listPosixProcesses(): Promise<BrowserProcessInfo[]> {
