@@ -46,9 +46,9 @@ profiles on the operator device.
   ownership pass. The supported topology is one Windows operating-system user per PC; a foreign
   per-user installation is rejected before firewall mutation, and cross-user operation is not a
   release gate. The complete Node 22 installer suite, packaging contracts, typecheck, lint, and the
-  production Electron bundle pass. Operational distribution remains
-  blocked until the installer is rebuilt from the current source and the remaining human Windows
-  gates pass.
+  production Electron bundle pass. The current source candidate is rebuilt and published for a
+  controlled internal beta; broad distribution still waits for the remaining human, network,
+  vendor, and operator gates.
 - MKB-03 Browser profile deletion is implemented as a separate in-app lifecycle. Contract version
   `4` removes `delete_profile` from MCP, and profile schema version `3` records incomplete deletion
   for crash-safe retry. The operator must type `DELETE <full profile id>`; active launch/close work
@@ -85,26 +85,16 @@ profiles on the operator device.
   hashed uploaded archive. The final local directory package passed 5/5 cold lifecycle iterations
   while ports 9222 and 9223 were occupied. The required PR artifact run and seven independent 20/20
   Windows runner runs remain open, so Phase 2 is not complete.
-- This build may be used for an owner-led technical demo with disposable profiles. It is not
-  approved for real accounts, pilot distribution, or team rollout.
-- The current desktop package version is `0.3.12`. The final 27 August Windows directory package
-  from Browser source `55b858779e8cabce2fb7ed722575d5556479f0d6` has SHA-256
-  `beed3ea849d39bddb41b050bc945744dea1fdc21dd1432f86ca767f2a3fe7c3e`; packaged `app.asar`
-  SHA-256 is `ea583f0e2c5f90a5f6f7fe2730726f17cae791a5c524fa386a5c2b5c20cc07b2`. Node `22.23.2`
-  verification passes `test:mkb02` `135/135`, targeted Windows ownership/runtime checks `42/42`,
-  typecheck, and zero-warning lint, alongside the complete installer/build gate,
-  the active Electron-crash recovery gate, and packaged runtime/profile-lifecycle verification.
-  The repository's `yarn lint` enforces the workspace quality contract, strict TypeScript
-  unused/fallthrough checks, and JavaScript syntax checks. The packaged verifier covers
-  the restricted tool inventory, deterministic managed create/retry, correlated diagnostics,
-  direct-launch/delete denial, endpoint-free proxy summaries, atomic managed launch, Windows Chrome
-  launcher-PID handoff, OS-assigned owned DevTools discovery, per-stage timing, bounded verifier HTTP
-  requests, sanitized failure snapshots, process-confirmed close, and clean process exit. It remains
-  unsigned. The
-  attested installer was built on 23 August from older source `eac77f8f` / tree `cce7b897`. It
-  embeds the verified Relay v15 archive but predates four local Browser fixes, and its supported
-  combined install/repair/uninstall gate remains open, so it is not the current rollout artifact
-  and must not be distributed.
+- A controlled internal-beta installer is now published for Windows x64. Candidate `0.3.12` was
+  built from Browser source `6d1b0a2a54c7a688ef39c3c6c1fddab3edd557fe`, has installer SHA-256
+  `d570ccc3326b5a046d91b7b677f4232ab76908f2fb034c60799e31695f43fc4b`, and embeds the exact
+  published Relay v15 payload. It is unsigned and limited to one profile at a time with human
+  operations. The [MKTTool internal-beta release guide](../MKTTool/docs/internal-beta-release.md)
+  contains the operator path, provenance, and open gates.
+- The candidate's packaged runtime verifier passed `1/1` iteration and the production dependency
+  audit reported no suggestions. The verifier used a system Chrome compatibility fixture; that is
+  not evidence that the measured CloakBrowser identity surfaces are unique. Real-account pilot and
+  broad team rollout remain gated by the acceptance matrix.
 
 ## Owned product and local contract
 
