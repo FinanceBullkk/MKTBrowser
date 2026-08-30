@@ -12,9 +12,9 @@ profiles on the operator device.
 ## Consolidation truth — 30 August 2026
 
 The current consolidation branch is `release/consolidation-20260830` at
-`0b62df5` (documentation follow-up; the accepted provenance receipt was generated from
-the preceding source commit `5ef710dd931028d4d608bea098311bf54bf5dc31`; the later commit only
-records the release-lane closure and does not change the packaged payload).
+`7c9b7cf` (documentation follow-up; the accepted provenance receipt was generated from
+the preceding source commit `5ef710dd931028d4d608bea098311bf54bf5dc31`; the later commits only
+record release-lane closure and CI-status corrections and do not change the packaged payload).
 Q14's dedicated safety commit corrects the MCP/driver capability language: raw CDP is session
 restoration, and fingerprint reconciliation is internal coherence—not stealth evidence or identity
 isolation.
@@ -106,9 +106,10 @@ human login/input, and no identity-isolation claim.
   hashed uploaded archive. The final local directory package passed 5/5 cold lifecycle iterations
   while ports 9222 and 9223 were occupied. The required PR artifact run and seven independent 20/20
   Windows runner runs remain open, so Phase 2 is not complete.
-- The consolidation push workflow run `33291356306` is retained as a runner failure: the
+- The latest consolidation push workflow run `33296202751` is retained as a runner failure: the
   self-hosted Windows PowerShell shell could not resolve `node` after setup, so package jobs were
-  skipped. This is an OPEN Browser-CI environment gate, not a claim that the skipped jobs passed.
+  skipped. The earlier `33291356306` run showed the same failure mode and is historical evidence.
+  This is an OPEN Browser-CI environment gate, not a claim that the skipped jobs passed.
 - Phase S3 produced a measured Windows x64 internal-beta candidate `0.3.13` at the consolidation
   tree `5ef710dd`; the verified Relay v16 archive is pinned. The installer remains unpublished and
   is not authorized for real-account use: the payload is deterministic, but the outer NSIS/resource
