@@ -11,10 +11,10 @@ profiles on the operator device.
 
 ## Consolidation truth — 30 August 2026
 
-The current consolidation branch is `release/consolidation-20260830` at
-`c329820` (documentation follow-up; the accepted provenance receipt was generated from
-the preceding source commit `5ef710dd931028d4d608bea098311bf54bf5dc31`; the later commits only
-record release-lane closure and CI-status corrections and do not change the packaged payload).
+The current consolidation branch is `release/consolidation-20260830`. The accepted provenance
+receipt was generated from source commit `5ef710dd931028d4d608bea098311bf54bf5dc31`; subsequent
+commits are documentation-only release-lane and CI-status corrections and do not change the
+packaged payload.
 Q14's dedicated safety commit corrects the MCP/driver capability language: raw CDP is session
 restoration, and fingerprint reconciliation is internal coherence—not stealth evidence or identity
 isolation.
