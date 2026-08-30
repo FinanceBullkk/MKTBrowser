@@ -9,6 +9,22 @@ browser service, or an authorization boundary. MKTTool Web decides which account
 the Relay verifies signed tickets and holds operator secrets, and MKT Browser stores and launches
 profiles on the operator device.
 
+## Consolidation truth — 30 August 2026
+
+The current consolidation tree is `release/consolidation-20260830` at
+`5ef710dd931028d4d608bea098311bf54bf5dc31`; the provenance emitter accepts its clean source tree.
+Q14's dedicated safety commit corrects the MCP/driver capability language: raw CDP is session
+restoration, and fingerprint reconciliation is internal coherence—not stealth evidence or identity
+isolation.
+
+The Windows `0.3.13` payload and Relay v16 bytes are measured, but the outer installer still has an
+open NSIS/resource-order variance and the exact CloakBrowser Stable `.2` engine archive is absent.
+The five-artifact Browser tuple is therefore P4b **OPEN** and not published. It is independent of
+the MKTTool Web/Lane A deployment. `G2-IDENTITY` remains **FAIL** on the recorded font/audio/WebGL
+collisions. There is no CloakBrowser channel, so Lane C is **CLOSED**: no vendor request, date, or
+“coming soon” promise. MKT Browser remains a controlled Lane A/B tool with one profile at a time,
+human login/input, and no identity-isolation claim.
+
 ## Current status
 
 - Upstream application baseline: MultiZen `v0.3.1` at commit
@@ -47,8 +63,9 @@ profiles on the operator device.
   per-user installation is rejected before firewall mutation, and cross-user operation is not a
   release gate. The complete Node 22 installer suite, packaging contracts, typecheck, lint, and the
   production Electron bundle pass on the last verified package. The current `0.3.13` source
-  candidate is a draft only; it is not published or approved for real-account use. Broad
-  distribution still waits for the remaining human, network, vendor, identity, and operator gates.
+  candidate is a measured technical draft only; it is not published or approved for real-account
+  use. The remaining Browser tuple and human/operator gates are explicit; Lane A Web deployment is
+  tracked separately in MKTTool.
 - MKB-03 Browser profile deletion is implemented as a separate in-app lifecycle. Contract version
   `4` removes `delete_profile` from MCP, and profile schema version `3` records incomplete deletion
   for crash-safe retry. The operator must type `DELETE <full profile id>`; active launch/close work
@@ -61,7 +78,8 @@ profiles on the operator device.
   2026 using a disposable licensed profile; that v15 artifact is not the current candidate.
   `license-capacity-v1` remains deliberately unadvertised because
   live vendor schema/sidecar integration, real proxy/DNS/WebRTC evidence, human input, second-PC
-  recovery, and canary gates remain open, so this is not rollout approval.
+  recovery, and canary gates remain open, so this is not rollout approval. The custom-engine path is
+  closed and there is no CloakBrowser channel; Lane C is closed rather than waiting for a response.
 - Lifecycle and installer evidence is current through 27 August 2026. Normal close returns the
   seat; an exact Browser hard kill persists cooling and blocks false reuse; an active Electron
   crash leaves the owned browser alive so startup can close it through `Browser.close`, reconcile
@@ -86,12 +104,12 @@ profiles on the operator device.
   hashed uploaded archive. The final local directory package passed 5/5 cold lifecycle iterations
   while ports 9222 and 9223 were occupied. The required PR artifact run and seven independent 20/20
   Windows runner runs remain open, so Phase 2 is not complete.
-- Phase S3 is building a draft Windows x64 internal-beta candidate `0.3.13` from Browser join key
-  `3f3765360eae6de83fd617bf8e19949fb70719af`, pinned to the verified Relay v16 archive. The installer
-  remains unpublished and is not authorized for real-account use until payload, lifecycle, identity,
-  and release-authority gates close. It is intended for one profile at a time with human login and
-  input; identity isolation is not yet proven. The [MKTTool internal-beta release guide](../MKTTool/docs/internal-beta-release.md)
-  records the draft tuple and open gates.
+- Phase S3 produced a measured Windows x64 internal-beta candidate `0.3.13` at the consolidation
+  tree `5ef710dd`; the verified Relay v16 archive is pinned. The installer remains unpublished and
+  is not authorized for real-account use: the payload is deterministic, but the outer NSIS/resource
+  ordering varies and the exact Stable `.2` engine archive is absent. It is intended for one profile
+  at a time with human login and input; identity isolation is not proven. The [MKTTool internal-beta
+  release guide](../MKTTool/docs/internal-beta-release.md) records the P4b tuple and closed Lane C.
 - The former `0.3.12` installer and published Relay v15 payload remain quarantined negative evidence;
   their hashes are retained only to explain the failed restart-replay gate and must not be reused.
 - The packaged runtime verifier uses a system Chrome compatibility fixture when selected; that is
