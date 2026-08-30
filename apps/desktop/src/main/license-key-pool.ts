@@ -2,9 +2,10 @@
  * Which licence key each running profile is using, and which keys are free.
  *
  * The engine binds a session to the key it was given at spawn and refuses a second one with exit
- * 76, so concurrency is per key: N keys the operator holds means up to N profiles at once, one key
- * each. This pool is the bookkeeping for that — it hands out a key nobody is using, remembers who
- * has it, and takes it back on close.
+ * 76, so concurrency is per key when a verified multi-seat entitlement enables more than one key:
+ * one key per profile. This pool is the bookkeeping for that capability — it hands out a key nobody
+ * is using, remembers who has it, and takes it back on close. The default one-seat startup path
+ * passes only the primary key, even when settings retain additional keys for a future entitlement.
  *
  * Two facts about the engine shape everything here.
  *

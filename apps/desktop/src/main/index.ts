@@ -128,6 +128,20 @@ let browserDriverReady = false;
 let switchToCftInFlight: Promise<ChromiumStatus> | null = null;
 let activeCompatibilityEnginePin: CompatibilityEnginePin | null = null;
 
+/**
+ * Additional vendor seats are not verified for this build. Keep this as a code-controlled
+ * capability rather than deriving it from settings or an operator-provided environment value:
+ * persisted extra keys remain available for a future entitlement migration, but they must not be
+ * handed to the local pool while the installation is on the conservative one-seat plan.
+ */
+const ADDITIONAL_LICENSE_KEYS_ENABLED = false;
+
+/** Recover a legacy/list-only primary without activating any additional seat. */
+function resolvePrimaryLicenseKey(settings: AppSettings | null): string {
+  if (!settings) return "";
+  return settings.cloakBrowserLicenseKey.trim() || settings.cloakBrowserLicenseKeys[0]?.trim() || "";
+}
+
 const ipcRegistration = createIpcRuntimeRegistration<IpcMainInvokeEvent>({
   register: (channel, handler) => ipcMain.handle(channel, handler),
   isTrustedSender: (event) => Boolean(mainWindow && event.sender === mainWindow.webContents),
@@ -164,7 +178,7 @@ function createChromiumBootstrap(engine: AppSettings["browserEngine"]): Chromium
     }),
     // Read at construction: switching the key requires a restart, same as
     // switching the engine. Ignored by CFT, which has no licensed channel.
-    cloakBrowserLicenseKey: cachedSettings?.cloakBrowserLicenseKey ?? "",
+    cloakBrowserLicenseKey: resolvePrimaryLicenseKey(cachedSettings),
   });
   bootstrap.on("status", (status: ChromiumStatus) => {
     if (chromiumBootstrap === bootstrap) {
@@ -460,8 +474,14 @@ app
     // cannot have outlived the reboot, so the vendor's clock has been running since then, and
     // startup reconciliation can end a hold no surviving browser will ever come back to end.
     const bootedAtMs = Date.now() - uptime() * 1000;
+    const primaryLicenseKey = resolvePrimaryLicenseKey(cachedSettings);
+    const licensePoolKeys = ADDITIONAL_LICENSE_KEYS_ENABLED
+      ? cachedSettings.cloakBrowserLicenseKeys
+      : primaryLicenseKey
+        ? [primaryLicenseKey]
+        : [];
     licenseKeyPool = new LicenseKeyPool({
-      keys: cachedSettings.cloakBrowserLicenseKeys,
+      keys: licensePoolKeys,
       cooldownMs: LICENSE_SEAT_COOLDOWN_MS,
       leaseRecords: licenseLeaseJournal.snapshot(),
     });
@@ -679,7 +699,7 @@ app
         throw new Error("Engine activation is Windows-only for now.");
       }
       await activateLicensedEnginePin({
-        licenseKey: cachedSettings?.cloakBrowserLicenseKey ?? "",
+        licenseKey: resolvePrimaryLicenseKey(cachedSettings),
         localAppData: process.env.LOCALAPPDATA ?? "",
       });
       activeCompatibilityEnginePin = readCompatibilityEnginePin(process.env.LOCALAPPDATA ?? "");
