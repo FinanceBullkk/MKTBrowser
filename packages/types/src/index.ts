@@ -1,6 +1,9 @@
 export const MKT_BROWSER_MCP_SERVER_NAME = "mkt-browser";
 export const MKT_BROWSER_MCP_HEALTH_NAME = "mkt-browser-mcp";
-export const MKT_BROWSER_MCP_SERVER_VERSION = "0.3.1";
+/** Wire-protocol version reported by the MCP server; it is intentionally distinct from the desktop app version. */
+export const MKT_BROWSER_MCP_PROTOCOL_VERSION = "0.3.1";
+/** @deprecated Use MKT_BROWSER_MCP_PROTOCOL_VERSION; this is not the desktop release version. */
+export const MKT_BROWSER_MCP_SERVER_VERSION = MKT_BROWSER_MCP_PROTOCOL_VERSION;
 export const MKT_BROWSER_DEFAULT_MCP_PORT = 47_822;
 export const MKT_BROWSER_MCP_PORT_ENV = "MKT_BROWSER_MCP_PORT";
 
@@ -263,8 +266,9 @@ export interface FingerprintConfig {
 
   /**
    * Optional entropy seed. When set, drives deterministic generateFingerprint
-   * choices and CloakBrowser `--fingerprint=` noise (canvas/audio/WebGL readback).
-   * Same seed → same noise; different seed → different noise.
+   * choices and the CloakBrowser `--fingerprint=` seed. Native noise surfaces
+   * are engine-version dependent; same seed should reproduce, but separation
+   * must be verified against the target engine and scanner.
    */
   seed?: string;
 }

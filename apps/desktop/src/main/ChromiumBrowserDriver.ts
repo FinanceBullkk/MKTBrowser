@@ -1912,8 +1912,10 @@ function fingerprintSeed(profileId: ProfileId, fp: FingerprintConfig): string {
   // CloakBrowser accepts a stable seed. Keep it numeric and deterministic
   // so an MKT Browser profile keeps the same native fingerprint across launches.
   // When the persona carries an explicit `seed`, key off it instead of the
-  // profile id so the canvas/audio/WebGL readback noise can be rotated
-  // without changing the profile id.
+  // profile id so the engine-supported rendering noise stays stable for the
+  // profile without changing its id. Native engine support is required for
+  // every detector surface; this seed is not a promise that fonts/audio/WebGL
+  // BrowserScan joins rotate on every CloakBrowser build.
   const material = fp.seed ?? profileId;
   const hex = createHash("sha256").update(material).digest("hex").slice(0, 8);
   return String(10000 + (Number.parseInt(hex, 16) % 90000));
