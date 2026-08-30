@@ -1,5 +1,13 @@
 const assert = require("node:assert/strict");
-const { existsSync, readFileSync } = require("node:fs");
+const {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 
@@ -93,14 +101,27 @@ test("keeps the Windows candidate version and pinned Relay coherent", () => {
 });
 
 test("honours an explicit MKTTOOL_ROOT and rejects a missing checkout", () => {
-  assert.equal(
-    resolveMktToolRoot({ MKTTOOL_ROOT: path.resolve(repoRoot, "..", "MKTTool") }),
-    path.resolve(repoRoot, "..", "MKTTool"),
-  );
-  assert.throws(
-    () => resolveMktToolRoot({ MKTTOOL_ROOT: path.join(repoRoot, "does-not-exist") }),
-    /MKTTool checkout not found.*MKTTOOL_ROOT/,
-  );
+  // Keep this unit test independent from the host checkout layout.  CI places the sibling
+  // repository under `mkttool`, while local runs may use `MKTTool`; neither should be required
+  // merely to prove that an explicit root is authoritative.
+  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), "mktbrowser-mkttool-contract-"));
+  try {
+    for (const relativePath of MKTTOOL_FILES) {
+      const fixturePath = path.join(fixtureRoot, relativePath);
+      mkdirSync(path.dirname(fixturePath), { recursive: true });
+      writeFileSync(fixturePath, "// contract fixture\n");
+    }
+    assert.equal(
+      resolveMktToolRoot({ MKTTOOL_ROOT: fixtureRoot }),
+      path.resolve(fixtureRoot),
+    );
+    assert.throws(
+      () => resolveMktToolRoot({ MKTTOOL_ROOT: path.join(fixtureRoot, "does-not-exist") }),
+      /MKTTool checkout not found.*MKTTOOL_ROOT/,
+    );
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+  }
 });
 
 test("packaging derives the control contract version from the package metadata", () => {
