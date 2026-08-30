@@ -60,7 +60,22 @@ async function fetchPinnedRelay(options = {}) {
     if (actual !== manifest.sha256) {
       throw new Error(`Pinned Relay checksum mismatch: expected ${manifest.sha256}, received ${actual}.`);
     }
-    copyFileSync(localArchive, finalPath);
+    // Stage local inputs exactly like the network path: never expose a partially copied archive at
+    // the final name, and hash the copied bytes (not only the source) before the atomic rename.
+    rmSync(partialPath, { force: true });
+    try {
+      copyFileSync(localArchive, partialPath);
+      const copiedSize = statSync(partialPath).size;
+      const copiedSha256 = await sha256(partialPath);
+      if (copiedSize !== manifest.sizeBytes || copiedSha256 !== manifest.sha256) {
+        throw new Error(`Copied pinned Relay bytes changed during staging (size ${copiedSize}, SHA-256 ${copiedSha256}).`);
+      }
+      rmSync(finalPath, { force: true });
+      renameSync(partialPath, finalPath);
+    } catch (error) {
+      rmSync(partialPath, { force: true });
+      throw error;
+    }
     return { manifest, archivePath: finalPath };
   }
 
