@@ -22,6 +22,10 @@ on:
         required: false
         type: string
         default: ""
+    secrets:
+      MKTTOOL_REPO_READ_TOKEN:
+        description: "Optional read-only token for the private MKTTool sibling repository"
+        required: false
 
 permissions:
   contents: read

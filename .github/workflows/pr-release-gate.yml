@@ -27,6 +27,8 @@ jobs:
     uses: ./.github/workflows/windows-pipeline.yml
     with:
       contract_iterations: "5"
+    secrets:
+      MKTTOOL_REPO_READ_TOKEN: ${{ secrets.MKTTOOL_REPO_READ_TOKEN }}
 
   mktbrowser-pr-release-gate:
     if: always()
