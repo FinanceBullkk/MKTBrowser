@@ -15,12 +15,15 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    // Build output and vendored trees. `.yarn` holds Yarn's own releases and plugins.
+    // Build output and vendored trees. `.yarn` holds Yarn's own releases and plugins. CI also
+    // checks out the private MKTTool repository as `mkttool/` for cross-repository contracts; it has
+    // a separate dependency graph and must not be linted by this workspace config.
     ignores: [
       "**/node_modules/**",
       "**/dist/**",
       "**/out/**",
       "**/release/**",
+      "mkttool/**",
       ".yarn/**",
       "**/*.d.ts",
     ],
