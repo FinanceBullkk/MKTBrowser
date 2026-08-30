@@ -29,9 +29,36 @@ permissions:
 jobs:
   quality:
     runs-on: [self-hosted, Windows, X64, mktbrowser]
+    env:
+      # Version coherence uses this explicit checkout first, then falls back to a local sibling for
+      # developer runs. Keeping the path in one environment variable avoids runner-layout drift.
+      MKTTOOL_ROOT: ${{ github.workspace }}/mkttool
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      - name: Checkout MKTTool sibling for cross-repository contracts
+        id: mkttool_checkout
+        uses: actions/checkout@v5
+        continue-on-error: true
+        with:
+          repository: Techieslab-app/MKTTool
+          path: mkttool
+          fetch-depth: 1
+
+      - name: Record MKTTool checkout status
+        if: always()
+        shell: pwsh
+        env:
+          OUTCOME: ${{ steps.mkttool_checkout.outcome }}
+        run: |
+          $status = 'OPEN'
+          $reason = 'The MKTTool sibling checkout is unavailable for version coherence.'
+          if (($env:OUTCOME -eq 'success') -and (Test-Path "$env:MKTTOOL_ROOT/src/lib/setup/windows-installer-release.ts") -and (Test-Path "$env:MKTTOOL_ROOT/src/lib/setup/windows-installer-release-metadata.ts")) {
+            $status = 'PASS'
+            $reason = 'The explicit MKTTool sibling checkout is available.'
+          }
+          node scripts/ci-gate-status.cjs --gate mkttool-sibling-checkout --status $status --reason $reason --owner release-engineering --required
 
       - name: Setup Node.js 22
         uses: actions/setup-node@v5
@@ -60,6 +87,10 @@ jobs:
       - name: Workspace quality contract
         run: yarn verify:workspace-quality
 
+      - name: Relay pin and engine candidate contract
+        working-directory: .
+        run: node scripts/ci-gate-status.cjs --gate relay-and-engine-candidate --reason "Relay v16 is hash-bound and packaged unpinned-engine overrides are development-only." --owner browser-release --required -- node scripts/release-candidate-contract.cjs
+
       - name: Lint
         run: yarn lint
 
@@ -74,12 +105,51 @@ jobs:
       - name: Typecheck
         run: yarn typecheck
 
+      - name: Record Windows quality job status
+        if: always()
+        shell: pwsh
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          $status = 'FAIL'
+          $reason = 'One or more Windows quality contracts failed.'
+          if ($env:JOB_STATUS -eq 'success') {
+            $status = 'PASS'
+            $reason = 'All Windows quality contracts passed.'
+          }
+          node scripts/ci-gate-status.cjs --gate windows-quality --status $status --reason $reason --owner browser-release --required
+
   package:
     needs: quality
     runs-on: [self-hosted, Windows, X64, mktbrowser]
+    env:
+      MKTTOOL_ROOT: ${{ github.workspace }}/mkttool
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      - name: Checkout MKTTool sibling for packaging contracts
+        id: mkttool_checkout
+        uses: actions/checkout@v5
+        continue-on-error: true
+        with:
+          repository: Techieslab-app/MKTTool
+          path: mkttool
+          fetch-depth: 1
+
+      - name: Record MKTTool packaging checkout status
+        if: always()
+        shell: pwsh
+        env:
+          OUTCOME: ${{ steps.mkttool_checkout.outcome }}
+        run: |
+          $status = 'OPEN'
+          $reason = 'The MKTTool sibling checkout is unavailable for packaging version coherence.'
+          if (($env:OUTCOME -eq 'success') -and (Test-Path "$env:MKTTOOL_ROOT/src/lib/setup/windows-installer-release.ts") -and (Test-Path "$env:MKTTOOL_ROOT/src/lib/setup/windows-installer-release-metadata.ts")) {
+            $status = 'PASS'
+            $reason = 'The explicit MKTTool sibling checkout is available for packaging.'
+          }
+          node scripts/ci-gate-status.cjs --gate mkttool-packaging-checkout --status $status --reason $reason --owner release-engineering --required
 
       - name: Setup Node.js 22
         uses: actions/setup-node@v5
@@ -127,6 +197,20 @@ jobs:
           path: ${{ runner.temp }}/mktbrowser-package/*
           if-no-files-found: error
           retention-days: 7
+
+      - name: Record Windows package job status
+        if: always()
+        shell: pwsh
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          $status = 'FAIL'
+          $reason = 'The Windows directory package or artifact hash failed.'
+          if ($env:JOB_STATUS -eq 'success') {
+            $status = 'PASS'
+            $reason = 'The Windows directory package was built once and hash-bound.'
+          }
+          node scripts/ci-gate-status.cjs --gate windows-package --status $status --reason $reason --owner browser-release --required
 
   packaged-contract:
     needs: package
@@ -203,3 +287,17 @@ jobs:
             ${{ runner.temp }}/mktbrowser-artifact/artifact-manifest.json
           if-no-files-found: error
           retention-days: 7
+
+      - name: Record packaged runtime-contract job status
+        if: always()
+        shell: pwsh
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          $status = 'FAIL'
+          $reason = 'The fresh-job packaged runtime contract failed.'
+          if ($env:JOB_STATUS -eq 'success') {
+            $status = 'PASS'
+            $reason = 'The exact hashed package passed the fresh-job runtime contract.'
+          }
+          node scripts/ci-gate-status.cjs --gate packaged-runtime-contract --status $status --reason $reason --owner browser-release --required

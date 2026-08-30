@@ -33,13 +33,103 @@ jobs:
     needs: [windows]
     runs-on: [self-hosted, Linux, X64, mktbrowser]
     steps:
+      # This first step intentionally uses only trusted inline shell. It runs before checkout so a
+      # fork PR (whose reusable Windows job is skipped) cannot execute fork-controlled code on the
+      # persistent self-hosted runner. The local helper is used below only for same-repository,
+      # successful Windows runs.
       - name: Require the Windows pipeline to have succeeded on this merge tree
+        if: always()
         env:
           PIPELINE: ${{ needs.windows.result }}
         run: |
           echo "windows pipeline result: $PIPELINE"
+          status=PASS
+          reason="The Windows pipeline succeeded for this merge tree."
           if [ "$PIPELINE" != "success" ]; then
-            echo "::error::The Windows pipeline did not succeed. This merge tree is not releasable."
+            status=FAIL
+            reason="The Windows pipeline did not succeed."
+            if [ "$PIPELINE" = "skipped" ]; then
+              status=OPEN
+              reason="The Windows pipeline was skipped (for example, an untrusted fork); a skipped required check cannot satisfy release authority."
+            fi
+          fi
+          result=$(printf '{"gate":"windows-pipeline","status":"%s","reason":"%s","owner":"browser-release"}\n' "$status" "$reason")
+          printf '%s\n' "$result" >> "$GITHUB_STEP_SUMMARY"
+          printf 'gate=windows-pipeline\nstatus=%s\nowner=browser-release\nreason=%s\nsatisfies=%s\n' "$status" "$reason" "$( [ "$status" = PASS ] && echo true || echo false )" >> "$GITHUB_OUTPUT"
+          if [ "$status" != "PASS" ]; then exit 1; fi
+
+      - name: Record release-contract scope when checkout is intentionally unavailable
+        if: always() && (needs.windows.result != 'success' || github.event.pull_request.head.repo.full_name != github.repository)
+        run: |
+          result='{"gate":"release-contract-scope","status":"OPEN","reason":"Release contract source is not executed when the Windows job is skipped or the pull request is from a fork.","owner":"release-engineering"}'
+          printf '%s\n' "$result" >> "$GITHUB_STEP_SUMMARY"
+          printf 'gate=release-contract-scope\nstatus=OPEN\nowner=release-engineering\nreason=Release contract source is not executed when the Windows job is skipped or the pull request is from a fork.\nsatisfies=false\n' >> "$GITHUB_OUTPUT"
+          exit 1
+
+      # Checkouts and all local contract execution are restricted to the trusted same-repository
+      # path after the Windows reusable workflow has passed.
+      - name: Checkout MKT Browser source for release contracts
+        if: always() && needs.windows.result == 'success' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/checkout@v5
+        with:
+          path: mktbrowser
+
+      - name: Checkout MKTTool sibling source for release contracts
+        if: always() && needs.windows.result == 'success' && github.event.pull_request.head.repo.full_name == github.repository
+        id: mkttool_checkout
+        uses: actions/checkout@v5
+        continue-on-error: true
+        with:
+          repository: Techieslab-app/MKTTool
+          path: mkttool
+          fetch-depth: 1
+
+      - name: Record MKTTool sibling checkout status
+        if: always() && needs.windows.result == 'success' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          OUTCOME: ${{ steps.mkttool_checkout.outcome }}
+        run: |
+          if [ "$OUTCOME" = "success" ] && [ -f "$GITHUB_WORKSPACE/mkttool/src/lib/setup/windows-installer-release.ts" ] && [ -f "$GITHUB_WORKSPACE/mkttool/src/lib/setup/windows-installer-release-metadata.ts" ]; then
+            node mktbrowser/scripts/ci-gate-status.cjs --gate mkttool-sibling-checkout --status PASS --reason "The explicit MKTTool sibling checkout is available for cross-repository coherence checks." --owner release-engineering --required
+          else
+            node mktbrowser/scripts/ci-gate-status.cjs --gate mkttool-sibling-checkout --status OPEN --reason "The MKTTool sibling checkout could not be resolved; promotion requires MKTTOOL_ROOT to point at the matching checkout." --owner release-engineering --required
             exit 1
           fi
-          echo "The Windows pipeline succeeded for this merge tree."
+
+      - name: Setup Node.js 22 for release contracts
+        if: always() && needs.windows.result == 'success' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Enable Corepack for release contracts
+        if: always() && needs.windows.result == 'success' && github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          corepack enable
+          corepack prepare yarn@4.5.0 --activate
+
+      - name: One-seat license boundary contract
+        if: always() && needs.windows.result == 'success' && github.event.pull_request.head.repo.full_name == github.repository
+        id: one_seat_license
+        working-directory: mktbrowser
+        run: node scripts/ci-gate-status.cjs --gate one-seat-license --reason "The Browser one-seat UI and primary-key pool contract passed." --owner browser-release --required -- node --experimental-strip-types --test apps/desktop/src/main/one-seat-license-ui-contract.test.ts
+
+      - name: Version and Relay pin coherence contracts
+        if: always() && needs.windows.result == 'success' && github.event.pull_request.head.repo.full_name == github.repository
+        id: version_coherence
+        working-directory: mktbrowser
+        env:
+          MKTTOOL_ROOT: ${{ github.workspace }}/mkttool
+        run: |
+          if [ ! -f "$MKTTOOL_ROOT/src/lib/setup/windows-installer-release.ts" ] || [ ! -f "$MKTTOOL_ROOT/src/lib/setup/windows-installer-release-metadata.ts" ]; then
+            node scripts/ci-gate-status.cjs --gate version-coherence --status OPEN --reason "The MKTTool sibling checkout is unavailable; set MKTTOOL_ROOT to the matching checkout before promotion." --owner release-engineering --required
+            exit 1
+          fi
+          node scripts/ci-gate-status.cjs --gate version-coherence --reason "Browser, MKTTool, and Relay candidate versions are coherent." --owner browser-release --required -- node --test scripts/version-coherence-contract.test.cjs
+
+      - name: Reject quarantined Relay tuples and packaged unpinned-engine paths
+        if: always() && needs.windows.result == 'success' && github.event.pull_request.head.repo.full_name == github.repository
+        id: relay_engine_candidate
+        working-directory: mktbrowser
+        run: node scripts/ci-gate-status.cjs --gate relay-and-engine-candidate --reason "Relay v16 is hash-bound and the packaged engine allowance is development-only." --owner browser-release --required -- node scripts/release-candidate-contract.cjs
