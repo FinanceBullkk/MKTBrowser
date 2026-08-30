@@ -81,6 +81,7 @@ jobs:
         continue-on-error: true
         with:
           repository: Techieslab-app/MKTTool
+          token: ${{ secrets.MKTTOOL_REPO_READ_TOKEN || github.token }}
           ref: master
           path: mkttool
           fetch-depth: 1
