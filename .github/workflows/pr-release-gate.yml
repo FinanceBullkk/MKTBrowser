@@ -81,6 +81,7 @@ jobs:
         continue-on-error: true
         with:
           repository: Techieslab-app/MKTTool
+          ref: master
           path: mkttool
           fetch-depth: 1
 

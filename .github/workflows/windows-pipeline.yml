@@ -43,6 +43,10 @@ jobs:
         continue-on-error: true
         with:
           repository: Techieslab-app/MKTTool
+          # Pin the ref explicitly. Without this, checkout first asks the GitHub API for the
+          # default branch; the cross-repository token on the self-hosted runner can fetch refs
+          # but cannot resolve that API call, leaving the step failed and every downstream job skipped.
+          ref: master
           path: mkttool
           fetch-depth: 1
 
@@ -140,6 +144,7 @@ jobs:
         continue-on-error: true
         with:
           repository: Techieslab-app/MKTTool
+          ref: master
           path: mkttool
           fetch-depth: 1
 
