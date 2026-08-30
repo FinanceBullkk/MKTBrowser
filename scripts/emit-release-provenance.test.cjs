@@ -73,6 +73,9 @@ test("states that the release is unsigned instead of leaving a silence", () => {
 
   // A missing signature field would leave a reader deciding whether it was a decision or a mistake.
   assert.equal(provenance.signing.authenticode, false);
+  assert.equal(provenance.signing.status, "unsigned-internal-exception");
+  assert.deepEqual(provenance.signing.allowedLanes, ["A", "B"]);
+  assert.ok(Date.parse(provenance.signing.exceptionExpiresAt) > Date.parse(provenance.generatedAt));
   assert.match(provenance.signing.note, /unsigned by owner decision/);
   assert.match(provenance.signing.note, /SmartScreen/);
 });

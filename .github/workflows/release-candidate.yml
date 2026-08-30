@@ -22,6 +22,9 @@ on:
       confirm_commit:
         description: "Commit SHA being frozen (at least 8 characters, must match the checked-out commit)"
         required: true
+      candidate_id:
+        description: "Immutable release candidate ID from the release manifest"
+        required: true
 
 permissions:
   contents: read
@@ -166,8 +169,14 @@ jobs:
           path: ${{ runner.temp }}/manifests
 
       - name: Emit release provenance for the verified artifact
+        env:
+          MKT_RELEASE_CANDIDATE_ID: ${{ inputs.candidate_id }}
         shell: bash
         run: |
+          if [ -z "${MKT_RELEASE_CANDIDATE_ID}" ]; then
+            echo "::error::candidate_id is required; refusing an unattached provenance record."
+            exit 1
+          fi
           installer=$(find "$RUNNER_TEMP/candidate" -name '*.exe' -print -quit)
           if [ -z "$installer" ]; then
             echo "::error::No installer found in the downloaded candidate artifact."
@@ -176,6 +185,8 @@ jobs:
           node scripts/emit-release-provenance.cjs \
             --installer "$installer" \
             --payload-manifest "$RUNNER_TEMP/manifests/payload-manifest-a.json" \
+            --engine-release "$GITHUB_WORKSPACE/apps/desktop/windows-engine-release.json" \
+            --candidate-id "$MKT_RELEASE_CANDIDATE_ID" \
             --dependency-audit "yarn npm audit --environment production --severity high passed in both builds" \
             --output release-provenance.json
           cat release-provenance.json
