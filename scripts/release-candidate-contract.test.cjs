@@ -1,5 +1,5 @@
 const assert = require("node:assert/strict");
-const { cpSync, mkdtempSync, mkdirSync, writeFileSync } = require("node:fs");
+const { cpSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
@@ -51,4 +51,29 @@ test("rejects unpinned and system-Chrome overrides in a packaged payload", () =>
     '{"MKT_BROWSER_ALLOW_UNPINNED_ENGINE":"1"}',
   );
   assert.throws(() => assertPackagedEnginePinned(root, packageDirectory), /unpinned/i);
+});
+
+test("release-candidate workflow compares and records both normalized payload builds", () => {
+  const workflow = readFileSync(
+    path.join(repoRoot, ".github", "workflows", "release-candidate.yml"),
+    "utf8",
+  );
+  assert.match(workflow, /attempt:\s*\[a, b\]/);
+  assert.match(workflow, /normalized-payload-manifest\.cjs\s+--directory/);
+  assert.match(workflow, /normalized-payload-manifest\.cjs\s+--compare/);
+  assert.ok(
+    workflow.indexOf("prepare-windows-node22.ps1") <
+      workflow.indexOf("prepare-windows-native-dependencies.ps1"),
+    "the pinned Node executable must be prepared before native dependency setup",
+  );
+
+  const compareGate = workflow.indexOf("--gate payload-reproducibility");
+  assert.ok(compareGate >= 0, "the required payload-reproducibility gate must be present");
+  assert.match(workflow.slice(compareGate, compareGate + 600), /--required/);
+  assert.match(workflow, /needs\.build\.result.*!=.*success/);
+  assert.match(workflow, /payload-reproducibility-result\.json/);
+  assert.match(
+    workflow,
+    /installer-reproducibility[\s\S]*103-byte residual classified NSIS-RT_DIALOG-order-and-trailer/,
+  );
 });

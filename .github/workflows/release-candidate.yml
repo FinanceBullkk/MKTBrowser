@@ -90,6 +90,18 @@ jobs:
           path: mkttool
           fetch-depth: 1
 
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      # A self-hosted PowerShell runner can lose the action-managed PATH between steps. Resolve and
+      # pin the executable once so every packaging command below uses the verified Node 22 binary.
+      - name: Pin Node.js 22 executable
+        shell: pwsh
+        run: ./.github/scripts/prepare-windows-node22.ps1
+
       - name: Record MKTTool packaging checkout status
         shell: pwsh
         env:
@@ -101,42 +113,42 @@ jobs:
             $status = 'PASS'
             $reason = 'The explicit MKTTool sibling checkout is available for release packaging.'
           }
-          node scripts/ci-gate-status.cjs --gate mkttool-packaging-checkout --status $status --reason $reason --owner release-engineering --required
-
-      - name: Setup Node.js 22
-        uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          package-manager-cache: false
+          & $env:MKT_BROWSER_NODE22_EXE scripts/ci-gate-status.cjs --gate mkttool-packaging-checkout --status $status --reason $reason --owner release-engineering --required
 
       - name: Enable Corepack
+        shell: pwsh
         run: |
-          corepack enable
-          corepack prepare yarn@4.5.0 --activate
+          & $env:MKT_BROWSER_NODE22_EXE $env:MKT_BROWSER_COREPACK22_ENTRYPOINT enable
+          & $env:MKT_BROWSER_NODE22_EXE $env:MKT_BROWSER_COREPACK22_ENTRYPOINT prepare yarn@4.5.0 --activate
 
       - name: Prepare Windows native dependencies
         shell: pwsh
         run: ./.github/scripts/prepare-windows-native-dependencies.ps1
 
       - name: Install dependencies
-        run: yarn install --immutable
+        shell: pwsh
+        run: "& $env:MKT_BROWSER_NODE22_EXE $env:MKT_BROWSER_COREPACK22_ENTRYPOINT yarn install --immutable"
 
       - name: Audit production dependencies
-        run: yarn audit:production
+        shell: pwsh
+        run: "& $env:MKT_BROWSER_NODE22_EXE $env:MKT_BROWSER_COREPACK22_ENTRYPOINT yarn audit:production"
 
       - name: Build the combined Windows installer
         env:
           MKTTOOL_RELEASE_TOKEN: ${{ secrets.MKTTOOL_RELEASE_TOKEN }}
           MKT_BROWSER_ENGINE_RELEASE_FILE: ${{ github.workspace }}/apps/desktop/windows-engine-release.json
-        run: yarn workspace @mktbrowser/desktop build:win
+        shell: pwsh
+        run: "& $env:MKT_BROWSER_NODE22_EXE $env:MKT_BROWSER_COREPACK22_ENTRYPOINT yarn workspace @mktbrowser/desktop build:win"
 
       - name: Verify Relay v16 and packaged engine pin
-        run: node scripts/ci-gate-status.cjs --gate relay-and-engine-packaged --reason "The staged Relay archive and packaged engine metadata are hash-bound to the candidate." --owner browser-release --required -- node scripts/release-candidate-contract.cjs --package-dir apps/desktop/release/installer/win-unpacked
+        shell: pwsh
+        run: '& $env:MKT_BROWSER_NODE22_EXE scripts/ci-gate-status.cjs --gate relay-and-engine-packaged --reason "The staged Relay archive and packaged engine metadata are hash-bound to the candidate." --owner browser-release --required -- $env:MKT_BROWSER_NODE22_EXE scripts/release-candidate-contract.cjs --package-dir apps/desktop/release/installer/win-unpacked'
 
       # The staged tree is what the installer delivers. Comparing it rather than the compressed
       # installer keeps the comparison on the payload, where a difference means something.
       - name: Emit normalized payload manifest
-        run: node scripts/normalized-payload-manifest.cjs --directory apps/desktop/release/installer/win-unpacked --output payload-manifest-${{ matrix.attempt }}.json
+        shell: pwsh
+        run: "& $env:MKT_BROWSER_NODE22_EXE scripts/normalized-payload-manifest.cjs --directory apps/desktop/release/installer/win-unpacked --output payload-manifest-${{ matrix.attempt }}.json"
 
       - name: Upload payload manifest
         uses: actions/upload-artifact@v4
@@ -159,7 +171,8 @@ jobs:
 
       - name: Record comparison-only installer omission
         if: matrix.attempt != 'a'
-        run: node scripts/ci-gate-status.cjs --gate candidate-installer-upload --status OPEN --reason "Build B is retained only for payload comparison and is intentionally not uploaded as a second candidate." --owner browser-release --optional
+        shell: pwsh
+        run: '& $env:MKT_BROWSER_NODE22_EXE scripts/ci-gate-status.cjs --gate candidate-installer-upload --status OPEN --reason "Build B is retained only for payload comparison and is intentionally not uploaded as a second candidate." --owner browser-release --optional'
 
       - name: Record independent build job status
         if: always()
@@ -173,9 +186,11 @@ jobs:
             $status = 'PASS'
             $reason = 'The independent release-candidate build and payload manifest completed.'
           }
-          node scripts/ci-gate-status.cjs --gate release-candidate-build --status $status --reason $reason --owner browser-release --required
+          & $env:MKT_BROWSER_NODE22_EXE scripts/ci-gate-status.cjs --gate release-candidate-build --status $status --reason $reason --owner browser-release --required
 
   compare:
+    # Always run this job so a failed/skipped build cannot hide the required comparison result.
+    if: ${{ always() }}
     needs: build
     runs-on: [self-hosted, Linux, X64, mktbrowser]
     steps:
@@ -191,6 +206,9 @@ jobs:
           package-manager-cache: false
 
       - name: Download both payload manifests
+        id: download_payload_manifests
+        if: always()
+        continue-on-error: true
         uses: actions/download-artifact@v5
         with:
           pattern: payload-manifest-*
@@ -200,8 +218,65 @@ jobs:
       # This gate compares the normalized delivered payload only. It makes no claim that the outer
       # NSIS container is byte-identical; installer-container variance remains a separate OPEN gate.
       - name: Require two independent builds to produce the same payload
-        run: node scripts/ci-gate-status.cjs --gate payload-reproducibility --reason "Two independent builds produced the same normalized payload." --owner browser-release --required -- node scripts/normalized-payload-manifest.cjs --compare "$RUNNER_TEMP/manifests/payload-manifest-a.json" "$RUNNER_TEMP/manifests/payload-manifest-b.json"
+        id: payload_reproducibility
+        if: always()
         shell: bash
+        run: |
+          set -o pipefail
+          first="$RUNNER_TEMP/manifests/payload-manifest-a.json"
+          second="$RUNNER_TEMP/manifests/payload-manifest-b.json"
+          comparison_log="$RUNNER_TEMP/payload-reproducibility-comparison.txt"
+          result_json="$RUNNER_TEMP/payload-reproducibility-result.json"
+
+          if [ "${{ needs.build.result }}" != "success" ]; then
+            status=FAIL
+            reason="The independent build matrix did not complete successfully (result: ${{ needs.build.result }})."
+            printf '%s\n' "$reason" > "$comparison_log"
+          elif [ ! -f "$first" ] || [ ! -f "$second" ]; then
+            status=FAIL
+            reason="The successful build matrix did not produce both normalized payload manifests."
+            printf '%s\n' "$reason" > "$comparison_log"
+          elif node scripts/normalized-payload-manifest.cjs --compare "$first" "$second" > "$comparison_log" 2>&1; then
+            status=PASS
+            reason="Two independent builds produced the same normalized payload."
+          else
+            status=FAIL
+            reason="The two independent normalized payload manifests differ; see comparison evidence."
+          fi
+
+          cat "$comparison_log"
+          node scripts/ci-gate-status.cjs \
+            --gate payload-reproducibility \
+            --status "$status" \
+            --reason "$reason" \
+            --owner browser-release \
+            --required \
+            --json "$result_json"
+
+      - name: Record outer-installer reproducibility status
+        if: always()
+        shell: bash
+        run: |
+          node scripts/ci-gate-status.cjs \
+            --gate installer-reproducibility \
+            --status OPEN \
+            --reason "Full installer reproducibility remains OPEN: the controlled pair has a 103-byte residual classified NSIS-RT_DIALOG-order-and-trailer; no bytes are normalized." \
+            --owner browser-release \
+            --optional \
+            --json "$RUNNER_TEMP/installer-reproducibility-result.json"
+
+      - name: Upload payload reproducibility evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: payload-reproducibility-evidence
+          path: |
+            ${{ runner.temp }}/manifests/**
+            ${{ runner.temp }}/payload-reproducibility-comparison.txt
+            ${{ runner.temp }}/payload-reproducibility-result.json
+            ${{ runner.temp }}/installer-reproducibility-result.json
+          if-no-files-found: warn
+          retention-days: 30
 
   attest:
     needs: compare
@@ -298,6 +373,10 @@ jobs:
           node-version: 22
           package-manager-cache: false
 
+      - name: Pin Node.js 22 executable
+        shell: pwsh
+        run: ./.github/scripts/prepare-windows-node22.ps1
+
       - name: Prepare pinned packaged verifier engine
         shell: pwsh
         run: ./.github/scripts/prepare-windows-packaged-verifier.ps1
@@ -344,7 +423,8 @@ jobs:
         env:
           MKT_BROWSER_TIMINGS_OUTPUT: ${{ runner.temp }}/installed-timings.json
           MKT_BROWSER_DIAGNOSTICS_DIR: ${{ runner.temp }}/installed-diagnostics
-        run: node scripts/verify-packaged-runtime-contract.cjs --repeat 2
+        shell: pwsh
+        run: "& $env:MKT_BROWSER_NODE22_EXE scripts/verify-packaged-runtime-contract.cjs --repeat 2"
 
       - name: Record installed runtime-contract status
         if: always()
@@ -358,7 +438,7 @@ jobs:
             $status = 'PASS'
             $reason = 'The attested installer passed the installed runtime contract.'
           }
-          node scripts/ci-gate-status.cjs --gate installed-runtime-contract --status $status --reason $reason --owner browser-release --required
+          & $env:MKT_BROWSER_NODE22_EXE scripts/ci-gate-status.cjs --gate installed-runtime-contract --status $status --reason $reason --owner browser-release --required
 
       - name: Uninstall, and require the application directory to be gone
         shell: pwsh
