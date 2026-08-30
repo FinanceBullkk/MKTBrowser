@@ -13,7 +13,7 @@ profiles on the operator device.
 
 - Upstream application baseline: MultiZen `v0.3.1` at commit
   `83c6898b2de3de1122b5fea88008fbbaa4677bff`.
-- MKB-W01 Windows product isolation: implemented and verified on Windows x64 on 10 August 2026.
+- MKB-W01 Windows product/data isolation (not identity evidence): implemented and verified on Windows x64 on 10 August 2026.
 - MKB-W02 internal clean break: implemented and verified across MKT Browser, MKTTool, and Relay on
   Windows x64 on 10 August 2026.
 - Windows x64 is the only v1 and team-demo platform. macOS Apple Silicon is deferred to MKB-07 and
@@ -38,17 +38,17 @@ profiles on the operator device.
   installer requests one Administrator approval for machine-wide outbound UDP rules covering the
   stable CFT and CloakBrowser runtime paths. Every proxied profile launch verifies its own engine's
   exact rule and all Windows firewall profiles, then fails closed before browser startup if the
-  boundary is uncertain. CloakBrowser download failure can switch to CFT in-modal; CFT remains a
-  compatibility fallback, not the primary antidetect runtime. The combined-installer manifest now
-  pins the published Relay v15 archive, which accepts Browser contract v4. The
+  boundary is uncertain. CloakBrowser download failure can switch to CFT in-modal; CFT is a
+  compatibility fallback only, not identity evidence. The combined-installer manifest now pins the
+  verified Relay v16 archive, which accepts Browser contract v4. The
   installer also persists its conflict detector for runtime setup checks; contract v4 advertises
   `local-install-ready-v1` only after expected process, fixed-port, MultiZen-process, and startup
   ownership pass. The supported topology is one Windows operating-system user per PC; a foreign
   per-user installation is rejected before firewall mutation, and cross-user operation is not a
   release gate. The complete Node 22 installer suite, packaging contracts, typecheck, lint, and the
-  production Electron bundle pass. The current source candidate is rebuilt and published for a
-  controlled internal beta; broad distribution still waits for the remaining human, network,
-  vendor, and operator gates.
+  production Electron bundle pass on the last verified package. The current `0.3.13` source
+  candidate is a draft only; it is not published or approved for real-account use. Broad
+  distribution still waits for the remaining human, network, vendor, identity, and operator gates.
 - MKB-03 Browser profile deletion is implemented as a separate in-app lifecycle. Contract version
   `4` removes `delete_profile` from MCP, and profile schema version `3` records incomplete deletion
   for crash-safe retry. The operator must type `DELETE <full profile id>`; active launch/close work
@@ -57,8 +57,9 @@ profiles on the operator device.
 - P0 automated proxy, lease-journal, and readiness hardening is green as of 22 August 2026. Proxied
   launch fails closed on unverifiable egress; lease storage is atomic, schema-validated,
   crash-recoverable, serialized, and redacted; aggregate capacity contains no key/profile identity.
-  Packaged Relay v15 restart and real VirtualBox power-cycle recovery passed on 27 August 2026 using
-  a disposable licensed profile. `license-capacity-v1` remains deliberately unadvertised because
+  Historical packaged Relay v15 restart and real VirtualBox power-cycle recovery passed on 27 August
+  2026 using a disposable licensed profile; that v15 artifact is not the current candidate.
+  `license-capacity-v1` remains deliberately unadvertised because
   live vendor schema/sidecar integration, real proxy/DNS/WebRTC evidence, human input, second-PC
   recovery, and canary gates remain open, so this is not rollout approval.
 - Lifecycle and installer evidence is current through 27 August 2026. Normal close returns the
@@ -85,16 +86,17 @@ profiles on the operator device.
   hashed uploaded archive. The final local directory package passed 5/5 cold lifecycle iterations
   while ports 9222 and 9223 were occupied. The required PR artifact run and seven independent 20/20
   Windows runner runs remain open, so Phase 2 is not complete.
-- A controlled internal-beta installer is now published for Windows x64. Candidate `0.3.12` was
-  built from Browser source `6d1b0a2a54c7a688ef39c3c6c1fddab3edd557fe`, has installer SHA-256
-  `d570ccc3326b5a046d91b7b677f4232ab76908f2fb034c60799e31695f43fc4b`, and embeds the exact
-  published Relay v15 payload. It is unsigned and limited to one profile at a time with human
-  operations. The [MKTTool internal-beta release guide](../MKTTool/docs/internal-beta-release.md)
-  contains the operator path, provenance, and open gates.
-- The candidate's packaged runtime verifier passed `1/1` iteration and the production dependency
-  audit reported no suggestions. The verifier used a system Chrome compatibility fixture; that is
-  not evidence that the measured CloakBrowser identity surfaces are unique. Real-account pilot and
-  broad team rollout remain gated by the acceptance matrix.
+- Phase S3 is building a draft Windows x64 internal-beta candidate `0.3.13` from Browser join key
+  `3f3765360eae6de83fd617bf8e19949fb70719af`, pinned to the verified Relay v16 archive. The installer
+  remains unpublished and is not authorized for real-account use until payload, lifecycle, identity,
+  and release-authority gates close. It is intended for one profile at a time with human login and
+  input; identity isolation is not yet proven. The [MKTTool internal-beta release guide](../MKTTool/docs/internal-beta-release.md)
+  records the draft tuple and open gates.
+- The former `0.3.12` installer and published Relay v15 payload remain quarantined negative evidence;
+  their hashes are retained only to explain the failed restart-replay gate and must not be reused.
+- The packaged runtime verifier uses a system Chrome compatibility fixture when selected; that is
+  compatibility evidence only, not evidence that CloakBrowser identity surfaces are unique. Real-
+  account pilot and broad team rollout remain gated by the acceptance matrix.
 
 ## Owned product and local contract
 
@@ -210,9 +212,10 @@ atomically replace the containing directory with rollback protection, so install
 rules stay attached across version changes. CFT and CloakBrowser have separate rules and separate
 pre-launch verification; protection observed for one engine is never evidence for the other.
 
-The browser engine is a separately licensed dependency. It is downloaded unmodified from an
-approved official source and is not bundled in the application package. Review the exact engine
-license and checksum before operational use.
+The browser engine is a separately licensed dependency. The current candidate records the approved
+Stable `.2` pin and checksum, but the exact engine archive is not present in this workspace, so engine
+provenance and identity gates remain open. It is not bundled in the application package. Review the
+exact engine license and checksum before operational use.
 
 ## Engineering records
 

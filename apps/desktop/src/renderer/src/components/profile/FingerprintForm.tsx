@@ -9,11 +9,11 @@ import type {
 } from "../../types";
 
 /**
- * Coherent fingerprint editor — shared between NewProfileSheet and
+ * Consistent profile-configuration editor — shared between NewProfileSheet and
  * ProfileEditSheet so create + edit have identical UX.
  *
- * Three coherent dropdowns (Device → Locale → Screen) that filter each other.
- * One Regen button that picks a fresh device + locale + screen combo.
+ * Three consistent dropdowns (Device → Locale → Screen) that filter each other.
+ * One Regen button that picks another internally consistent device + locale + screen combo.
  * Read-only UA chip showing the derived User-Agent.
  *
  * If the parent passes a `proxy`, this component additionally shows:
@@ -107,10 +107,11 @@ export function FingerprintForm({ fingerprint, onChange, proxy }: Props): JSX.El
 
   return (
     <div className="space-y-3">
-      {/* Top toolbar: actions that operate on the WHOLE fingerprint live
+      {/* Top toolbar: actions that operate on the WHOLE profile configuration live
           here so it's visually obvious they aren't tied to any single
-          field below. Regen replaces every value with a new coherent
-          set; Match proxy aligns locale/timezone with the proxy's geo. */}
+          field below. Regenerate replaces every value with another coherent
+          set; Match proxy aligns locale/timezone with the proxy's geo. These
+          controls do not prove uniqueness or identity isolation. */}
       <div className="flex items-center gap-2">
         <button
           type="button"
@@ -120,10 +121,10 @@ export function FingerprintForm({ fingerprint, onChange, proxy }: Props): JSX.El
             background: "linear-gradient(180deg, rgba(168,85,247,0.18), rgba(168,85,247,0.10))",
             boxShadow: "inset 0 0 0 1px rgba(168,85,247,0.35), 0 1px 0 rgba(255,255,255,0.05)",
           }}
-          title="Generate a new coherent device + locale + screen + UA"
+           title="Generate another internally consistent device + locale + screen + UA"
         >
           <RefreshCw size={12} strokeWidth={2.25} />
-          Regenerate fingerprint
+          Regenerate profile configuration
         </button>
         {proxy && proxy.host && (
           <button
@@ -141,6 +142,18 @@ export function FingerprintForm({ fingerprint, onChange, proxy }: Props): JSX.El
             {detecting ? "Detecting…" : "Match proxy"}
           </button>
         )}
+      </div>
+
+      <div
+        className="rounded-lg px-2.5 py-2 text-[11px] leading-relaxed text-amber-200/80"
+        style={{
+          background: "rgba(245,158,11,0.05)",
+          boxShadow: "inset 0 0 0 1px rgba(245,158,11,0.18)",
+        }}
+      >
+        These controls keep profile configuration internally consistent; they do not prove
+        fingerprint uniqueness or identity isolation. Use one profile at a time with human login
+        and input.
       </div>
 
       <Field label="Device">
@@ -235,7 +248,7 @@ export function FingerprintForm({ fingerprint, onChange, proxy }: Props): JSX.El
             Locale country is{" "}
             <strong className="text-amber-200 uppercase">{fingerprint.country}</strong> but proxy IP
             is in <strong className="text-amber-200 uppercase">{detected.country}</strong>
-            {" — anti-bot systems flag this. Pick a matching locale or proxy."}
+             {" — fix the proxy/locale mismatch before launch. This check is configuration guidance, not identity-isolation evidence."}
           </span>
         </div>
       )}
@@ -249,12 +262,12 @@ export function FingerprintForm({ fingerprint, onChange, proxy }: Props): JSX.El
         >
           <MapPin size={12} className="mt-0.5 flex-shrink-0" />
           <span>
-            Coherent: proxy resolves to{" "}
+             Configuration matches: proxy resolves to{" "}
             <strong className="text-emerald-200">
               {detected.city ? `${detected.city}, ` : ""}
               {detected.countryName}
             </strong>{" "}
-            ({detected.ip}) — matches locale.
+             ({detected.ip}) — locale/timezone match. This is not identity-isolation evidence.
           </span>
         </div>
       )}

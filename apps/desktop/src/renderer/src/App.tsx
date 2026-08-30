@@ -349,7 +349,7 @@ export function App(): JSX.Element {
               <Modal
                 open={showSheet}
                 title="New profile"
-                subtitle="Cookies, login state, and fingerprint live in this profile only."
+                subtitle="Cookies, login state, and profile configuration live in this profile only; identity isolation is not yet proven."
                 width={720}
                 onClose={() => {
                   setShowSheet(false);

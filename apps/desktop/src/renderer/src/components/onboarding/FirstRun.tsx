@@ -81,11 +81,13 @@ export function FirstRun({ onCreate }: Props): JSX.Element {
                 className="font-bold tracking-tight text-slate-100"
                 style={{ fontSize: 30, lineHeight: 1.1, letterSpacing: "-0.02em" }}
               >
-                A library of isolated browsers.
+                A controlled Windows profile workspace.
               </div>
               <div className="text-[14px] text-slate-400 mt-3 leading-relaxed">
-                Cookies, login, fingerprint, and proxy isolated per profile.
-                Drive them yourself or via any MCP agent.
+                Profile-local cookies, login state, proxy settings, and browser preferences stay on
+                this device. Identity isolation is not yet proven.
+                <br />
+                Use one profile at a time and complete login, OTP, CAPTCHA, and typing yourself.
               </div>
             </div>
             <div className="flex items-center gap-3 mt-1.5 mono text-[11px] text-slate-500">
@@ -93,7 +95,7 @@ export function FirstRun({ onCreate }: Props): JSX.Element {
               <span className="text-slate-700">·</span>
               <span>Chromium</span>
               <span className="text-slate-700">·</span>
-              <span>MCP HTTP</span>
+              <span>MCP-managed launch</span>
               <span className="text-slate-700">·</span>
               <span>Local profiles</span>
             </div>
@@ -118,8 +120,8 @@ export function FirstRun({ onCreate }: Props): JSX.Element {
                 Name your first profile.
               </div>
               <div className="text-[13px] text-slate-400 mt-2.5 leading-relaxed">
-                Just a label to find it later. Tags, proxy, and fingerprint are
-                editable anytime from the profile panel.
+                Use a clear label for this profile. Review profile-local settings in the panel, and
+                keep the assigned account, proxy, profile, and Relay device binding unchanged.
               </div>
             </div>
             <div className="w-full text-left">
