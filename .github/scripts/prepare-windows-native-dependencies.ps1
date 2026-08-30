@@ -11,13 +11,17 @@ if (-not $env:GITHUB_ENV) {
   throw "GITHUB_ENV is required to export native dependency settings."
 }
 
+if (-not $env:MKT_BROWSER_NODE22_EXE -or -not (Test-Path -LiteralPath $env:MKT_BROWSER_NODE22_EXE -PathType Leaf)) {
+  throw "MKT_BROWSER_NODE22_EXE must name the pinned Node.js 22 executable."
+}
+
 if (-not (Select-String -LiteralPath "yarn.lock" -SimpleMatch "resolution: `"better-sqlite3@npm:$betterSqliteVersion`"" -Quiet)) {
   throw "The pinned better-sqlite3 version no longer matches yarn.lock."
 }
 
-$nodeAbi = (& node -p "process.versions.modules").Trim()
-$nodePlatform = (& node -p "process.platform").Trim()
-$nodeArch = (& node -p "process.arch").Trim()
+$nodeAbi = (& $env:MKT_BROWSER_NODE22_EXE -p "process.versions.modules").Trim()
+$nodePlatform = (& $env:MKT_BROWSER_NODE22_EXE -p "process.platform").Trim()
+$nodeArch = (& $env:MKT_BROWSER_NODE22_EXE -p "process.arch").Trim()
 if ($nodeAbi -ne $expectedNodeAbi -or $nodePlatform -ne "win32" -or $nodeArch -ne "x64") {
   throw "No reviewed better-sqlite3 prebuild is pinned for Node ABI $nodeAbi on $nodePlatform-$nodeArch."
 }

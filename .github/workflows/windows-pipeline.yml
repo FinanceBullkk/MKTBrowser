@@ -46,6 +46,16 @@ jobs:
           path: mkttool
           fetch-depth: 1
 
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Pin Node.js 22 executable
+        shell: pwsh
+        run: ./.github/scripts/prepare-windows-node22.ps1
+
       - name: Record MKTTool checkout status
         if: always()
         shell: pwsh
@@ -58,18 +68,13 @@ jobs:
             $status = 'PASS'
             $reason = 'The explicit MKTTool sibling checkout is available.'
           }
-          node scripts/ci-gate-status.cjs --gate mkttool-sibling-checkout --status $status --reason $reason --owner release-engineering --required
-
-      - name: Setup Node.js 22
-        uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          package-manager-cache: false
+          & $env:MKT_BROWSER_NODE22_EXE scripts/ci-gate-status.cjs --gate mkttool-sibling-checkout --status $status --reason $reason --owner release-engineering --required
 
       - name: Enable Corepack
+        shell: pwsh
         run: |
-          corepack enable
-          corepack prepare yarn@4.5.0 --activate
+          & $env:MKT_BROWSER_NODE22_EXE $env:MKT_BROWSER_COREPACK22_ENTRYPOINT enable
+          & $env:MKT_BROWSER_NODE22_EXE $env:MKT_BROWSER_COREPACK22_ENTRYPOINT prepare yarn@4.5.0 --activate
 
       - name: Prepare Windows native dependencies
         shell: pwsh
@@ -89,7 +94,8 @@ jobs:
 
       - name: Relay pin and engine candidate contract
         working-directory: .
-        run: node scripts/ci-gate-status.cjs --gate relay-and-engine-candidate --reason "Relay v16 is hash-bound and packaged unpinned-engine overrides are development-only." --owner browser-release --required -- node scripts/release-candidate-contract.cjs
+        shell: pwsh
+        run: '& $env:MKT_BROWSER_NODE22_EXE scripts/ci-gate-status.cjs --gate relay-and-engine-candidate --reason "Relay v16 is hash-bound and packaged unpinned-engine overrides are development-only." --owner browser-release --required -- $env:MKT_BROWSER_NODE22_EXE scripts/release-candidate-contract.cjs'
 
       - name: Lint
         run: yarn lint
@@ -117,7 +123,7 @@ jobs:
             $status = 'PASS'
             $reason = 'All Windows quality contracts passed.'
           }
-          node scripts/ci-gate-status.cjs --gate windows-quality --status $status --reason $reason --owner browser-release --required
+          & $env:MKT_BROWSER_NODE22_EXE scripts/ci-gate-status.cjs --gate windows-quality --status $status --reason $reason --owner browser-release --required
 
   package:
     needs: quality
@@ -137,6 +143,16 @@ jobs:
           path: mkttool
           fetch-depth: 1
 
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Pin Node.js 22 executable
+        shell: pwsh
+        run: ./.github/scripts/prepare-windows-node22.ps1
+
       - name: Record MKTTool packaging checkout status
         if: always()
         shell: pwsh
@@ -149,18 +165,13 @@ jobs:
             $status = 'PASS'
             $reason = 'The explicit MKTTool sibling checkout is available for packaging.'
           }
-          node scripts/ci-gate-status.cjs --gate mkttool-packaging-checkout --status $status --reason $reason --owner release-engineering --required
-
-      - name: Setup Node.js 22
-        uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          package-manager-cache: false
+          & $env:MKT_BROWSER_NODE22_EXE scripts/ci-gate-status.cjs --gate mkttool-packaging-checkout --status $status --reason $reason --owner release-engineering --required
 
       - name: Enable Corepack
+        shell: pwsh
         run: |
-          corepack enable
-          corepack prepare yarn@4.5.0 --activate
+          & $env:MKT_BROWSER_NODE22_EXE $env:MKT_BROWSER_COREPACK22_ENTRYPOINT enable
+          & $env:MKT_BROWSER_NODE22_EXE $env:MKT_BROWSER_COREPACK22_ENTRYPOINT prepare yarn@4.5.0 --activate
 
       - name: Prepare Windows native dependencies
         shell: pwsh
@@ -184,7 +195,7 @@ jobs:
             sourceSha = $env:GITHUB_SHA
             archive = "mktbrowser-win-unpacked.zip"
             sha256 = $sha256
-            node = (node --version)
+            node = (& $env:MKT_BROWSER_NODE22_EXE --version)
             runnerImage = if ($env:ImageOS) { $env:ImageOS } else { "self-hosted-$env:RUNNER_OS" }
             runnerImageVersion = if ($env:ImageVersion) { $env:ImageVersion } else { $env:RUNNER_ARCH }
           }
@@ -210,7 +221,7 @@ jobs:
             $status = 'PASS'
             $reason = 'The Windows directory package was built once and hash-bound.'
           }
-          node scripts/ci-gate-status.cjs --gate windows-package --status $status --reason $reason --owner browser-release --required
+          & $env:MKT_BROWSER_NODE22_EXE scripts/ci-gate-status.cjs --gate windows-package --status $status --reason $reason --owner browser-release --required
 
   packaged-contract:
     needs: package
@@ -225,10 +236,15 @@ jobs:
           node-version: 22
           package-manager-cache: false
 
+      - name: Pin Node.js 22 executable
+        shell: pwsh
+        run: ./.github/scripts/prepare-windows-node22.ps1
+
       - name: Enable Corepack
+        shell: pwsh
         run: |
-          corepack enable
-          corepack prepare yarn@4.5.0 --activate
+          & $env:MKT_BROWSER_NODE22_EXE $env:MKT_BROWSER_COREPACK22_ENTRYPOINT enable
+          & $env:MKT_BROWSER_NODE22_EXE $env:MKT_BROWSER_COREPACK22_ENTRYPOINT prepare yarn@4.5.0 --activate
 
       - name: Prepare Windows native dependencies
         shell: pwsh
@@ -275,7 +291,8 @@ jobs:
           # The engine archive is pinned by the preparation script. A manual streak may repeat the
           # version assertion so the declaration is recorded beside its dispatch inputs.
           MKT_BROWSER_EXPECTED_ENGINE_VERSION: ${{ inputs.expected_engine_version }}
-        run: node scripts/verify-packaged-runtime-contract.cjs --repeat "$env:MKT_CONTRACT_ITERATIONS"
+        shell: pwsh
+        run: '& $env:MKT_BROWSER_NODE22_EXE scripts/verify-packaged-runtime-contract.cjs --repeat "$env:MKT_CONTRACT_ITERATIONS"'
 
       - name: Upload packaged contract evidence
         if: always()
@@ -300,4 +317,4 @@ jobs:
             $status = 'PASS'
             $reason = 'The exact hashed package passed the fresh-job runtime contract.'
           }
-          node scripts/ci-gate-status.cjs --gate packaged-runtime-contract --status $status --reason $reason --owner browser-release --required
+          & $env:MKT_BROWSER_NODE22_EXE scripts/ci-gate-status.cjs --gate packaged-runtime-contract --status $status --reason $reason --owner browser-release --required
