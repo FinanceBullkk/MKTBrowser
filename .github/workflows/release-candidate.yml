@@ -7,10 +7,10 @@ name: Release Candidate
 # built from "whatever the branch happened to be" is the failure this guards against, and it is not
 # visible afterwards in the artifact.
 #
-# The tree is built twice in separate self-hosted runner jobs and the payloads are compared. V1
+# The tree is built twice in separate GitHub-hosted runner jobs and the payloads are compared. V1
 # ships unsigned, so nothing in the file identifies its publisher: the reproducibility comparison
-# and the published SHA-256 are what stand in for a signature, and neither is optional. Runner image
-# hygiene is an external prerequisite; the workflow provides clean checkouts, not clean machines.
+# and the published SHA-256 are what stand in for a signature, and neither is optional. Each job
+# gets its own fresh runner VM, so the two builds are compared across independent clean machines.
 #
 # The installer that gets attested is the one build A produced. It is uploaded once and reused, never
 # rebuilt between verification and attestation, because a rebuild produces a different file than the
@@ -31,7 +31,7 @@ permissions:
 
 jobs:
   freeze:
-    runs-on: [self-hosted, Linux, X64, mktbrowser]
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout frozen source for status evidence
         uses: actions/checkout@v5
@@ -68,7 +68,7 @@ jobs:
 
   build:
     needs: freeze
-    runs-on: [self-hosted, Windows, X64, mktbrowser]
+    runs-on: windows-latest
     env:
       MKTTOOL_ROOT: ${{ github.workspace }}/mkttool
     strategy:
@@ -98,7 +98,7 @@ jobs:
           node-version: 22
           package-manager-cache: false
 
-      # A self-hosted PowerShell runner can lose the action-managed PATH between steps. Resolve and
+      # A PowerShell runner can lose the action-managed PATH between steps. Resolve and
       # pin the executable once so every packaging command below uses the verified Node 22 binary.
       - name: Pin Node.js 22 executable
         shell: pwsh
@@ -194,7 +194,7 @@ jobs:
     # Always run this job so a failed/skipped build cannot hide the required comparison result.
     if: ${{ always() }}
     needs: build
-    runs-on: [self-hosted, Linux, X64, mktbrowser]
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -282,7 +282,7 @@ jobs:
 
   attest:
     needs: compare
-    runs-on: [self-hosted, Linux, X64, mktbrowser]
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -355,16 +355,16 @@ jobs:
           retention-days: 90
 
   # Phase 4 asks whether the candidate installs and uninstalls cleanly on a machine that has never
-  # had the product. This job therefore requires a disposable self-hosted Windows VM restored to a
-  # clean snapshot before the run. GitHub Actions cleans the checkout, but it cannot make a reused
-  # host equivalent to a fresh machine.
+  # had the product. A GitHub-hosted `windows-latest` job satisfies that directly: every job gets a
+  # fresh runner VM that is discarded afterwards, so the installer meets a machine that has never
+  # seen the product.
   #
   # What this does not answer, stated so the green tick is not read as more than it is: no reboot, no
   # power loss, no human at the keyboard, no real proxy, and no licence seat. Those are the Phase 5
   # gates and they need hardware and an operator.
   installed-contract:
     needs: attest
-    runs-on: [self-hosted, Windows, X64, mktbrowser]
+    runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v5

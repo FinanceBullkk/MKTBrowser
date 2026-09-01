@@ -32,7 +32,7 @@ permissions:
 
 jobs:
   quality:
-    runs-on: [self-hosted, Windows, X64, mktbrowser]
+    runs-on: windows-latest
     env:
       # Version coherence uses this explicit checkout first, then falls back to a local sibling for
       # developer runs. Keeping the path in one environment variable avoids runner-layout drift.
@@ -51,9 +51,9 @@ jobs:
           # administrator. The fallback keeps an unavailable checkout OPEN/fail-closed rather than
           # weakening the contract when the secret is absent.
           token: ${{ secrets.MKTTOOL_REPO_READ_TOKEN || github.token }}
-          # Pin the ref explicitly. Without this, checkout first asks the GitHub API for the
-          # default branch; the cross-repository token on the self-hosted runner can fetch refs
-          # but cannot resolve that API call, leaving the step failed and every downstream job skipped.
+          # Pin the ref explicitly rather than letting checkout ask the GitHub API for the default
+          # branch. A cross-repository read token can be scoped to fetch refs while still failing
+          # that API call, which fails the step and skips every downstream job.
           ref: master
           path: mkttool
           fetch-depth: 1
@@ -139,7 +139,7 @@ jobs:
 
   package:
     needs: quality
-    runs-on: [self-hosted, Windows, X64, mktbrowser]
+    runs-on: windows-latest
     env:
       MKTTOOL_ROOT: ${{ github.workspace }}/mkttool
     steps:
@@ -239,7 +239,7 @@ jobs:
 
   packaged-contract:
     needs: package
-    runs-on: [self-hosted, Windows, X64, mktbrowser]
+    runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v5

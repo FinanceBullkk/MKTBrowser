@@ -21,8 +21,9 @@ permissions:
 
 jobs:
   windows:
-    # A public pull request from a fork must never execute untrusted checkout code on the persistent
-    # self-hosted runner. The required gate below stays visible and fails closed for that PR.
+    # A public pull request from a fork must never execute untrusted checkout code in a job that
+    # carries this repository's secrets. The required gate below stays visible and fails closed
+    # for that PR.
     if: github.event.pull_request.head.repo.full_name == github.repository
     uses: ./.github/workflows/windows-pipeline.yml
     with:
@@ -33,11 +34,11 @@ jobs:
   mktbrowser-pr-release-gate:
     if: always()
     needs: [windows]
-    runs-on: [self-hosted, Linux, X64, mktbrowser]
+    runs-on: ubuntu-latest
     steps:
       # This first step intentionally uses only trusted inline shell. It runs before checkout so a
-      # fork PR (whose reusable Windows job is skipped) cannot execute fork-controlled code on the
-      # persistent self-hosted runner. The local helper is used below only for same-repository,
+      # fork PR (whose reusable Windows job is skipped) cannot execute fork-controlled code in a
+      # job that carries repository secrets. The local helper is used below only for same-repository,
       # successful Windows runs.
       - name: Require the Windows pipeline to have succeeded on this merge tree
         if: always()

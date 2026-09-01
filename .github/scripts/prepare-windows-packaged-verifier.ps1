@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 # The packaged verifier uses Chrome for Testing as a licence-free browser engine. Pin the archive
-# here so a self-hosted runner does not depend on whatever interactive Chrome happens to be installed.
+# here so the job does not depend on whatever interactive Chrome happens to be installed.
 $chromeVersion = "152.0.7977.64"
 $chromeUrl = "https://storage.googleapis.com/chrome-for-testing-public/$chromeVersion/win64/chrome-win64.zip"
 $chromeSha256 = "b0db25dea445822429d8ebd36d53344cadcd63127308759456964029bbe18004"
@@ -47,7 +47,7 @@ if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
 }
 
 # The archive may be cached, but executable state is job-scoped. Never trust a previous job's
-# extracted directory on a persistent self-hosted runner.
+# extracted directory.
 Remove-Item -LiteralPath $extracted -Recurse -Force -ErrorAction SilentlyContinue
 Expand-Archive -LiteralPath $archive -DestinationPath $extracted -Force
 if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {

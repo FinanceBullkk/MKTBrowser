@@ -5,10 +5,10 @@ if (-not $env:GITHUB_ENV -or -not $env:GITHUB_PATH) {
 }
 
 # actions/setup-node prepends its selected toolcache directory to PATH. Resolve it once, verify the
-# contract, and persist the absolute executables so later self-hosted PowerShell steps never fall
-# back to a machine-wide Node.js installation or lose the action-managed PATH. A self-hosted runner
-# can drop the action-managed PATH while starting a new PowerShell process, so the toolcache is an
-# explicit fallback rather than guessing from a machine-wide `node.exe`.
+# contract, and persist the absolute executables so later PowerShell steps never fall back to a
+# machine-wide Node.js installation or lose the action-managed PATH. A runner can drop the
+# action-managed PATH while starting a new PowerShell process, so the toolcache is an explicit
+# fallback rather than guessing from a machine-wide `node.exe`.
 $nodeExecutable = $null
 $toolCacheRoots = @($env:RUNNER_TOOL_CACHE, $env:AGENT_TOOLSDIRECTORY) |
   Where-Object { $_ } |
@@ -55,7 +55,7 @@ if (-not $nodeExecutable) {
 }
 
 if (-not $nodeExecutable -and $toolCacheRoots.Count -eq 0) {
-  # Some self-hosted installations do not expose a toolcache variable. In that case the verified
+  # A runner installation may not expose a toolcache variable. In that case the verified
   # major-22 PATH candidate is still safer than invoking an unvalidated `node` later in the job.
   $nodeExecutable = $pathCandidates | Select-Object -First 1
 }
