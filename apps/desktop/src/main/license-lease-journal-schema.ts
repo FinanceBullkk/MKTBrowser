@@ -7,6 +7,7 @@ export const LICENSE_LEASE_STATES = [
   "cooling",
   "confirmed-released",
   "terminal-refused",
+  "expired",
 ] as const;
 
 export type LicenseLeaseState = (typeof LICENSE_LEASE_STATES)[number];
@@ -37,9 +38,10 @@ export const ALLOWED_LICENSE_LEASE_TRANSITIONS: Record<
   active: ["ending", "pending-recovery"],
   ending: ["confirmed-released", "pending-recovery", "cooling"],
   "pending-recovery": ["ending", "cooling"],
-  cooling: ["ending", "pending-recovery"],
+  cooling: ["ending", "pending-recovery", "expired"],
   "confirmed-released": [],
-  "terminal-refused": ["cooling", "pending-recovery"],
+  "terminal-refused": ["cooling", "pending-recovery", "expired"],
+  expired: [],
 };
 
 export function parseLicenseLeaseJournal(contents: string): LicenseLeaseJournalData {
@@ -49,26 +51,34 @@ export function parseLicenseLeaseJournal(contents: string): LicenseLeaseJournalD
   }
 
   const ids = new Set<string>();
-  const profileIds = new Set<string>();
+  const liveProfileIds = new Set<string>();
   const blockingKeyFingerprints = new Set<string>();
   for (const record of parsed.records) {
     assertRecord(record);
-    if (ids.has(record.id) || profileIds.has(record.profileId)) {
-      throw new Error("The license lease journal contains a duplicate profile record.");
+    if (ids.has(record.id)) {
+      throw new Error("The license lease journal contains a duplicate record ID.");
+    }
+    if (!isHistoricalState(record.state) && liveProfileIds.has(record.profileId)) {
+      throw new Error("The license lease journal contains a duplicate profile record with live state.");
     }
     if (
       record.state !== "confirmed-released" &&
+      record.state !== "expired" &&
       blockingKeyFingerprints.has(record.keyFingerprint)
     ) {
       throw new Error("The license lease journal cross-wires one key to multiple profiles.");
     }
     ids.add(record.id);
-    profileIds.add(record.profileId);
-    if (record.state !== "confirmed-released") {
+    if (!isHistoricalState(record.state)) liveProfileIds.add(record.profileId);
+    if (record.state !== "confirmed-released" && record.state !== "expired") {
       blockingKeyFingerprints.add(record.keyFingerprint);
     }
   }
   return parsed as LicenseLeaseJournalData;
+}
+
+function isHistoricalState(state: LicenseLeaseState): boolean {
+  return ["cooling", "confirmed-released", "terminal-refused", "expired"].includes(state);
 }
 
 function assertRecord(record: LicenseLeaseRecord): void {

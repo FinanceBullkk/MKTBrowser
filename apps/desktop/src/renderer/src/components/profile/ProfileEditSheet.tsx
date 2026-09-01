@@ -359,8 +359,9 @@ export function ProfileEditSheet({ profile, onSaved }: Props): JSX.Element {
 function ManagedLockNotice({ subject }: { subject: "proxy" | "fingerprint" }): JSX.Element {
   return (
     <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.06] p-4 text-[12px] leading-relaxed text-amber-100/80">
-      This profile is managed by MKTTool. Its {subject} is locked here so the account cannot open
-      with a different identity. Change the account assignment in MKTTool instead.
+      This profile is managed by MKTTool. Its {subject} is locked here so account proxy and
+      profile-configuration settings cannot be changed in this app. Change the account assignment
+      in MKTTool instead. This does not prove identity isolation.
     </div>
   );
 }

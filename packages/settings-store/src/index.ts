@@ -3,14 +3,12 @@ import { dirname, join } from "node:path";
 
 /**
  * Which Chromium-derived binary the bootstrap downloads on first run.
- *   - "cft": Chrome for Testing — Google's official automation channel,
- *     same binary Puppeteer/Playwright use. Stable, reproducible, but
- *     no anti-detect patches (CFT branding, vanilla TLS fingerprint).
- *   - "cloakbrowser": CloakBrowser — Chromium with 50+ source-level
- *     stealth patches (canvas farbling, WebRTC, CDP traces removed).
- *     Drops detection rate against Cloudflare/DataDome/Akamai. Binary
- *     is "free to use, no redistribution" — we auto-download to user
- *     machine, never bundle. Slightly older Mac builds (145 vs 148 CFT).
+ *   - "cft": Chrome for Testing — Google's official automation channel and a reproducible
+ *     compatibility engine. It is not identity-isolation evidence.
+ *   - "cloakbrowser": the licensed provider engine selected for controlled testing. Provider
+ *     modifications and licence status do not prove that native identity surfaces are isolated;
+ *     the current release keeps that claim explicitly open. The binary is downloaded to the user
+ *     machine and never bundled.
  */
 export type BrowserEngine = "cft" | "cloakbrowser";
 
@@ -34,10 +32,11 @@ export interface AppSettings {
   /**
    * Every CloakBrowser key this installation may use.
    *
-   * The engine binds a session to the key it was handed at spawn and refuses a second one, so
-   * concurrency is per key: holding N keys means up to N profiles open at once, one key each. The
-   * pool also absorbs the cooldown — a key whose seat was not released cleanly rests for its lease
-   * while the others keep working, instead of locking the whole app out.
+   * The engine binds a session to the key it was handed at spawn and refuses a second one. When a
+   * separately verified multi-seat entitlement is enabled, the pool can use one key per profile;
+   * the default one-seat runtime deliberately does not activate these stored extras. The pool also
+   * absorbs the cooldown — a key whose seat was not released cleanly rests for its lease while the
+   * others keep working, instead of locking the whole app out.
    *
    * `cloakBrowserLicenseKey` remains the primary and is what the engine download and manifest
    * checks use; it is folded into this list automatically so an existing install keeps working.

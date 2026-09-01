@@ -1,7 +1,7 @@
 name: Windows Technical Build
 
-# Fast feedback on pushes, the nightly stability sweep, and the manual dispatch used for stability
-# streaks and Phase 4 installer builds.
+# Fast feedback on pushes to the branches that decide something, the nightly stability sweep, and
+# the manual dispatch used for stability streaks and Phase 4 installer builds.
 #
 # Merge authority does not live here. It lives in the gate workflow, which is the only file allowed
 # to carry the required check name, because a job disabled by a condition still publishes a check
@@ -10,6 +10,11 @@ name: Windows Technical Build
 
 on:
   push:
+    # Scoped rather than open. On GitHub-hosted runners this workflow packages MKT Browser on a
+    # Windows machine, billed at the 2x Windows rate, so an open trigger charged a packaging run for
+    # every commit on every scratch branch. The default branch and the release lanes are where a red
+    # result changes what anyone does next; everywhere else the gate workflow covers the merge.
+    branches: [main, "release/**"]
   workflow_dispatch:
     inputs:
       contract_iterations:
@@ -17,7 +22,7 @@ on:
         required: false
         default: "20"
       expected_engine_version:
-        description: "Engine version every run of a stability streak must report (blank records only)"
+        description: "Packaged-verifier engine version to require"
         required: false
         default: ""
   schedule:
@@ -29,7 +34,8 @@ permissions:
 jobs:
   windows:
     uses: ./.github/workflows/windows-pipeline.yml
-    secrets: inherit
     with:
       contract_iterations: ${{ github.event_name == 'workflow_dispatch' && inputs.contract_iterations || (github.event_name == 'schedule' && '20' || '5') }}
       expected_engine_version: ${{ github.event_name == 'workflow_dispatch' && inputs.expected_engine_version || '' }}
+    secrets:
+      MKTTOOL_DEPLOY_KEY: ${{ secrets.MKTTOOL_DEPLOY_KEY }}

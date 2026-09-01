@@ -55,6 +55,22 @@ export function managedProfileLocked(profileId: string): MktBrowserToolError {
   );
 }
 
+/**
+ * The mirror case: `launch_managed_profile` aimed at a profile MKTTool does not own.
+ *
+ * Same boundary, opposite direction. It used to borrow the message above, which told the caller the
+ * profile was managed at the exact moment its NOT being managed was the problem — so anyone reading
+ * it goes hunting for MKTTool permissions that were never involved. The code stays the same because
+ * the refusing layer is the same and the Relay's allowlist is a cross-repository contract; only the
+ * sentence changes, and it now names the tool that would have worked.
+ */
+export function unmanagedProfileLaunch(profileId: string): MktBrowserToolError {
+  return new MktBrowserToolError(
+    "MANAGED_PROFILE_LOCKED",
+    `Profile ${profileId} is not a managed profile. Use launch_profile for locally created profiles.`,
+  );
+}
+
 export function profileAlreadyRunning(profileId: string): MktBrowserToolError {
   return new MktBrowserToolError(
     "PROFILE_ALREADY_RUNNING",

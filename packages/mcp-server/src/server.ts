@@ -28,6 +28,7 @@ import { ActivityLog } from "./ActivityLog.js";
 import {
   CdpPolicyError,
   managedProfileLocked,
+  unmanagedProfileLaunch,
   profileNotFound,
   profileNotRunning,
   toErrorCode,
@@ -127,7 +128,7 @@ function assertNoBlockedSchemeInParams(params?: Record<string, unknown>): void {
 /**
  * Methods raw `cdp_send` must never invoke. Denylist (not allowlist) because
  * the escape-hatch's value is breadth. Two classes:
- *  - host filesystem / response interception (no stealth-safe agent use);
+ *  - host filesystem / response interception (no identity or evasion guarantee);
  *  - cross-origin browser-secret readers an agent CANNOT already reach via
  *    evaluate_js (same-origin policy), plus destructive-without-a-tool methods.
  * LIVING list — extend when CDP adds storage/host-reaching methods.
@@ -219,7 +220,7 @@ export interface BrowserDriver {
   screenshot(profileId: ProfileId): Promise<{ pngBase64: string }>;
   /**
    * Send a raw CDP command. `opts.safe` (default true) auto-disables any
-   * domain the call had to enable so the stealth baseline is preserved; the
+   * domain the call had to enable so the session can be restored cleanly; this
    * convenience CDP tools compose on top of this single primitive.
    */
   cdpSend(
@@ -346,12 +347,12 @@ const ProxySchema = z.object({
 });
 
 /**
- * User-facing fingerprint knobs. We deliberately do NOT accept the raw
- * `FingerprintConfig` (userAgent, clientHints, webgl, …): those surfaces must
- * stay mutually coherent or detection vendors flag the mismatch. Instead the
- * caller picks high-level dimensions and `reconcileFingerprint` derives a
- * coherent config — throwing FingerprintReconcileError (→ INVALID_INPUT) on an
- * incoherent combination rather than silently substituting a default.
+ * User-facing configuration knobs. We deliberately do NOT accept the raw
+ * `FingerprintConfig` (userAgent, clientHints, webgl, …): the derived values must
+ * stay internally coherent. Instead the caller picks high-level dimensions and
+ * `reconcileFingerprint` derives a coherent config — throwing FingerprintReconcileError
+ * (→ INVALID_INPUT) on an incoherent combination rather than silently substituting a default.
+ * Coherence is a configuration guarantee only; it is not proof of native identity isolation.
  */
 const FingerprintInputSchema = z
   .object({
@@ -376,7 +377,8 @@ const CreateProfileSchema = z
     tags: z.array(z.string()).optional(),
     proxy: ProxySchema.optional(),
     fingerprint: FingerprintInputSchema.optional(),
-    // Optional entropy seed; rotates CloakBrowser canvas/audio/WebGL noise.
+    // Optional entropy seed; selects the native engine identity. Surface-level
+    // separation is engine-version dependent and must be measured separately.
     seed: z.string().min(1).optional(),
     external_ref: z.string().trim().min(1).max(200).optional(),
     request_id: z.string().trim().min(1).max(128).optional(),
@@ -419,10 +421,10 @@ const ManagedLaunchSchema = ProfileIdSchema.extend({
  * a human may step in) that an agent can't infer from tool signatures alone.
  */
 const BASE_MCP_INSTRUCTIONS = [
-  "MKT Browser drives real, persistent Chromium profiles — each has its own cookies, login state, fingerprint, and proxy, kept on disk between sessions.",
+  "MKT Browser drives real, persistent Chromium profiles — each keeps its own profile-local cookies, login state, browser settings, and proxy controls on disk between sessions. Identity isolation is not yet proven.",
   "Only tools granted to this authenticated connection are available. Treat tools/list as authoritative and never attempt to bypass an absent capability.",
   "Profiles always open as visible desktop windows. There is no headless mode; do not expect one.",
-  "Do not create or launch profiles in bulk to farm accounts; this is a human-in-the-loop tool for authorized workflows.",
+  "Use one profile at a time in this controlled internal beta; a human must perform login, OTP, CAPTCHA, and typing. Do not create or launch profiles in bulk to farm accounts.",
 ];
 
 const PROFILE_MANAGEMENT_MCP_INSTRUCTIONS = [
@@ -658,7 +660,7 @@ async function dispatch(
     case "launch_managed_profile": {
       const { profile_id, proxy } = ManagedLaunchSchema.parse(args);
       const existing = assertProfileExists(profileManager, profile_id);
-      if (!existing.managed) throw managedProfileLocked(profile_id);
+      if (!existing.managed) throw unmanagedProfileLaunch(profile_id);
       return await launchManagedProfile(profile_id, proxy, { profileManager, browserDriver });
     }
     case "launch_profile": {
@@ -904,7 +906,7 @@ const TOOL_DEFINITIONS = [
         fingerprint: FINGERPRINT_JSON_SCHEMA,
         seed: {
           type: "string",
-          description: "Optional entropy seed for the native fingerprint noise.",
+          description: "Optional entropy seed for the native engine identity.",
         },
         external_ref: {
           type: "string",
@@ -1048,7 +1050,7 @@ const TOOL_DEFINITIONS = [
   {
     name: "evaluate_js",
     description:
-      "Evaluate a JavaScript expression in the page and return the result by value. Runs via Runtime.evaluate without enabling the Runtime domain (stealth-safe).",
+      "Evaluate a JavaScript expression in the page and return the result by value. Runs via Runtime.evaluate without enabling the Runtime domain; this control-path detail is not identity-isolation evidence.",
     inputSchema: {
       type: "object",
       required: ["profile_id", "expression"],
@@ -1152,7 +1154,7 @@ const TOOL_DEFINITIONS = [
   {
     name: "cdp_send",
     description:
-      "OPT-IN (requires MKT_BROWSER_MCP_ALLOW_RAW_CDP=1; off by default — prefer the curated tools). Send a raw Chrome DevTools Protocol command (stealth-safe). Any domain this call had to enable is auto-disabled afterwards so the anti-detect baseline is preserved; domains enabled at connect (Page) are never touched. On anti-detect engines, enabling a DCHECK-sensitive domain (Runtime/Network) is refused — use the convenience wrappers (evaluate_js, get_cookies, …) which need no enable. For safety, host-reaching and cross-origin-secret methods (IO.read, Fetch.*, Storage.getCookies, …) and privileged/local URL schemes (file:/chrome:/devtools:/view-source:) are rejected.",
+      "OPT-IN (requires MKT_BROWSER_MCP_ALLOW_RAW_CDP=1; off by default — prefer the curated tools). Send a raw Chrome DevTools Protocol command. Domains enabled by this call are auto-disabled afterwards and connect-time domains are preserved. These lifecycle controls are security boundaries, not identity-isolation or evasion evidence. For safety, host-reaching and cross-origin-secret methods (IO.read, Fetch.*, Storage.getCookies, …) and privileged/local URL schemes (file:/chrome:/devtools:/view-source:) are rejected.",
     inputSchema: {
       type: "object",
       required: ["profile_id", "method"],

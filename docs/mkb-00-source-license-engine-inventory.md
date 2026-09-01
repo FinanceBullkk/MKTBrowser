@@ -1,5 +1,12 @@
 # MKB-00 source, license, engine, and Windows baseline inventory
 
+> **Historical licensing inventory — superseded for the 30 August 2026 release record.** This
+> 11 August source/origin snapshot remains useful background, but it is not the current Browser
+> provenance or vendor-channel authority. Current truth is the consolidation plan: 0.3.13/P4b
+> provenance is OPEN, P4a Web is independent, and Lane C is **CLOSED** because no CloakBrowser
+> channel exists; no vendor request is sent. Do not infer redistribution or identity-isolation
+> approval from this retained inventory.
+
 **Last updated:** 11 August 2026
 **Status:** Verified on Windows x64; later release and pilot gates remain open
 **Scope:** Engineering inventory for an internal product. It is not legal advice.

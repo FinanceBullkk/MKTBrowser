@@ -9,11 +9,29 @@ browser service, or an authorization boundary. MKTTool Web decides which account
 the Relay verifies signed tickets and holds operator secrets, and MKT Browser stores and launches
 profiles on the operator device.
 
+## Consolidation truth — 1 September 2026
+
+The current consolidation branch is `release/consolidation-20260830` at `b9f9477`. The accepted provenance
+receipt was generated from source commit `5ef710dd931028d4d608bea098311bf54bf5dc31`; subsequent
+commits are documentation-only release-lane and CI-status corrections and do not change the
+packaged payload.
+Q14's dedicated safety commit corrects the MCP/driver capability language: raw CDP is session
+restoration, and fingerprint reconciliation is internal coherence—not stealth evidence or identity
+isolation.
+
+The Windows `0.3.13` payload and Relay v16 bytes are measured, but the outer installer still has an
+open NSIS/resource-order variance and the exact CloakBrowser Stable `.2` engine archive is absent.
+The five-artifact Browser tuple is therefore P4b **OPEN** and not published. It is independent of
+the MKTTool Web/Lane A deployment. `G2-IDENTITY` remains **FAIL** on the recorded font/audio/WebGL
+collisions. There is no CloakBrowser channel, so Lane C is **CLOSED**: no vendor request, date, or
+“coming soon” promise. MKT Browser remains a controlled Lane A/B tool with one profile at a time,
+human login/input, and no identity-isolation claim.
+
 ## Current status
 
 - Upstream application baseline: MultiZen `v0.3.1` at commit
   `83c6898b2de3de1122b5fea88008fbbaa4677bff`.
-- MKB-W01 Windows product isolation: implemented and verified on Windows x64 on 10 August 2026.
+- MKB-W01 Windows product/data isolation (not identity evidence): implemented and verified on Windows x64 on 10 August 2026.
 - MKB-W02 internal clean break: implemented and verified across MKT Browser, MKTTool, and Relay on
   Windows x64 on 10 August 2026.
 - Windows x64 is the only v1 and team-demo platform. macOS Apple Silicon is deferred to MKB-07 and
@@ -38,17 +56,18 @@ profiles on the operator device.
   installer requests one Administrator approval for machine-wide outbound UDP rules covering the
   stable CFT and CloakBrowser runtime paths. Every proxied profile launch verifies its own engine's
   exact rule and all Windows firewall profiles, then fails closed before browser startup if the
-  boundary is uncertain. CloakBrowser download failure can switch to CFT in-modal; CFT remains a
-  compatibility fallback, not the primary antidetect runtime. The combined-installer manifest now
-  pins the published Relay v15 archive, which accepts Browser contract v4. The
+  boundary is uncertain. CloakBrowser download failure can switch to CFT in-modal; CFT is a
+  compatibility fallback only, not identity evidence. The combined-installer manifest now pins the
+  verified Relay v16 archive, which accepts Browser contract v4. The
   installer also persists its conflict detector for runtime setup checks; contract v4 advertises
   `local-install-ready-v1` only after expected process, fixed-port, MultiZen-process, and startup
   ownership pass. The supported topology is one Windows operating-system user per PC; a foreign
   per-user installation is rejected before firewall mutation, and cross-user operation is not a
   release gate. The complete Node 22 installer suite, packaging contracts, typecheck, lint, and the
-  production Electron bundle pass. Operational distribution remains
-  blocked until the installer is rebuilt from the current source and the remaining human Windows
-  gates pass.
+  production Electron bundle pass on the last verified package. The current `0.3.13` source
+  candidate is a measured technical draft only; it is not published or approved for real-account
+  use. The remaining Browser tuple and human/operator gates are explicit; Lane A Web deployment is
+  tracked separately in MKTTool.
 - MKB-03 Browser profile deletion is implemented as a separate in-app lifecycle. Contract version
   `4` removes `delete_profile` from MCP, and profile schema version `3` records incomplete deletion
   for crash-safe retry. The operator must type `DELETE <full profile id>`; active launch/close work
@@ -57,39 +76,53 @@ profiles on the operator device.
 - P0 automated proxy, lease-journal, and readiness hardening is green as of 22 August 2026. Proxied
   launch fails closed on unverifiable egress; lease storage is atomic, schema-validated,
   crash-recoverable, serialized, and redacted; aggregate capacity contains no key/profile identity.
-  `license-capacity-v1` is deliberately not advertised because the live vendor session protocol,
-  sidecar, and driver lifecycle are not connected. Real proxy/DNS/WebRTC evidence, human input,
-  second-PC recovery, and canary gates remain open, so this is not rollout approval.
+  Historical packaged Relay v15 restart and real VirtualBox power-cycle recovery passed on 27 August
+  2026 using a disposable licensed profile; that v15 artifact is not the current candidate.
+  `license-capacity-v1` remains deliberately unadvertised because
+  live vendor schema/sidecar integration, real proxy/DNS/WebRTC evidence, human input, second-PC
+  recovery, and canary gates remain open, so this is not rollout approval. The custom-engine path is
+  closed and there is no CloakBrowser channel; Lane C is closed rather than waiting for a response.
+- Lifecycle and installer evidence is current through 27 August 2026. Normal close returns the
+  seat; an exact Browser hard kill persists cooling and blocks false reuse; an active Electron
+  crash leaves the owned browser alive so startup can close it through `Browser.close`, reconcile
+  the durable lease to `confirmed-released`, and reuse the same seat. Clean combined install passed
+  9/9, repair 13/13, and uninstall 15/15 on the updated Defender snapshot without detections or
+  policy changes. Relay v15 preserved device identity and spent-ticket replay protection across
+  restart. The final disposable-VM power-cycle gate validated an active lease before one real
+  `VBoxManage controlvm poweroff`, found no Browser process after boot while the exact lease remained
+  active, converged through `cooling` with `pendingRecovery=0`, returned capacity after TTL, and
+  relaunched and cleanly released the same profile. Evidence:
+  `local-test-artifacts/phase5/real-power-cycle-recovery-evidence-20260827-ownership-fix-r2.json`.
 - Release-readiness Phase 1 is verified locally on Windows as of 22 August 2026. The vulnerable
   direct runtime dependency `extract-zip@2.0.1` is replaced by pinned `yauzl@3.4.0` behind an owned
   fail-closed ZIP boundary for engine and CRX/ZIP extraction. Traversal, absolute and Windows device
   paths, links and special entries, case-folded collisions, zip bombs, truncation, and CRC failures
   are rejected before publication. CI audits production dependencies, and packaged verification
   inspects `app.asar` to require `yauzl@3.4.0` and reject `extract-zip` metadata or files.
-- Release-readiness Phase 2 is in progress. Chromium now requests an OS-assigned DevTools port,
+- Release-readiness Phase 2 remains partial. Chromium now requests an OS-assigned DevTools port,
   accepts only a fresh bounded `DevToolsActivePort` record owned by the launched data directory and
   loopback listener, and uses one total 15-second operator budget or isolated 60-second packaged-CI
   budget. CI is split into quality, build-once package, and fresh-job packaged-contract jobs with a
   hashed uploaded archive. The final local directory package passed 5/5 cold lifecycle iterations
-  while ports 9222 and 9223 were occupied. The required PR artifact run and seven independent 20/20
-  Windows runner runs remain open, so Phase 2 is not complete.
-- This build may be used for an owner-led technical demo with disposable profiles. It is not
-  approved for real accounts, pilot distribution, or team rollout.
-- The current desktop package version is `0.3.12`. The Windows directory package was regenerated on
-  22 August 2026 with SHA-256
-  `b62642a57c2651c071a59fe210fa2fe9633df584d16fa49e3abd855e747bc1a7`; packaged `app.asar` SHA-256
-  is `8a2310fbd9341b0b45ae829a45b9fdbb40a31da5aa821513fb01e9209a919da7`. Typecheck, zero-warning
-  lint, the complete installer suite, build, and packaged runtime/profile-lifecycle verification
-  passed. The repository's `yarn lint` enforces the workspace quality contract, strict TypeScript
-  unused/fallthrough checks, and JavaScript syntax checks. The packaged verifier covers
-  the restricted tool inventory, deterministic managed create/retry, correlated diagnostics,
-  direct-launch/delete denial, endpoint-free proxy summaries, atomic managed launch, Windows Chrome
-  launcher-PID handoff, OS-assigned owned DevTools discovery, per-stage timing, bounded verifier HTTP
-  requests, sanitized failure snapshots, process-confirmed close, and clean process exit. It remains
-  unsigned. The
-  combined installer under `apps/desktop/release/installer/` was last built on 21 August: it embeds
-  the verified Relay v15 archive but predates the 22 August P0 hardening, so it is not the current
-  rollout artifact and must not be distributed.
+  while ports 9222 and 9223 were occupied. Remote run `33303002259` (attempt 2, source `b9f9477`)
+  passed quality, package, and packaged-contract with no required skip and five cold launches. A
+  future run still needs reviewed private-sibling checkout access or must fail closed; the separate
+  scratch-branch negative matrix remains open.
+- Consolidation push workflow run `33296202751` is retained as a runner failure: the
+  self-hosted Windows PowerShell shell could not resolve `node` after setup, so package jobs were
+  skipped. The earlier `33291356306` run showed the same failure mode and is historical evidence.
+  These are failure receipts superseded by `33303002259`, not promotion evidence by themselves.
+- Phase S3 produced a measured Windows x64 internal-beta candidate `0.3.13` at the consolidation
+  tree `5ef710dd`; the verified Relay v16 archive is pinned. The installer remains unpublished and
+  is not authorized for real-account use: the payload is deterministic, but the outer NSIS/resource
+  ordering varies and the exact Stable `.2` engine archive is absent. It is intended for one profile
+  at a time with human login and input; identity isolation is not proven. The [MKTTool internal-beta
+  release guide](../MKTTool/docs/internal-beta-release.md) records the P4b tuple and closed Lane C.
+- The former `0.3.12` installer and published Relay v15 payload remain quarantined negative evidence;
+  their hashes are retained only to explain the failed restart-replay gate and must not be reused.
+- The packaged runtime verifier uses a system Chrome compatibility fixture when selected; that is
+  compatibility evidence only, not evidence that CloakBrowser identity surfaces are unique. Real-
+  account pilot and broad team rollout remain gated by the acceptance matrix.
 
 ## Owned product and local contract
 
@@ -205,9 +238,10 @@ atomically replace the containing directory with rollback protection, so install
 rules stay attached across version changes. CFT and CloakBrowser have separate rules and separate
 pre-launch verification; protection observed for one engine is never evidence for the other.
 
-The browser engine is a separately licensed dependency. It is downloaded unmodified from an
-approved official source and is not bundled in the application package. Review the exact engine
-license and checksum before operational use.
+The browser engine is a separately licensed dependency. The current candidate records the approved
+Stable `.2` pin and checksum, but the exact engine archive is not present in this workspace, so engine
+provenance and identity gates remain open. It is not bundled in the application package. Review the
+exact engine license and checksum before operational use.
 
 ## Engineering records
 

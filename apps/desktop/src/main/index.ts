@@ -9,6 +9,7 @@ import {
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync, mkdirSync } from "node:fs";
+import { uptime } from "node:os";
 import {
   ProfileManager,
   exportProfile,
@@ -66,9 +67,14 @@ import { COMPATIBILITY_SMOKE_SWITCH } from "./compatibility-smoke-authorization.
 import { runPackagedCompatibilitySmoke } from "./compatibility-smoke-cli.ts";
 import { CdpSession } from "@mktbrowser/cdp-driver";
 import { appendProfileLifecycleLine } from "./profile-lifecycle-log.ts";
-import { LicenseKeyPool } from "./license-key-pool.ts";
+import { LICENSE_SEAT_COOLDOWN_MS, LicenseKeyPool } from "./license-key-pool.ts";
 import { LicenseLeaseJournal } from "./license-lease-journal.ts";
-import { sweepOrphanedProfileBrowsers } from "./startup-orphan-sweep.ts";
+import { LicenseLeaseRecorder } from "./license-lease-recorder.ts";
+import {
+  sweepOrphanedProfileBrowsers,
+  type OrphanSweepOutcome,
+} from "./startup-orphan-sweep.ts";
+import { reconcileStartupOrphanLeases } from "./startup-license-lease-reconciliation.ts";
 import {
   createIpcRuntimeRegistration,
   type IpcRuntimeHandler,
@@ -122,6 +128,20 @@ let browserDriverReady = false;
 let switchToCftInFlight: Promise<ChromiumStatus> | null = null;
 let activeCompatibilityEnginePin: CompatibilityEnginePin | null = null;
 
+/**
+ * Additional vendor seats are not verified for this build. Keep this as a code-controlled
+ * capability rather than deriving it from settings or an operator-provided environment value:
+ * persisted extra keys remain available for a future entitlement migration, but they must not be
+ * handed to the local pool while the installation is on the conservative one-seat plan.
+ */
+const ADDITIONAL_LICENSE_KEYS_ENABLED = false;
+
+/** Recover a legacy/list-only primary without activating any additional seat. */
+function resolvePrimaryLicenseKey(settings: AppSettings | null): string {
+  if (!settings) return "";
+  return settings.cloakBrowserLicenseKey.trim() || settings.cloakBrowserLicenseKeys[0]?.trim() || "";
+}
+
 const ipcRegistration = createIpcRuntimeRegistration<IpcMainInvokeEvent>({
   register: (channel, handler) => ipcMain.handle(channel, handler),
   isTrustedSender: (event) => Boolean(mainWindow && event.sender === mainWindow.webContents),
@@ -158,7 +178,7 @@ function createChromiumBootstrap(engine: AppSettings["browserEngine"]): Chromium
     }),
     // Read at construction: switching the key requires a restart, same as
     // switching the engine. Ignored by CFT, which has no licensed channel.
-    cloakBrowserLicenseKey: cachedSettings?.cloakBrowserLicenseKey ?? "",
+    cloakBrowserLicenseKey: resolvePrimaryLicenseKey(cachedSettings),
   });
   bootstrap.on("status", (status: ChromiumStatus) => {
     if (chromiumBootstrap === bootstrap) {
@@ -375,10 +395,17 @@ app
     // profiles running and every launch truthfully fails, and nothing joins those two facts up for
     // the operator. The window is not delayed, but the driver waits on this promise before its first
     // launch so a slow process listing cannot sweep a browser that was created after startup.
-    let startupOrphanSweep: Promise<void> = Promise.resolve();
+    let startupOrphanSweepOutcome: Promise<OrphanSweepOutcome> = Promise.resolve({
+      closed: [],
+      killed: [],
+      // Not "nothing was running" — nothing was looked at. Lease reconciliation reads an
+      // enumerated sweep's silence as proof a browser is gone, which this is not.
+      enumerated: false,
+      recoveries: [],
+    });
     if (cachedSettings.startupOrphanSweep) {
       const profilesRoot = join(dataRoot, "profiles");
-      startupOrphanSweep = sweepOrphanedProfileBrowsers(profilesRoot, {
+      startupOrphanSweepOutcome = sweepOrphanedProfileBrowsers(profilesRoot, {
         isAlive: (pid) => {
           try {
             process.kill(pid, 0);
@@ -414,12 +441,7 @@ app
           }
         },
         log: (event) => appendProfileLifecycleLine({ ...event, profilesRoot }),
-      }).then(
-        () => {},
-        () => {
-          // Reclaiming a seat is best-effort; failing to must never stop the app from starting.
-        },
-      );
+      });
     }
 
     // Chromium bootstrap — picks the engine from user settings (CFT default,
@@ -444,10 +466,42 @@ app
 
     // One session per licence key, so the pool is what decides how many profiles can be open at
     // once. Built from settings on startup; changing keys needs a restart, same as the engine.
+    // Seeded from the journal, not from settings alone. A browser killed by a crash, a Stop, or a
+    // power loss never hands its session back, and the vendor keeps counting that seat for the
+    // rest of its lease — so a pool rebuilt as all-idle would offer a key the engine then refuses.
+    // On a one-key install that is every launch failing with nothing running to explain it.
+    // The boot time is what makes a lease left mid-flight by a restart recoverable: its browser
+    // cannot have outlived the reboot, so the vendor's clock has been running since then, and
+    // startup reconciliation can end a hold no surviving browser will ever come back to end.
+    const bootedAtMs = Date.now() - uptime() * 1000;
+    const primaryLicenseKey = resolvePrimaryLicenseKey(cachedSettings);
+    const licensePoolKeys = ADDITIONAL_LICENSE_KEYS_ENABLED
+      ? cachedSettings.cloakBrowserLicenseKeys
+      : primaryLicenseKey
+        ? [primaryLicenseKey]
+        : [];
     licenseKeyPool = new LicenseKeyPool({
-      keys: cachedSettings.cloakBrowserLicenseKeys,
-      cooldownMs: 17 * 60_000,
+      keys: licensePoolKeys,
+      cooldownMs: LICENSE_SEAT_COOLDOWN_MS,
+      leaseRecords: licenseLeaseJournal.snapshot(),
     });
+    const licenseLeaseRecorder = new LicenseLeaseRecorder(licenseLeaseJournal, (message) => {
+      console.warn(message);
+    });
+    const startupOrphanSweep = startupOrphanSweepOutcome.then(
+      async (outcome) => {
+        await reconcileStartupOrphanLeases(outcome, {
+          journal: licenseLeaseJournal,
+          pool: licenseKeyPool!,
+          recorder: licenseLeaseRecorder,
+          log: (message) => console.warn(message),
+          bootedAtMs,
+        });
+      },
+      () => {
+        // Reclaiming a seat is best-effort; failing to must never stop the app from starting.
+      },
+    );
     const licenseCapacity = () =>
       chromiumBootstrap.getEngine() === "cloakbrowser"
         ? (licenseKeyPool?.capacitySnapshot(licenseLeaseJournal.snapshot()) ?? null)
@@ -458,6 +512,7 @@ app
       chromiumBootstrap,
       extensionStoreRoot,
       licenseKeyPool,
+      licenseLeaseRecorder,
       startupBarrier: startupOrphanSweep,
       // The companion's "Add to MKT Browser" button routes here (profile-scoped).
       // Confirm natively first: any script on the store page could trigger the
@@ -644,7 +699,7 @@ app
         throw new Error("Engine activation is Windows-only for now.");
       }
       await activateLicensedEnginePin({
-        licenseKey: cachedSettings?.cloakBrowserLicenseKey ?? "",
+        licenseKey: resolvePrimaryLicenseKey(cachedSettings),
         localAppData: process.env.LOCALAPPDATA ?? "",
       });
       activeCompatibilityEnginePin = readCompatibilityEnginePin(process.env.LOCALAPPDATA ?? "");

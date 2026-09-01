@@ -258,6 +258,12 @@ test("lets Chromium assign the DevTools port instead of consuming fixed ports", 
     driver,
     /discoveryBudgetMs = readinessBudgetMs - \(Date\.now\(\) - readinessStartedAtMs\)/,
   );
+  assert.match(processDiscovery, /System32.*netstat\.exe/);
+  assert.match(processDiscovery, /System32.*WindowsPowerShell.*powershell\.exe/);
+  assert.match(processDiscovery, /Get-CimInstance -Query \$query -ErrorAction Stop/);
+  assert.match(processDiscovery, /Console\]::OutputEncoding = \[System\.Text\.UTF8Encoding\]/);
+  assert.match(processDiscovery, /maxBuffer: MAX_WINDOWS_PROCESS_OUTPUT_BYTES/);
+  assert.doesNotMatch(processDiscovery, /Get-NetTCPConnection/);
   assert.doesNotMatch(processDiscovery, /LocalAddress -in @\('127\.0\.0\.1','0\.0\.0\.0'\)/);
 });
 
@@ -267,8 +273,8 @@ test("builds one hashed package and verifies that artifact in a fresh CI job", (
   assert.match(workflow, /quality:/);
   assert.match(workflow, /package:\s*\n\s+needs: quality/);
   assert.match(workflow, /packaged-contract:\s*\n\s+needs: package/);
-  assert.match(workflow, /actions\/upload-artifact@v4/);
-  assert.match(workflow, /actions\/download-artifact@v5/);
+  assert.match(workflow, /actions\/upload-artifact@v6/);
+  assert.match(workflow, /actions\/download-artifact@v7/);
   assert.match(workflow, /Get-FileHash[^\n]+SHA256/);
   assert.match(workflow, /verify-packaged-runtime-contract\.cjs --repeat/);
 
@@ -283,6 +289,42 @@ test("builds one hashed package and verifies that artifact in a fresh CI job", (
   assert.ok(
     workflow.includes("MKT_BROWSER_EXPECTED_ENGINE_VERSION: ${{ inputs.expected_engine_version }}"),
     "the stability dispatch must declare the engine version it expects",
+  );
+});
+
+test("prepares a pinned verifier engine on Windows jobs", () => {
+  const workflow = source(".github/workflows/windows-pipeline.yml");
+  const release = source(".github/workflows/release-candidate.yml");
+  const fixture = source("scripts/system-chrome-engine-fixture.cjs");
+  const preparation = source(".github/scripts/prepare-windows-packaged-verifier.ps1");
+
+  assert.match(
+    workflow,
+    /Prepare pinned packaged verifier engine[\s\S]+prepare-windows-packaged-verifier\.ps1/,
+  );
+  assert.match(preparation, /chromeVersion = "152\.0\.7977\.64"/);
+  assert.match(
+    preparation,
+    /chromeSha256 = "b0db25dea445822429d8ebd36d53344cadcd63127308759456964029bbe18004"/,
+  );
+  assert.match(
+    preparation,
+    /chromeExecutableSha256 = "79832d1e60cbad9323c07339f9608bc0ce93cb9242b9b5481c04a0c536720980"/,
+  );
+  assert.ok(
+    preparation.indexOf("Get-FileHash") < preparation.indexOf("Expand-Archive"),
+    "the verifier must authenticate the archive before extraction",
+  );
+  assert.match(
+    preparation,
+    /extracted = Join-Path \$env:RUNNER_TEMP [^\n]+[\s\S]+Remove-Item[^\n]+\$extracted[\s\S]+Expand-Archive/,
+  );
+  assert.match(preparation, /MKT_BROWSER_SYSTEM_CHROME=\$executable/);
+  assert.match(fixture, /process\.env\.MKT_BROWSER_SYSTEM_CHROME/);
+  assert.ok(
+    release.indexOf("Prepare pinned packaged verifier engine") <
+      release.indexOf("Verify the runtime contract against the installed application"),
+    "the installed-contract job must prepare its engine before running the verifier",
   );
 });
 
@@ -417,12 +459,16 @@ test("keeps browser ownership until failed launches and shutdown sweeps finish",
   const driver = source("apps/desktop/src/main/ChromiumBrowserDriver.ts");
 
   assert.match(driver, /launchingProcesses = new Map<ProfileId, LaunchingProcess>/);
-  assert.match(driver, /await this\.cleanupFailedLaunch\(profileId, error\)/);
+  assert.match(
+    driver,
+    /await this\.cleanupFailedLaunch\([\s\S]*?profileId,[\s\S]*?error,[\s\S]*?seatRefused \? false : undefined,[\s\S]*?leaseReserved,[\s\S]*?\)/,
+  );
   assert.match(driver, /pending\.childExit = \{ exitCode: code, signal \}/);
   assert.match(driver, /writeProfileLifecycleLog\(profileId, pending, "CHILD-EXIT", childExit\)/);
   assert.match(driver, /await terminateBrowserProcess\(profileId, pending\)/);
   // Ownership is dropped only once termination reports success, whatever shape that check takes.
-  assert.match(driver, /if \(outcome\.terminated\)/);
+  assert.match(driver, /if \(!outcome\.terminated\) \{/);
+  assert.match(driver, /survived failed-launch cleanup/);
   assert.match(driver, /record\.windowWatcher\.stop\(\)/);
   assert.match(driver, /await terminateBrowserProcess\(profileId, record\)/);
   assert.match(driver, /this\.running\.delete\(profileId\)/);
@@ -448,12 +494,20 @@ test("reports a licence refusal as a refusal, not as a crash", () => {
   // reaches the launch path as a process that started, passed readiness, and then vanished. Left
   // as `Chromium exited during launch with code 76` it reads as an engine crash and sends whoever
   // sees it hunting for one. The mapped text names the session limit and what to do about it.
+  // The verdict is classified in licence-verdict.ts, which has behavioural tests of its own, and
+  // wrapped here because engineUnavailable lives in the MCP package.
   const driver = source("apps/desktop/src/main/ChromiumBrowserDriver.ts");
-  assert.match(driver, /const licenseReason = licenseExitMessage\(exitCode\);/);
-  assert.match(driver, /const refusal = engineUnavailable\(licenseReason\);/);
+  assert.match(driver, /classifyLaunchExit\(exitCode, stage\)/);
+  assert.match(driver, /const refusal = engineUnavailable\(licenceReason\);/);
   // Tagged with the exit code so key rotation can tell a seat refusal from a real failure
   // without matching on operator-facing wording that is meant to be rewritten.
   assert.match(driver, /licenseExitCode\?: number \}\)\.licenseExitCode = exitCode/);
+
+  // Every during-launch exit is classified, and the licence verdict is waited for before a launch
+  // is called a success. Sampling `childExit` once, while the engine was still alive, is exactly
+  // how a refused key came back as a running profile with a pid and an endpoint.
+  assert.doesNotMatch(driver, /throw new Error\(\s*`Chromium exited during/);
+  assert.match(driver, /await settleLicenceVerdict\(launchProcess, child, spawnedAtMs\)/);
 
   // The mapping is only useful if it still covers the codes the engine actually exits with.
   const channel = source("apps/desktop/src/main/cloakbrowser-pro-channel.ts");
@@ -474,6 +528,54 @@ test("spawns the engine detached so a crashed app leaves a reclaimable browser",
   // The sweep is the other half: without it a detached browser is just a stray window.
   const index = source("apps/desktop/src/main/index.ts");
   assert.match(index, /sweepOrphanedProfileBrowsers\(/);
+  assert.match(index, /reconcileStartupOrphanLeases\(/);
+  assert.match(index, /startupBarrier: startupOrphanSweep/);
+});
+
+test("routes every GitHub Actions job through a GitHub-hosted runner", () => {
+  // The pipeline left the self-hosted `mktbrowser` pool on 1 September 2026. A hosted runner hands
+  // every job a fresh VM that is discarded afterwards, which is what the clean-machine gates
+  // actually need, and it removes the persistent-runner failure that skipped the package jobs when
+  // a PowerShell shell lost the action-managed PATH.
+  //
+  // This reads runner routing rather than whole-file text: `self-hosted` still appears in
+  // windows-pipeline.yml as a fallback image label, and that is not a routing target.
+  const workflowPaths = [
+    ".github/workflows/pr-release-gate.yml",
+    ".github/workflows/release-candidate.yml",
+    ".github/workflows/release.yml",
+    ".github/workflows/windows-pipeline.yml",
+  ];
+  let runsOnCount = 0;
+
+  for (const workflowPath of workflowPaths) {
+    const workflow = source(workflowPath);
+
+    for (const match of workflow.matchAll(/^\s*runs-on:\s*(.+)$/gm)) {
+      runsOnCount += 1;
+      assert.match(
+        match[1]!.trim(),
+        /^(?:ubuntu|windows)-latest$/,
+        `${workflowPath} routes a job somewhere other than a GitHub-hosted runner`,
+      );
+    }
+  }
+
+  assert.equal(runsOnCount, 9);
+  const windowsPipeline = source(".github/workflows/windows-pipeline.yml");
+  assert.equal(windowsPipeline.match(/runs-on: windows-latest/g)?.length, 3);
+});
+
+test("does not send fork pull requests to jobs that carry repository secrets", () => {
+  const gate = source(".github/workflows/pr-release-gate.yml");
+  const push = source(".github/workflows/release.yml");
+
+  assert.match(
+    gate,
+    /windows:[\s\S]+if: github\.event\.pull_request\.head\.repo\.full_name == github\.repository[\s\S]+uses: \.\/\.github\/workflows\/windows-pipeline\.yml/,
+  );
+  assert.equal(gate.includes("secrets: inherit"), false);
+  assert.equal(push.includes("secrets: inherit"), false);
 });
 
 function source(relativePath: string): string {

@@ -28,6 +28,11 @@ function readJson(relativePath) {
   return JSON.parse(readFileSync(path.join(repoRoot, relativePath), "utf8"));
 }
 
+function readJsonPath(filePath) {
+  const resolved = path.isAbsolute(filePath) ? filePath : path.join(repoRoot, filePath);
+  return JSON.parse(readFileSync(resolved, "utf8"));
+}
+
 function git(...args) {
   return execFileSync("git", args, { cwd: repoRoot, encoding: "utf8" }).trim();
 }
@@ -91,17 +96,30 @@ function dependencyInventory() {
   return inventory;
 }
 
-function buildProvenance({ installerPath, payloadManifestPath, dependencyAudit }) {
+function buildProvenance({
+  installerPath,
+  payloadManifestPath,
+  dependencyAudit,
+  engineReleasePath = process.env.MKT_BROWSER_ENGINE_RELEASE_FILE || "apps/desktop/windows-engine-release.json",
+  candidateId = process.env.MKT_RELEASE_CANDIDATE_ID?.trim() || null,
+}) {
   const installerStats = statSync(installerPath);
   const payloadManifest = JSON.parse(readFileSync(payloadManifestPath, "utf8"));
   const desktopPackage = readJson("apps/desktop/package.json");
+  const generatedAt = new Date();
+  const unsignedExceptionExpiresAt = new Date(
+    generatedAt.getTime() + 60 * 24 * 60 * 60 * 1000,
+  );
 
   return {
     schemaVersion: 1,
     type: "mktbrowser.release-provenance",
-    generatedAt: new Date().toISOString(),
+    generatedAt: generatedAt.toISOString(),
     signing: {
       authenticode: false,
+      status: "unsigned-internal-exception",
+      exceptionExpiresAt: unsignedExceptionExpiresAt.toISOString(),
+      allowedLanes: ["A", "B"],
       // Written here rather than left as an absence, so a reader never has to decide whether the
       // missing signature was a decision or an oversight.
       note:
@@ -110,6 +128,9 @@ function buildProvenance({ installerPath, payloadManifestPath, dependencyAudit }
         "channel are the only origin evidence. Onboarding must announce SmartScreen in advance.",
     },
     source: frozenSource(),
+    // The candidate id is supplied by the release manifest, never inferred from a filename. Keep it
+    // nullable while a dirty/local build is being inspected; the publisher requires it before R2.
+    candidateId,
     product: {
       version: desktopPackage.version,
       electron: desktopPackage.devDependencies?.electron ?? null,
@@ -126,7 +147,9 @@ function buildProvenance({ installerPath, payloadManifestPath, dependencyAudit }
       fileCount: payloadManifest.fileCount,
     },
     relay: readJson("apps/desktop/relay-release.json"),
-    engine: readJson("apps/desktop/windows-engine-release.json"),
+    // Use the same explicit engine manifest that packaging consumed. A caller that packages an
+    // externally pinned engine must not accidentally attest the repository's default manifest.
+    engine: readJsonPath(engineReleasePath),
     dependencyAudit,
     dependencyInventory: dependencyInventory(),
     workflow: process.env.GITHUB_RUN_ID
@@ -141,7 +164,14 @@ function buildProvenance({ installerPath, payloadManifestPath, dependencyAudit }
 }
 
 function parseArguments(argv) {
-  const options = { installerPath: null, payloadManifestPath: null, output: null, dependencyAudit: null };
+  const options = {
+    installerPath: null,
+    payloadManifestPath: null,
+    output: null,
+    dependencyAudit: null,
+    engineReleasePath: null,
+    candidateId: null,
+  };
   for (let index = 0; index < argv.length; index += 2) {
     const [name, value] = [argv[index], argv[index + 1]];
     if (!value) throw new Error(`Missing value for ${name}`);
@@ -149,6 +179,8 @@ function parseArguments(argv) {
     else if (name === "--payload-manifest") options.payloadManifestPath = value;
     else if (name === "--output") options.output = value;
     else if (name === "--dependency-audit") options.dependencyAudit = value;
+    else if (name === "--engine-release") options.engineReleasePath = value;
+    else if (name === "--candidate-id") options.candidateId = value;
     else throw new Error(`Unknown option: ${name}`);
   }
   for (const required of ["installerPath", "payloadManifestPath", "output"]) {
@@ -166,6 +198,8 @@ if (require.main === module) {
       installerPath: options.installerPath,
       payloadManifestPath: options.payloadManifestPath,
       dependencyAudit: options.dependencyAudit ?? "not-recorded",
+      engineReleasePath: options.engineReleasePath ?? undefined,
+      candidateId: options.candidateId ?? undefined,
     });
     if (!provenance.source.clean) {
       throw new Error(

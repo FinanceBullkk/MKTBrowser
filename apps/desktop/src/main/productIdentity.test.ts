@@ -145,7 +145,7 @@ test("keeps desktop packaging metadata aligned with the product identity", () =>
   );
   assert.doesNotMatch(releaseCandidateWorkflow, /MKTTOOL_RELEASE_COOKIE/);
   assert.doesNotMatch(releaseWorkflow, /MKTTOOL_RELEASE_COOKIE/);
-  assert.match(installerInclude, /install-relay\.ps1/);
+  assert.match(installerInclude, /windows-install-relay-payload\.ps1/);
   assert.match(installerInclude, /MKT Browser\.lnk/);
   assert.match(installerInclude, /"Publisher" "Techieslab"/);
   assert.match(installerInclude, /"RelayOwned"/);

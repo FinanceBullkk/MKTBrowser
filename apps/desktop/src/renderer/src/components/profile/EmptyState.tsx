@@ -35,7 +35,9 @@ export function ProfilesEmptyState({ onCreate }: Props): JSX.Element {
         </div>
         <div className="text-[14px] font-semibold text-slate-100 mt-3.5">No profiles yet</div>
         <div className="text-[12px] text-slate-500 mt-1.5 leading-relaxed">
-          Each profile is its own browser — cookies, login, fingerprint, proxy. Create one to get started.
+          Profile-local cookies, login state, browser settings, and proxy controls stay on this
+          device. Identity isolation is not yet proven; use one profile at a time with human login
+          and input. Create one to get started.
         </div>
         <div className="flex items-center justify-center gap-2 mt-4">
           <button

@@ -1,7 +1,18 @@
 import { execFile } from "node:child_process";
+import { join, win32 } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+const MAX_NETSTAT_OUTPUT_BYTES = 1_048_576;
+const MAX_WINDOWS_PROCESS_OUTPUT_BYTES = 1_048_576;
+const WINDOWS_PROCESS_INSPECTION_TIMEOUT_MS = 5_000;
+// A machine that has just booted pays for WinMgmt starting up on its first CIM query, and that one
+// call can outrun the warm budget above by a wide margin. Reading that as "the process table cannot
+// be read" is the wrong conclusion, and an expensive one: a shutdown sweep then fails closed over a
+// browser that is still holding the single licence seat. It is not hypothetical - on a fresh CI
+// runner the discovery contract failed at exactly the 5s mark. A timeout is evidence the machine is
+// cold rather than hung, so the one retry gets a budget sized for a cold WMI.
+const WINDOWS_PROCESS_INSPECTION_COLD_TIMEOUT_MS = 20_000;
 
 export interface BrowserProcessInfo {
   pid: number;
@@ -130,6 +141,23 @@ export function commandLineUsesDataDir(commandLine: string, dataDir: string): bo
   return value !== null && normalizePath(value) === expected;
 }
 
+/** Parse bounded netstat rows; the wildcard foreign endpoint identifies a listener across locales. */
+export function parseLoopbackPortOwners(raw: string, port: number): number[] {
+  if (!Number.isInteger(port) || port <= 0 || port >= 65_536) return [];
+  if (Buffer.byteLength(raw, "utf8") > MAX_NETSTAT_OUTPUT_BYTES) return [];
+
+  const owners = new Set<number>();
+  for (const line of raw.split(/\r?\n/)) {
+    const match = line.match(
+      /^\s*TCP\s+127\.0\.0\.1:(\d+)\s+0\.0\.0\.0:0\s+\S+\s+(\d+)\s*$/i,
+    );
+    if (!match || Number(match[1]) !== port) continue;
+    const pid = Number(match[2]);
+    if (Number.isInteger(pid) && pid > 0) owners.add(pid);
+  }
+  return [...owners];
+}
+
 /** Enumerate every Windows process listening specifically on 127.0.0.1 for `port`. */
 export async function enumerateLoopbackPortOwners(
   port: number,
@@ -138,50 +166,96 @@ export async function enumerateLoopbackPortOwners(
   if (!Number.isInteger(port) || port <= 0 || port >= 65_536) {
     return { inspected: true, pids: [] };
   }
+  const systemRoot = windowsSystemRootFromEnv();
+  if (!systemRoot) return { inspected: false, pids: [] };
 
-  const script = [
-    `$items = @(Get-NetTCPConnection -State Listen -ErrorAction Stop | Where-Object { $_.LocalPort -eq ${port} -and $_.LocalAddress -eq '127.0.0.1' } | Select-Object -ExpandProperty OwningProcess -Unique)`,
-    "$result = [pscustomobject]@{ inspected = $true; pids = @($items | ForEach-Object { [int]$_ }) }",
-    "[Console]::Out.Write(($result | ConvertTo-Json -Compress))",
-  ].join("; ");
   try {
     const { stdout } = await execFileAsync(
-      "powershell.exe",
-      ["-NoProfile", "-NonInteractive", "-Command", script],
-      { encoding: "utf8", windowsHide: true, timeout: 3000 },
+      join(systemRoot, "System32", "netstat.exe"),
+      ["-ano", "-p", "tcp"],
+      {
+        encoding: "utf8",
+        windowsHide: true,
+        timeout: 3000,
+        maxBuffer: MAX_NETSTAT_OUTPUT_BYTES,
+      },
     );
-    const parsed = JSON.parse(stdout) as { inspected?: unknown; pids?: unknown };
-    if (parsed.inspected !== true || !Array.isArray(parsed.pids)) {
-      return { inspected: false, pids: [] };
-    }
-    return {
-      inspected: true,
-      pids: parsed.pids.map(Number).filter((pid) => Number.isInteger(pid) && pid > 0),
-    };
+    return { inspected: true, pids: parseLoopbackPortOwners(stdout, port) };
   } catch {
     return { inspected: false, pids: [] };
   }
 }
 
 async function listWindowsProcesses(): Promise<BrowserProcessInfo[]> {
+  const systemRoot = windowsSystemRootFromEnv();
+  if (!systemRoot) throw new Error("Windows system root is unavailable");
+  const powershell = join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const script = [
-    "$items = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*--user-data-dir=*' } | ForEach-Object { [pscustomobject]@{ pid = [int]$_.ProcessId; commandLine = [string]$_.CommandLine } }",
-    "if ($items) { ConvertTo-Json -InputObject @($items) -Compress }",
+    "$ErrorActionPreference = 'Stop'",
+    "$ProgressPreference = 'SilentlyContinue'",
+    "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
+    "$query = \"SELECT ProcessId, CommandLine FROM Win32_Process WHERE CommandLine LIKE '%--user-data-dir=%'\"",
+    "$items = Get-CimInstance -Query $query -ErrorAction Stop | ForEach-Object { [pscustomobject]@{ pid = [int]$_.ProcessId; commandLine = [string]$_.CommandLine } }",
+    "if ($items) { [Console]::Out.Write((ConvertTo-Json -InputObject @($items) -Compress)) }",
   ].join("; ");
 
   try {
-    const { stdout } = await execFileAsync(
-      "powershell.exe",
-      ["-NoProfile", "-NonInteractive", "-Command", script],
-      { encoding: "utf8", windowsHide: true, timeout: 3000 },
-    );
-    if (!stdout.trim()) return [];
-    const parsed = JSON.parse(stdout) as BrowserProcessInfo[] | BrowserProcessInfo;
-    return (Array.isArray(parsed) ? parsed : [parsed]).filter(isBrowserProcessInfo);
+    return await queryWindowsProcesses(powershell, script, WINDOWS_PROCESS_INSPECTION_TIMEOUT_MS);
   } catch (cause) {
-    // Propagate: the one caller that cannot tolerate a false empty checks for it.
+    // Only a timeout earns the second, longer attempt. Anything else - a missing shell, refused
+    // access, unparseable output - would fail the same way twice and only delay the answer.
+    if (!isChildProcessTimeout(cause)) {
+      // Propagate: the one caller that cannot tolerate a false empty checks for it.
+      throw new Error("could not enumerate Windows processes", { cause });
+    }
+  }
+
+  try {
+    return await queryWindowsProcesses(
+      powershell,
+      script,
+      WINDOWS_PROCESS_INSPECTION_COLD_TIMEOUT_MS,
+    );
+  } catch (cause) {
     throw new Error("could not enumerate Windows processes", { cause });
   }
+}
+
+async function queryWindowsProcesses(
+  powershell: string,
+  script: string,
+  timeoutMs: number,
+): Promise<BrowserProcessInfo[]> {
+  const { stdout } = await execFileAsync(
+    powershell,
+    ["-NoProfile", "-NonInteractive", "-Command", script],
+    {
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: timeoutMs,
+      maxBuffer: MAX_WINDOWS_PROCESS_OUTPUT_BYTES,
+    },
+  );
+  if (!stdout.trim()) return [];
+  const parsed = JSON.parse(stdout) as BrowserProcessInfo[] | BrowserProcessInfo;
+  return (Array.isArray(parsed) ? parsed : [parsed]).filter(isBrowserProcessInfo);
+}
+
+/** `execFile` kills a child that outruns its budget, so a timeout arrives as a killed signal. */
+function isChildProcessTimeout(cause: unknown): boolean {
+  if (typeof cause !== "object" || cause === null) return false;
+  const failure = cause as { killed?: unknown; signal?: unknown };
+  return failure.killed === true && typeof failure.signal === "string";
+}
+
+export function windowsSystemRootFromEnv(
+  env: Partial<Pick<NodeJS.ProcessEnv, "SystemRoot" | "WINDIR">> = process.env,
+): string | null {
+  const candidate = env.SystemRoot || env.WINDIR;
+  if (!candidate) return null;
+  if (!/^[A-Za-z]:[\\/]/.test(candidate)) return null;
+  const normalized = win32.resolve(candidate);
+  return normalized;
 }
 
 async function listPosixProcesses(): Promise<BrowserProcessInfo[]> {

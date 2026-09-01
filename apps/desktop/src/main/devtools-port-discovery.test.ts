@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import type { BrowserProcessInfo } from "./browser-process-discovery.ts";
 import {
+  clearStaleDevToolsActivePort,
   DevToolsPortDiscoveryError,
   parseDevToolsActivePort,
   waitForOwnedDevToolsEndpoint,
@@ -29,22 +33,34 @@ test("parses only the bounded Chromium DevToolsActivePort schema", () => {
   }
 });
 
-test("rejects a stale record until the current launch publishes an owned endpoint", async () => {
+test("removes the crash-era record before launch and tolerates an already-clean profile", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mkt-browser-active-port-"));
+  const activePortPath = join(root, "DevToolsActivePort");
+  try {
+    await writeFile(activePortPath, "55497\n/devtools/browser/stale\n", "utf8");
+    await clearStaleDevToolsActivePort(root);
+    await assert.rejects(stat(activePortPath), hasCode("ENOENT"));
+    await clearStaleDevToolsActivePort(root);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("authenticates a reappeared record by process and listener ownership, not file time", async () => {
   const clock = createClock();
   let reads = 0;
   const deps = harnessDeps(clock, {
-    readActivePortRecord: async () => ({
-      contents: "55497\n/devtools/browser/current\n",
-      modifiedAtMs: ++reads === 1 ? 900 : 1_001,
-    }),
+    readActivePortRecord: async () => {
+      reads += 1;
+      return { contents: "55497\n/devtools/browser/current\n" };
+    },
   });
 
   const result = await discover(deps, 250);
 
-  assert.equal(reads, 2);
+  assert.equal(reads, 1);
   assert.equal(result.port, 55497);
   assert.equal(result.primaryPid, 20);
-  assert.ok(result.timings.activePortMs > 0);
   assert.equal(
     result.timings.totalMs,
     result.timings.activePortMs + result.timings.processMs + result.timings.ownershipMs,
@@ -61,6 +77,66 @@ test("never attaches when the listener belongs to a foreign process", async () =
     assert.equal(error.diagnostics.primaryPid, 20);
     assert.deepEqual(error.diagnostics.portOwnerPids, [999]);
     assert.deepEqual(error.diagnostics.processPids, [20]);
+    return true;
+  });
+});
+
+test("rejects a listener owner whose process identity changes between OS snapshots", async () => {
+  const clock = createClock();
+  let processReads = 0;
+  const deps = harnessDeps(clock);
+  deps.enumerateProcesses = async () => {
+    processReads += 1;
+    return {
+      processes:
+        processReads % 2 === 1
+          ? [browser(20)]
+          : [{ pid: 20, commandLine: `foreign.exe --user-data-dir="${DATA_DIR}"` }],
+      enumerated: true,
+    };
+  };
+
+  await assert.rejects(discover(deps, 220), (error: unknown) => {
+    assert.ok(error instanceof DevToolsPortDiscoveryError);
+    assert.equal(error.diagnostics.stage, "process");
+    assert.ok(processReads >= 2);
+    return true;
+  });
+});
+
+test("rejects a listener that changes owners during authentication", async () => {
+  const clock = createClock();
+  let ownerReads = 0;
+  const deps = harnessDeps(clock);
+  deps.enumeratePortOwners = async () => {
+    ownerReads += 1;
+    return { inspected: true, pids: ownerReads === 1 ? [20] : [30] };
+  };
+
+  await assert.rejects(discover(deps, 220), (error: unknown) => {
+    assert.ok(error instanceof DevToolsPortDiscoveryError);
+    assert.equal(error.diagnostics.stage, "ownership");
+    assert.ok(ownerReads >= 2);
+    assert.deepEqual(error.diagnostics.portOwnerPids, [30]);
+    return true;
+  });
+});
+
+test("rejects a duplicate owner set that could mask a new PID", async () => {
+  const clock = createClock();
+  let ownerReads = 0;
+  const deps = harnessDeps(clock, {
+    processes: [browser(20), browser(30)],
+  });
+  deps.enumeratePortOwners = async () => {
+    ownerReads += 1;
+    return { inspected: true, pids: ownerReads % 2 === 1 ? [20, 20] : [20, 30] };
+  };
+
+  await assert.rejects(discover(deps, 220), (error: unknown) => {
+    assert.ok(error instanceof DevToolsPortDiscoveryError);
+    assert.equal(error.diagnostics.stage, "ownership");
+    assert.ok(ownerReads >= 2);
     return true;
   });
 });
@@ -144,7 +220,7 @@ function createClock(): { now: () => number; sleep: (ms: number) => Promise<void
 function harnessDeps(
   clock: ReturnType<typeof createClock>,
   options: {
-    activePortRecord?: { contents: string; modifiedAtMs: number } | null;
+    activePortRecord?: { contents: string } | null;
     readActivePortRecord?: DevToolsPortDiscoveryDeps["readActivePortRecord"];
     processes?: BrowserProcessInfo[];
     ownerPids?: number[];
@@ -154,7 +230,6 @@ function harnessDeps(
 ): DevToolsPortDiscoveryDeps {
   const defaultRecord = {
     contents: "55497\n/devtools/browser/current\n",
-    modifiedAtMs: 1_001,
   };
   return {
     now: clock.now,
@@ -179,7 +254,11 @@ function harnessDeps(
 
 function discover(deps: DevToolsPortDiscoveryDeps, budgetMs = 120) {
   return waitForOwnedDevToolsEndpoint(
-    { dataDir: DATA_DIR, childPid: 20, startedAtMs: 1_000, budgetMs },
+    { dataDir: DATA_DIR, childPid: 20, budgetMs },
     deps,
   );
+}
+
+function hasCode(expected: string) {
+  return (error: unknown) => (error as NodeJS.ErrnoException).code === expected;
 }

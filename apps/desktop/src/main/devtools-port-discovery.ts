@@ -63,7 +63,6 @@ export class DevToolsPortDiscoveryError extends Error {
 
 export interface DevToolsActivePortRecord {
   contents: string;
-  modifiedAtMs: number;
 }
 
 export interface DevToolsPortDiscoveryDeps {
@@ -118,7 +117,7 @@ export async function readDevToolsActivePortRecord(
     if (Buffer.byteLength(contents, "utf8") > MAX_ACTIVE_PORT_BYTES) {
       throw new Error("DevToolsActivePort exceeded the bounded read size");
     }
-    return { contents, modifiedAtMs: fileStat.mtimeMs };
+    return { contents };
   } finally {
     await handle.close();
   }
@@ -146,7 +145,6 @@ export async function waitForOwnedDevToolsEndpoint(
   options: {
     dataDir: string;
     childPid: number;
-    startedAtMs: number;
     budgetMs: number;
   },
   deps: DevToolsPortDiscoveryDeps = defaultDeps,
@@ -170,7 +168,10 @@ export async function waitForOwnedDevToolsEndpoint(
         deadlineMs,
         "active-port",
       );
-      if (record && record.modifiedAtMs >= options.startedAtMs) {
+      // The caller removes DevToolsActivePort immediately before spawn. Treat its reappearance as
+      // fresh, then authenticate it with the exact profile process set and listener ownership.
+      // Filesystem timestamps are deliberately absent from this contract.
+      if (record) {
         candidate = parseDevToolsActivePort(record.contents);
         activePortReadyAtMs ??= deps.now();
       } else {
@@ -242,7 +243,63 @@ export async function waitForOwnedDevToolsEndpoint(
       continue;
     }
 
+    // Re-read the profile process set after the listener query. A PID can be reused between the
+    // two OS snapshots; requiring the same primary PID and command line in both prevents a stale
+    // process record from authenticating a different process that inherited the port.
+    let refreshed: { processes: BrowserProcessInfo[]; enumerated: boolean };
+    try {
+      refreshed = await withinDeadline(
+        deps.enumerateProcesses(options.dataDir),
+        deps,
+        deadlineMs,
+        "process",
+      );
+    } catch (error) {
+      if (isDeadlineError(error)) break;
+      stage = "process";
+      await discoveryBackoff(deps, deadlineMs);
+      continue;
+    }
+    const refreshedPrimary = refreshed.processes.find(
+      (item) => item.pid === ownedPrimary.pid && item.commandLine === ownedPrimary.commandLine,
+    );
+    const refreshedPids = refreshed.processes.map((item) => item.pid);
+    const ownerStillMatches = owners.pids.every((pid) => refreshedPids.includes(pid));
+    if (!refreshed.enumerated || !refreshedPrimary || !ownerStillMatches) {
+      stage = "process";
+      processPids = refreshedPids.slice(0, 20);
+      await discoveryBackoff(deps, deadlineMs);
+      continue;
+    }
+
+    let confirmedOwners: LoopbackPortOwnersInspection;
+    try {
+      confirmedOwners = await withinDeadline(
+        deps.enumeratePortOwners(candidate.port),
+        deps,
+        deadlineMs,
+        "ownership",
+      );
+    } catch (error) {
+      if (isDeadlineError(error)) break;
+      stage = "ownership";
+      await discoveryBackoff(deps, deadlineMs);
+      continue;
+    }
+    if (
+      !confirmedOwners.inspected ||
+      !samePidSet(owners.pids, confirmedOwners.pids) ||
+      !confirmedOwners.pids.includes(refreshedPrimary.pid)
+    ) {
+      stage = "ownership";
+      portOwnerPids = confirmedOwners.pids.slice(0, 20);
+      await discoveryBackoff(deps, deadlineMs);
+      continue;
+    }
+
     primaryPid = ownedPrimary.pid;
+    processPids = refreshedPids.slice(0, 20);
+    portOwnerPids = confirmedOwners.pids.slice(0, 20);
     const completedAtMs = deps.now();
     const totalMs = completedAtMs - discoveryStartedAtMs;
     if (deps.now() > deadlineMs) break;
@@ -314,6 +371,14 @@ async function withinDeadline<T>(
 }
 
 class DiscoveryDeadlineError extends Error {}
+
+function samePidSet(left: readonly number[], right: readonly number[]): boolean {
+  const leftSet = new Set(left);
+  const rightSet = new Set(right);
+  if (leftSet.size !== left.length || rightSet.size !== right.length) return false;
+  if (leftSet.size !== rightSet.size) return false;
+  return [...leftSet].every((pid) => rightSet.has(pid));
+}
 
 function isDeadlineError(error: unknown): error is DiscoveryDeadlineError {
   return error instanceof DiscoveryDeadlineError;

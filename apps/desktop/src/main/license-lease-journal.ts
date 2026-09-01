@@ -40,7 +40,7 @@ export class LicenseLeaseJournal {
     this.filePath = filePath;
     this.now = options.now ?? Date.now;
     this.idFactory = options.idFactory ?? randomUUID;
-    for (const record of records) this.records.set(record.profileId, record);
+    for (const record of records) this.records.set(record.id, record);
   }
 
   static async open(
@@ -51,7 +51,7 @@ export class LicenseLeaseJournal {
   }
 
   get(profileId: string): LicenseLeaseRecord | null {
-    const record = this.records.get(profileId);
+    const record = this.currentRecord(profileId);
     return record ? { ...record } : null;
   }
 
@@ -59,7 +59,11 @@ export class LicenseLeaseJournal {
     return [...this.records.values()].map((record) => ({ ...record }));
   }
 
-  async reserve(input: { profileId: string; key: string }): Promise<LicenseLeaseRecord> {
+  async reserve(input: {
+    profileId: string;
+    key: string;
+    staleLeaseExpired?: boolean;
+  }): Promise<LicenseLeaseRecord> {
     const profileId = input.profileId.trim();
     const key = input.key.trim();
     if (!profileId) throw new Error("A lease reservation requires a profile ID.");
@@ -67,20 +71,26 @@ export class LicenseLeaseJournal {
 
     const keyFingerprint = fingerprintLicenseKey(key);
     return this.enqueueMutation(async () => {
-      const existing = this.records.get(profileId);
-      if (existing && existing.state !== "confirmed-released") {
+      const existing = this.currentRecord(profileId);
+      if (existing?.state === "reserved" && existing.keyFingerprint === keyFingerprint) {
+        return { ...existing };
+      }
+      if (existing && !isHistoricalState(existing.state)) {
         if (existing.keyFingerprint !== keyFingerprint) {
           throw new Error("This profile already has a lease reserved with a different license key.");
         }
-        return { ...existing };
+        throw new Error(`This profile already has a ${existing.state} license lease.`);
       }
       const keyOwner = [...this.records.values()].find(
         (record) =>
-          record.profileId !== profileId &&
           record.state !== "confirmed-released" &&
+          record.state !== "expired" &&
           record.keyFingerprint === keyFingerprint,
       );
-      if (keyOwner) {
+      const canRetireKeyOwner =
+        input.staleLeaseExpired === true &&
+        (keyOwner?.state === "cooling" || keyOwner?.state === "terminal-refused");
+      if (keyOwner && !canRetireKeyOwner) {
         throw new Error("This license key already has a lease reserved for another profile.");
       }
 
@@ -96,8 +106,20 @@ export class LicenseLeaseJournal {
         createdAt: timestamp,
         updatedAt: timestamp,
       };
-      await this.persistRecord(profileId, record);
-      this.records.set(profileId, record);
+      const records = new Map(this.records);
+      if (keyOwner && canRetireKeyOwner) {
+        records.set(keyOwner.id, {
+          ...keyOwner,
+          state: "expired",
+          childPid: null,
+          updatedAt: timestamp,
+        });
+      }
+      if (records.has(record.id)) throw new Error("A license lease record ID was reused.");
+      records.set(record.id, record);
+      await persistLicenseLeaseRecords(this.filePath, [...records.values()]);
+      this.records.clear();
+      for (const [id, next] of records) this.records.set(id, next);
       return { ...record };
     });
   }
@@ -119,7 +141,7 @@ export class LicenseLeaseJournal {
     }
 
     return this.enqueueMutation(async () => {
-      const current = this.records.get(profileId);
+      const current = this.currentRecord(profileId);
       if (!current) throw new Error(`No license lease exists for profile ${profileId}.`);
       if (!ALLOWED_LICENSE_LEASE_TRANSITIONS[current.state].includes(nextState)) {
         throw new Error(
@@ -135,8 +157,8 @@ export class LicenseLeaseJournal {
           updates.lastErrorCode === undefined ? current.lastErrorCode : updates.lastErrorCode,
         updatedAt: new Date(this.now()).toISOString(),
       };
-      await this.persistRecord(profileId, next);
-      this.records.set(profileId, next);
+      await this.persistRecord(current.id, next);
+      this.records.set(current.id, next);
       return { ...next };
     });
   }
@@ -147,7 +169,7 @@ export class LicenseLeaseJournal {
   ): Promise<LicenseLeaseRecord> {
     assertStableErrorCode(lastErrorCode);
     return this.enqueueMutation(async () => {
-      const current = this.records.get(profileId);
+      const current = this.currentRecord(profileId);
       if (!current) throw new Error(`No license lease exists for profile ${profileId}.`);
       if (
         current.state !== "pending-recovery" &&
@@ -161,15 +183,15 @@ export class LicenseLeaseJournal {
         lastErrorCode,
         updatedAt: new Date(this.now()).toISOString(),
       };
-      await this.persistRecord(profileId, next);
-      this.records.set(profileId, next);
+      await this.persistRecord(current.id, next);
+      this.records.set(current.id, next);
       return { ...next };
     });
   }
 
   async releaseUnstartedReservation(profileId: string): Promise<LicenseLeaseRecord> {
     return this.enqueueMutation(async () => {
-      const current = this.records.get(profileId);
+      const current = this.currentRecord(profileId);
       if (!current) throw new Error(`No license lease exists for profile ${profileId}.`);
       if (current.state !== "reserved") {
         throw new Error(`Only an unstarted reservation can be released locally.`);
@@ -181,8 +203,8 @@ export class LicenseLeaseJournal {
         lastErrorCode: null,
         updatedAt: new Date(this.now()).toISOString(),
       };
-      await this.persistRecord(profileId, next);
-      this.records.set(profileId, next);
+      await this.persistRecord(current.id, next);
+      this.records.set(current.id, next);
       return { ...next };
     });
   }
@@ -196,11 +218,25 @@ export class LicenseLeaseJournal {
     return result;
   }
 
-  private async persistRecord(profileId: string, record: LicenseLeaseRecord): Promise<void> {
+  private currentRecord(profileId: string): LicenseLeaseRecord | undefined {
+    let historical: LicenseLeaseRecord | undefined;
+    for (const record of this.records.values()) {
+      if (record.profileId !== profileId) continue;
+      if (!isHistoricalState(record.state)) return record;
+      historical = record;
+    }
+    return historical;
+  }
+
+  private async persistRecord(recordId: string, record: LicenseLeaseRecord): Promise<void> {
     const records = new Map(this.records);
-    records.set(profileId, record);
+    records.set(recordId, record);
     await persistLicenseLeaseRecords(this.filePath, [...records.values()]);
   }
+}
+
+function isHistoricalState(state: LicenseLeaseState): boolean {
+  return ["cooling", "confirmed-released", "terminal-refused", "expired"].includes(state);
 }
 
 function assertStableErrorCode(value: string): void {

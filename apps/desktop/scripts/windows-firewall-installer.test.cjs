@@ -2,8 +2,6 @@ const assert = require("node:assert/strict");
 const { readFileSync } = require("node:fs");
 const { join } = require("node:path");
 const test = require("node:test");
-const { gunzipSync } = require("node:zlib");
-const { buildEncodedFirewallCommands } = require("./generate-windows-firewall-commands.cjs");
 
 const desktopRoot = join(__dirname, "..");
 const installer = readFileSync(join(desktopRoot, "build", "installer.nsh"), "utf8");
@@ -15,46 +13,50 @@ const relayCleanup = readFileSync(
   join(desktopRoot, "build", "windows-relay-cleanup.ps1"),
   "utf8",
 );
+const relayInstall = readFileSync(
+  join(desktopRoot, "build", "windows-install-relay-payload.ps1"),
+  "utf8",
+);
 const config = readFileSync(join(desktopRoot, "electron-builder.yml"), "utf8");
 const installerConfig = readFileSync(
   join(desktopRoot, "electron-builder-installer.yml"),
   "utf8",
 );
-const encodedCommands = buildEncodedFirewallCommands(firewall);
-const elevatedCommands = Object.values(encodedCommands).map((command) =>
-  Buffer.from(command, "base64").toString("utf16le"),
-);
 
-function embeddedScript(command) {
-  const payload = command.match(/\$z='([A-Za-z0-9+/=]+)'/)?.[1];
-  assert.ok(payload, "Elevated command does not contain its firewall payload.");
-  return gunzipSync(Buffer.from(payload, "base64")).toString("utf8");
-}
-
-test("keeps per-user install and elevates only the firewall transaction", () => {
+test("runs installer PowerShell from explicit script files instead of a staged command", () => {
   assert.match(config, /perMachine:\s*false/);
   assert.match(installer, /ExecShellWait "runas"/);
-  for (const commandName of [
-    "CHECK_PROFILES",
-    "CHECK_OWNER",
-    "INSTALL",
-    "UNINSTALL",
-    "VERIFY",
-    "VERIFY_ABSENT",
+  assert.match(
+    installer,
+    /File \/oname=\$PLUGINSDIR\\windows-webrtc-firewall\.ps1[\s\S]*build\\windows-webrtc-firewall\.ps1/,
+  );
+  assert.match(
+    installer,
+    /File \/oname=\$PLUGINSDIR\\windows-install-relay-payload\.ps1[\s\S]*build\\windows-install-relay-payload\.ps1/,
+  );
+  assert.doesNotMatch(installer, /-EncodedCommand/);
+  // -ExecutionPolicy Bypass is the flag malware reaches for, and Defender's behavioural engine
+  // weighs it. RemoteSigned permits a locally written unsigned script just the same -- NSIS `File`
+  // extraction carries no Mark-of-the-Web -- and was measured to run this script to exit 0.
+  assert.doesNotMatch(installer, /-ExecutionPolicy Bypass/);
+  assert.match(installer, /-ExecutionPolicy RemoteSigned/);
+  assert.doesNotMatch(installer, /\s-Command\s/);
+  assert.doesNotMatch(installer, /ScriptBlock.*Create|GzipStream/);
+  for (const mode of [
+    "CheckProfiles",
+    "CheckOwner",
+    "Install",
+    "Uninstall",
+    "Verify",
+    "VerifyAbsent",
   ]) {
-    assert.match(installer, new RegExp(`MKT_BROWSER_FIREWALL_${commandName}_COMMAND`));
+    assert.match(installer, new RegExp(`windows-webrtc-firewall\\.ps1[^\\r\\n]*-Mode ${mode}`));
   }
   assert.doesNotMatch(installer, /SetEnvironmentVariable/);
-  assert.equal(elevatedCommands.length, 6);
-  for (const command of elevatedCommands) {
-    assert.equal(embeddedScript(command), firewall);
-    assert.match(command, /GzipStream/);
-    assert.match(command, /ScriptBlock.*Create/);
-  }
   for (const engine of ["cft", "cloakbrowser"]) {
     assert.match(
-      Buffer.from(encodedCommands.install, "base64").toString("utf16le"),
-      new RegExp(`'chromium','${engine}','runtime','chrome\\.exe'`, "i"),
+      installer,
+      new RegExp(`chromium\\\\${engine}\\\\runtime\\\\chrome\\.exe`, "i"),
     );
   }
   assert.match(firewall, /New-NetFirewallRule/);
@@ -62,9 +64,21 @@ test("keeps per-user install and elevates only the firewall transaction", () => 
   assert.match(firewall, /Action Block/);
   assert.match(firewall, /Protocol UDP/);
   assert.match(firewall, /Profile Any/);
-  assert.match(firewall, /\(\$rule\.Profiles -band 7\) -ne 7/);
+  // All three Windows firewall profiles must be named, or the rule must apply to every profile.
+  // Replaces the COM bitmask check `($rule.Profiles -band 7) -ne 7`.
+  assert.match(firewall, /foreach \(\$required in @\("Domain", "Private", "Public"\)\)/);
   assert.match(firewall, /firewall-profile-disabled/);
-  assert.match(firewall, /HNetCfg\.FwPolicy2/);
+  // Defender quarantined the 23 Aug candidate as Behavior:Win32/PShellCobStager.A -- a behavioural
+  // detection named for PowerShell COM staging. The elevated firewall script must never build a
+  // COM object again; the NetSecurity cmdlets read the same state.
+  // Asserted against code only: the file carries a comment telling the next reader not to bring
+  // COM back, and a guard that trips on its own warning is a guard nobody keeps.
+  const firewallCode = firewall.replace(/^\s*#.*$/gm, "");
+  assert.doesNotMatch(firewallCode, /New-Object\s+-ComObject/);
+  assert.doesNotMatch(firewallCode, /HNetCfg\.FwPolicy2/);
+  assert.match(firewall, /Get-NetFirewallApplicationFilter/);
+  assert.match(firewall, /Get-NetFirewallPortFilter/);
+  assert.match(firewall, /Get-NetFirewallProfile/);
   assert.match(firewall, /Assert-FirewallOwnership/);
   assert.match(firewall, /different-user-owner/);
   assert.match(installer, /verification failed \(code \$0\)/);
@@ -77,23 +91,16 @@ test("removes only owned stale rules after verification and on uninstall", () =>
   const finalVerificationAt = firewall.lastIndexOf("Assert-Rule $entry.Final $entry.Program");
   const staleCleanupAt = firewall.lastIndexOf("Get-NetFirewallRule -Group $group");
   assert.ok(finalVerificationAt >= 0 && staleCleanupAt > finalVerificationAt);
-  assert.match(Buffer.from(encodedCommands.install, "base64").toString("utf16le"), /-Mode Install/);
-  assert.match(Buffer.from(encodedCommands.checkOwner, "base64").toString("utf16le"), /-Mode CheckOwner/);
-  assert.match(
-    Buffer.from(encodedCommands.uninstall, "base64").toString("utf16le"),
-    /-Mode Uninstall[\s\S]*chromium[\s\S]*cft/,
-  );
-  assert.match(Buffer.from(encodedCommands.verify, "base64").toString("utf16le"), /-Mode Verify/);
-  assert.match(
-    Buffer.from(encodedCommands.verifyAbsent, "base64").toString("utf16le"),
-    /-Mode VerifyAbsent/,
-  );
+  assert.match(installer, /windows-webrtc-firewall\.ps1[^\r\n]*-Mode Install/);
+  assert.match(installer, /windows-webrtc-firewall\.ps1[^\r\n]*-Mode CheckOwner/);
+  assert.match(installer, /windows-webrtc-firewall\.ps1[^\r\n]*-Mode Uninstall/);
+  assert.match(installer, /windows-webrtc-firewall\.ps1[^\r\n]*-Mode Verify/);
+  assert.match(installer, /windows-webrtc-firewall\.ps1[^\r\n]*-Mode VerifyAbsent/);
   const uninstallMacro = installer.match(/!macro customUnInstall[\s\S]*?!macroend/)?.[0];
   assert.ok(uninstallMacro);
-  assert.ok(
-    uninstallMacro.indexOf("MKT_BROWSER_FIREWALL_UNINSTALL_COMMAND") <
-      uninstallMacro.indexOf("windows-relay-cleanup.ps1"),
-  );
+  const firewallUninstallAt = uninstallMacro.indexOf("-Mode Uninstall");
+  const relayCleanupAt = uninstallMacro.indexOf("windows-relay-cleanup.ps1");
+  assert.ok(firewallUninstallAt >= 0 && relayCleanupAt > firewallUninstallAt);
   assert.match(installer, /pre-launch check refuses to run without the exact firewall rules/);
 });
 
@@ -106,7 +113,7 @@ test("rejects another Windows user's firewall ownership before any mutation", ()
   const preflight = installer.match(/Function MktBrowserInspectInstallConflicts[\s\S]*?FunctionEnd/)?.[0];
   assert.ok(preflight);
   assert.ok(ownerCheckAt >= 0 && firstMutationAt > ownerCheckAt);
-  assert.match(preflight, /MKT_BROWSER_FIREWALL_CHECK_OWNER_COMMAND/);
+  assert.match(preflight, /windows-webrtc-firewall\.ps1[^\r\n]*-Mode CheckOwner/);
   assert.match(preflight, /already installed for another Windows user/);
   assert.match(installer, /\$0 == 17[\s\S]*firewall protection was not changed/);
 });
@@ -132,10 +139,16 @@ test("runs Relay uninstall cleanup from a parser-safe script file", () => {
 test("Relay installer failures remain retryable without uninstalling local state", () => {
   const installMacro = installer.match(/!macro customInstall[\s\S]*?!macroend/)?.[0];
   assert.ok(installMacro);
-  assert.match(installMacro, /Expand-Archive[\s\S]*install-relay\.ps1/);
+  assert.match(installMacro, /windows-install-relay-payload\.ps1/);
+  assert.match(installMacro, /-File "\$PLUGINSDIR\\windows-install-relay-payload\.ps1"/);
+  assert.doesNotMatch(installMacro, /Expand-Archive|\s-Command\s/);
   assert.match(installMacro, /MKTTool Relay installation failed/);
   assert.doesNotMatch(installMacro, /windows-relay-cleanup/);
   assert.doesNotMatch(installMacro, /relay-config\.json/);
+  assert.match(relayInstall, /Expand-Archive -LiteralPath \$archive/);
+  assert.match(relayInstall, /relay-staging-outside-temp/);
+  assert.match(relayInstall, /Test-Path -LiteralPath \$installer -PathType Leaf/);
+  assert.match(relayInstall, /\$env:RELAY_SKIP_BROWSER = "1"/);
 });
 
 test("repairs an installed legacy uninstaller without losing Relay ownership", () => {

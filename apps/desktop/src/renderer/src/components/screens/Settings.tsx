@@ -12,6 +12,7 @@ import {
   Zap,
 } from "lucide-react";
 import { Pill } from "../atoms";
+import { AdditionalLicenceKeys } from "./AdditionalLicenceKeys";
 import type { AppSettings, ChromiumStatus, SystemInfo } from "../../types";
 
 interface Props {
@@ -72,7 +73,17 @@ export function Settings({ onImport }: Props): JSX.Element {
 
   async function saveLicence(): Promise<void> {
     const trimmed = licenceDraft.trim();
-    await patch({ cloakBrowserLicenseKey: trimmed });
+    // Replacing the primary must not leave the old key in the pool. The store folds the primary
+    // back into the list on read, so without this a swap would quietly keep both and rotation
+    // would spend an attempt — and a cooldown — on a key the operator has just retired.
+    const previous = settings?.cloakBrowserLicenseKey.trim() ?? "";
+    const kept = (settings?.cloakBrowserLicenseKeys ?? [])
+      .map((k) => k.trim())
+      .filter((k) => k.length > 0 && k !== previous && k !== trimmed);
+    await patch({
+      cloakBrowserLicenseKey: trimmed,
+      cloakBrowserLicenseKeys: trimmed ? [trimmed, ...kept] : kept,
+    });
     setLicenceDraft(trimmed);
     setLicenceSaved(true);
     window.setTimeout(() => setLicenceSaved(false), 1800);
@@ -239,8 +250,9 @@ export function Settings({ onImport }: Props): JSX.Element {
           desc={
             <>
               Without a key, CloakBrowser stays on the last openly published build (146, May 2026).
-              A browser that lags several Chrome majors behind stable is itself unusual enough to
-              stand out. A free key is one browser at a time and needs no card — sign in at{" "}
+              A browser that lags several Chrome majors behind stable may lack current compatibility
+              fixes; review the pinned release before use. A free key is one browser at a time and
+              needs no card — sign in at{" "}
               <span className="mono text-slate-400">cloakbrowser.dev/free</span>. Applied on next
               app launch.
             </>
@@ -305,6 +317,17 @@ export function Settings({ onImport }: Props): JSX.Element {
               </>
             )}
           </div>
+          {(settings.cloakBrowserLicenseKey || settings.cloakBrowserLicenseKeys.length > 0) && (
+            <AdditionalLicenceKeys
+              keys={settings.cloakBrowserLicenseKeys}
+              primaryKey={settings.cloakBrowserLicenseKey}
+              onChange={(next) => patch({ cloakBrowserLicenseKeys: next })}
+              // One-seat is the only verified entitlement in this build. Do not infer extra seats
+              // from keys found in settings.json; keep them visible and preserved until the vendor
+              // entitlement is independently verified.
+              additionalKeysEnabled={false}
+            />
+          )}
           {settings.cloakBrowserLicenseKey ? (
             <div className="text-[11px] mt-2">
               <button
@@ -325,8 +348,8 @@ export function Settings({ onImport }: Props): JSX.Element {
               </button>
               <span className="text-slate-500 ml-2">
                 {confirmUpgrade
-                  ? "Every profile reports different hardware afterwards. Do this before accounts exist, or during a planned migration — never underneath a running one."
-                  : "Pins the newest licensed build and downloads it. The current engine is removed first."}
+                  ? "The configured runtime changes for every profile. Identity surfaces are experimental and not proven unique or isolated. Do this before accounts exist, or during a planned migration — never underneath a running one."
+                  : "Pins the approved licensed build and downloads it. The current engine is removed first; this does not prove identity isolation."}
               </span>
               {upgradeError ? (
                 <div className="text-rose-300 mt-1">{upgradeError}</div>
@@ -381,12 +404,12 @@ const engineOptions: Array<{
   {
     value: "cloakbrowser",
     label: "CloakBrowser",
-    description: "Source-patched Chromium from CloakHQ releases. Primary runtime.",
+    description: "Licensed runtime for the controlled beta; identity isolation is not yet proven.",
   },
   {
     value: "cft",
     label: "Chrome for Testing",
-    description: "Compatibility fallback using Google's official automation build.",
+    description: "Compatibility verifier only; it is not identity evidence or a production runtime.",
   },
 ];
 

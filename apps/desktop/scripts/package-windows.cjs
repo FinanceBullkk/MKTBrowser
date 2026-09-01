@@ -29,8 +29,16 @@
  */
 
 const { execFileSync } = require("node:child_process");
-const { randomUUID } = require("node:crypto");
-const { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } = require("node:fs");
+const { createHash, randomUUID } = require("node:crypto");
+const {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} = require("node:fs");
 const path = require("node:path");
 const { rebuild } = require("@electron/rebuild");
 const { assertSupportedNodeVersion } = require("../../../scripts/verify-node-version.cjs");
@@ -38,7 +46,6 @@ const {
   assertWorkspaceQualityContract,
 } = require("../../../scripts/workspace-quality-contract.cjs");
 const { fetchPinnedRelay } = require("./fetch-pinned-relay.cjs");
-const { generateWindowsFirewallCommands } = require("./generate-windows-firewall-commands.cjs");
 const {
   emitWindowsCompatibilityEvidence,
 } = require("./emit-windows-compatibility-evidence.cjs");
@@ -92,13 +99,8 @@ async function packageWindows({ builderArgs, label, includeRelay = false }) {
   runPrepackageQualityGates(label);
 
   if (includeRelay) {
-    generateWindowsFirewallCommands();
-    process.stdout.write(`[${label}] generated self-contained WebRTC firewall commands.\n`);
-  }
-
-  if (includeRelay) {
     const { manifest, archivePath } = await fetchPinnedRelay();
-    copyFileSync(archivePath, relayPayloadPath);
+    stageVerifiedRelayPayload(archivePath, relayPayloadPath, manifest);
     process.stdout.write(`[${label}] staged verified Relay v${manifest.version}.\n`);
   }
 
@@ -157,6 +159,25 @@ async function packageWindows({ builderArgs, label, includeRelay = false }) {
         writeFileSync(file, contents);
       }
     }
+  }
+}
+
+function stageVerifiedRelayPayload(sourcePath, destinationPath, manifest) {
+  const partialPath = `${destinationPath}.${randomUUID()}.partial`;
+  try {
+    copyFileSync(sourcePath, partialPath);
+    const copied = readFileSync(partialPath);
+    const copiedSha256 = createHash("sha256").update(copied).digest("hex");
+    if (copied.length !== manifest.sizeBytes || copiedSha256 !== manifest.sha256) {
+      throw new Error(
+        `Staged Relay payload changed during packaging (size ${copied.length}, SHA-256 ${copiedSha256}).`,
+      );
+    }
+    rmSync(destinationPath, { force: true });
+    renameSync(partialPath, destinationPath);
+  } catch (error) {
+    rmSync(partialPath, { force: true });
+    throw error;
   }
 }
 

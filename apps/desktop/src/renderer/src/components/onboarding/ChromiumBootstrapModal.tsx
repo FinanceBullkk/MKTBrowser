@@ -5,7 +5,7 @@ import { Cube } from "../atoms/Cube";
 import type { ChromiumStatus, SystemInfo } from "../../types";
 
 /**
- * Blocks the UI until the patched Chromium binary is present. Shown:
+ * Blocks the UI until the pinned Chromium runtime is present. Shown:
  *   - on first run (download)
  *   - on cache invalidation (re-download)
  *   - on download error (retry)
@@ -77,11 +77,11 @@ function subtitleFor(status: ChromiumStatus): string {
     case "missing":
       return "First-run download. About 150-550 MB.";
     case "fetching-manifest":
-      return "Resolving the latest compatible build";
+       return "Resolving the pinned compatibility build";
     case "downloading":
       return `Runtime ${status.version}`;
     case "verifying":
-      return "Checking integrity (SHA-256 + macOS code signature)";
+       return "Checking pinned runtime integrity (SHA-256 + platform signature, when required)";
     case "extracting":
       return `Unpacking runtime ${status.version}…`;
     case "error":
@@ -111,7 +111,7 @@ function Body({
     return (
       <div className="flex items-center gap-2 text-[12px] text-slate-400">
         <Loader2 size={14} className="animate-spin text-purple-400" />
-        Resolving latest stable version…
+        Resolving pinned compatibility release…
       </div>
     );
   }
@@ -218,7 +218,8 @@ function Body({
                 Switch to Chrome for Testing
               </Button>
               <p className="text-[11px] text-slate-500 text-center">
-                Compatibility fallback only. Chrome for Testing is not the primary antidetect runtime.
+                Compatibility fallback only. This does not provide identity-isolation evidence or
+                change the one-profile, human-input internal-beta boundary.
               </p>
             </>
           ) : null}
