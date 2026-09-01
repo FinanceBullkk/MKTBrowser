@@ -292,7 +292,7 @@ test("builds one hashed package and verifies that artifact in a fresh CI job", (
   );
 });
 
-test("prepares a pinned verifier engine on self-hosted Windows jobs", () => {
+test("prepares a pinned verifier engine on Windows jobs", () => {
   const workflow = source(".github/workflows/windows-pipeline.yml");
   const release = source(".github/workflows/release-candidate.yml");
   const fixture = source("scripts/system-chrome-engine-fixture.cjs");
@@ -532,7 +532,14 @@ test("spawns the engine detached so a crashed app leaves a reclaimable browser",
   assert.match(index, /startupBarrier: startupOrphanSweep/);
 });
 
-test("routes every GitHub Actions job through approved self-hosted runner pools", () => {
+test("routes every GitHub Actions job through a GitHub-hosted runner", () => {
+  // The pipeline left the self-hosted `mktbrowser` pool on 1 September 2026. A hosted runner hands
+  // every job a fresh VM that is discarded afterwards, which is what the clean-machine gates
+  // actually need, and it removes the persistent-runner failure that skipped the package jobs when
+  // a PowerShell shell lost the action-managed PATH.
+  //
+  // This reads runner routing rather than whole-file text: `self-hosted` still appears in
+  // windows-pipeline.yml as a fallback image label, and that is not a routing target.
   const workflowPaths = [
     ".github/workflows/pr-release-gate.yml",
     ".github/workflows/release-candidate.yml",
@@ -543,28 +550,23 @@ test("routes every GitHub Actions job through approved self-hosted runner pools"
 
   for (const workflowPath of workflowPaths) {
     const workflow = source(workflowPath);
-    assert.doesNotMatch(workflow, /\b(?:ubuntu|windows|macos)-latest\b/i);
 
     for (const match of workflow.matchAll(/^\s*runs-on:\s*(.+)$/gm)) {
       runsOnCount += 1;
-      assert.match(match[1]!, /\bself-hosted\b/, `${workflowPath} contains a hosted runner job`);
       assert.match(
-        match[1]!,
-        /\bmktbrowser\b/,
-        `${workflowPath} is not restricted to the MKT Browser runner pool`,
+        match[1]!.trim(),
+        /^(?:ubuntu|windows)-latest$/,
+        `${workflowPath} routes a job somewhere other than a GitHub-hosted runner`,
       );
     }
   }
 
   assert.equal(runsOnCount, 9);
   const windowsPipeline = source(".github/workflows/windows-pipeline.yml");
-  assert.equal(
-    windowsPipeline.match(/runs-on: \[self-hosted, Windows, X64, mktbrowser\]/g)?.length,
-    3,
-  );
+  assert.equal(windowsPipeline.match(/runs-on: windows-latest/g)?.length, 3);
 });
 
-test("does not send fork pull requests to persistent self-hosted jobs or inherit secrets", () => {
+test("does not send fork pull requests to jobs that carry repository secrets", () => {
   const gate = source(".github/workflows/pr-release-gate.yml");
   const push = source(".github/workflows/release.yml");
 
