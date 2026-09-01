@@ -15,6 +15,21 @@ on:
     # every commit on every scratch branch. The default branch and the release lanes are where a red
     # result changes what anyone does next; everywhere else the gate workflow covers the merge.
     branches: [main, "release/**"]
+    # Documentation cannot change a packaged byte, and this workflow is the most expensive thing in
+    # the repository: three Windows jobs, billed at the 2x rate, roughly twenty billed minutes for a
+    # README edit. Nine of the last sixty commits on `main` changed nothing but Markdown.
+    #
+    # A skip here costs no evidence. The pull-request gate has already built this exact tree — a
+    # `pull_request` event builds the merge commit, which is what `main` becomes — so for a
+    # documentation change the push run is pure duplication. That is the same reasoning the MKTTool
+    # sibling already applies to its `relay-executable` job.
+    #
+    # The gate workflow is deliberately left alone. It carries the required check name and is the
+    # only merge authority, so it keeps running on every pull request including documentation ones.
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "plans/**"
   workflow_dispatch:
     inputs:
       contract_iterations:
