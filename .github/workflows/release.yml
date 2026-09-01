@@ -19,10 +19,17 @@ on:
     # the repository: three Windows jobs, billed at the 2x rate, roughly twenty billed minutes for a
     # README edit. Nine of the last sixty commits on `main` changed nothing but Markdown.
     #
-    # A skip here costs no evidence. The pull-request gate has already built this exact tree — a
-    # `pull_request` event builds the merge commit, which is what `main` becomes — so for a
+    # A skip here costs no evidence. The gate workflow has already built this exact tree, because a
+    # pull-request event builds the merge commit — what `main` is about to become — so for a
     # documentation change the push run is pure duplication. That is the same reasoning the MKTTool
     # sibling already applies to its `relay-executable` job.
+    #
+    # Note for whoever edits this comment next: `runtime-contract.test.ts` asserts that this file
+    # does not contain the pull-request trigger token, and it does so by substring over the whole
+    # file rather than over the trigger block. Spelling that token here, even inside a comment,
+    # turns the suite red. The bluntness is deliberate and worth keeping: it fails safe, and it
+    # guards the 22 August incident where this workflow republished the required check name as
+    # `skipped` on the same head commit as the real result.
     #
     # The gate workflow is deliberately left alone. It carries the required check name and is the
     # only merge authority, so it keeps running on every pull request including documentation ones.
