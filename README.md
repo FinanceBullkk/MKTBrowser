@@ -9,9 +9,9 @@ browser service, or an authorization boundary. MKTTool Web decides which account
 the Relay verifies signed tickets and holds operator secrets, and MKT Browser stores and launches
 profiles on the operator device.
 
-## Consolidation truth — 30 August 2026
+## Consolidation truth — 1 September 2026
 
-The current consolidation branch is `release/consolidation-20260830`. The accepted provenance
+The current consolidation branch is `release/consolidation-20260830` at `b9f9477`. The accepted provenance
 receipt was generated from source commit `5ef710dd931028d4d608bea098311bf54bf5dc31`; subsequent
 commits are documentation-only release-lane and CI-status corrections and do not change the
 packaged payload.
@@ -99,17 +99,19 @@ human login/input, and no identity-isolation claim.
   paths, links and special entries, case-folded collisions, zip bombs, truncation, and CRC failures
   are rejected before publication. CI audits production dependencies, and packaged verification
   inspects `app.asar` to require `yauzl@3.4.0` and reject `extract-zip` metadata or files.
-- Release-readiness Phase 2 is in progress. Chromium now requests an OS-assigned DevTools port,
+- Release-readiness Phase 2 remains partial. Chromium now requests an OS-assigned DevTools port,
   accepts only a fresh bounded `DevToolsActivePort` record owned by the launched data directory and
   loopback listener, and uses one total 15-second operator budget or isolated 60-second packaged-CI
   budget. CI is split into quality, build-once package, and fresh-job packaged-contract jobs with a
   hashed uploaded archive. The final local directory package passed 5/5 cold lifecycle iterations
-  while ports 9222 and 9223 were occupied. The required PR artifact run and seven independent 20/20
-  Windows runner runs remain open, so Phase 2 is not complete.
-- The latest consolidation push workflow run `33296202751` is retained as a runner failure: the
+  while ports 9222 and 9223 were occupied. Remote run `33303002259` (attempt 2, source `b9f9477`)
+  passed quality, package, and packaged-contract with no required skip and five cold launches. A
+  future run still needs reviewed private-sibling checkout access or must fail closed; the separate
+  scratch-branch negative matrix remains open.
+- Consolidation push workflow run `33296202751` is retained as a runner failure: the
   self-hosted Windows PowerShell shell could not resolve `node` after setup, so package jobs were
   skipped. The earlier `33291356306` run showed the same failure mode and is historical evidence.
-  This is an OPEN Browser-CI environment gate, not a claim that the skipped jobs passed.
+  These are failure receipts superseded by `33303002259`, not promotion evidence by themselves.
 - Phase S3 produced a measured Windows x64 internal-beta candidate `0.3.13` at the consolidation
   tree `5ef710dd`; the verified Relay v16 archive is pinned. The installer remains unpublished and
   is not authorized for real-account use: the payload is deterministic, but the outer NSIS/resource
