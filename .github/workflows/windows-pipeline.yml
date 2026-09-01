@@ -23,8 +23,8 @@ on:
         type: string
         default: ""
     secrets:
-      MKTTOOL_REPO_READ_TOKEN:
-        description: "Optional read-only token for the private MKTTool sibling repository"
+      MKTTOOL_DEPLOY_KEY:
+        description: "Optional read-only deploy key for the private MKTTool sibling repository"
         required: false
 
 permissions:
@@ -47,13 +47,14 @@ jobs:
         continue-on-error: true
         with:
           repository: Techieslab-app/MKTTool
-          # A dedicated read-only cross-repository token may be supplied by the repository
-          # administrator. The fallback keeps an unavailable checkout OPEN/fail-closed rather than
-          # weakening the contract when the secret is absent.
-          token: ${{ secrets.MKTTOOL_REPO_READ_TOKEN || github.token }}
-          # Pin the ref explicitly rather than letting checkout ask the GitHub API for the default
-          # branch. A cross-repository read token can be scoped to fetch refs while still failing
-          # that API call, which fails the step and skips every downstream job.
+          # A read-only deploy key registered on MKTTool. The key belongs to that repository
+          # rather than to a person, so it needs no organisation approval and does not expire.
+          # The built-in GITHUB_TOKEN is scoped to this repository alone and can never read the
+          # sibling. With no key configured the checkout fails and the gate below records OPEN,
+          # which is the intended fail-closed behaviour.
+          ssh-key: ${{ secrets.MKTTOOL_DEPLOY_KEY }}
+          # Pin the ref explicitly rather than letting checkout ask the GitHub API for the
+          # default branch, which a deploy key has no way to resolve.
           ref: master
           path: mkttool
           fetch-depth: 1
@@ -152,7 +153,7 @@ jobs:
         continue-on-error: true
         with:
           repository: Techieslab-app/MKTTool
-          token: ${{ secrets.MKTTOOL_REPO_READ_TOKEN || github.token }}
+          ssh-key: ${{ secrets.MKTTOOL_DEPLOY_KEY }}
           ref: master
           path: mkttool
           fetch-depth: 1

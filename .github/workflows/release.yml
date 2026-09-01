@@ -33,4 +33,4 @@ jobs:
       contract_iterations: ${{ github.event_name == 'workflow_dispatch' && inputs.contract_iterations || (github.event_name == 'schedule' && '20' || '5') }}
       expected_engine_version: ${{ github.event_name == 'workflow_dispatch' && inputs.expected_engine_version || '' }}
     secrets:
-      MKTTOOL_REPO_READ_TOKEN: ${{ secrets.MKTTOOL_REPO_READ_TOKEN }}
+      MKTTOOL_DEPLOY_KEY: ${{ secrets.MKTTOOL_DEPLOY_KEY }}

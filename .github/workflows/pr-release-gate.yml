@@ -29,7 +29,7 @@ jobs:
     with:
       contract_iterations: "5"
     secrets:
-      MKTTOOL_REPO_READ_TOKEN: ${{ secrets.MKTTOOL_REPO_READ_TOKEN }}
+      MKTTOOL_DEPLOY_KEY: ${{ secrets.MKTTOOL_DEPLOY_KEY }}
 
   mktbrowser-pr-release-gate:
     if: always()
@@ -84,7 +84,7 @@ jobs:
         continue-on-error: true
         with:
           repository: Techieslab-app/MKTTool
-          token: ${{ secrets.MKTTOOL_REPO_READ_TOKEN || github.token }}
+          ssh-key: ${{ secrets.MKTTOOL_DEPLOY_KEY }}
           ref: master
           path: mkttool
           fetch-depth: 1
