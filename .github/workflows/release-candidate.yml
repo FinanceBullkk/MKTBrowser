@@ -153,7 +153,7 @@ jobs:
         run: "& $env:MKT_BROWSER_NODE22_EXE scripts/normalized-payload-manifest.cjs --directory apps/desktop/release/installer/win-unpacked --output payload-manifest-${{ matrix.attempt }}.json"
 
       - name: Upload payload manifest
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: payload-manifest-${{ matrix.attempt }}
           path: payload-manifest-${{ matrix.attempt }}.json
@@ -164,7 +164,7 @@ jobs:
       # keeping both would leave two candidate files that no signature can tell apart.
       - name: Upload candidate installer
         if: matrix.attempt == 'a'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: candidate-installer
           path: apps/desktop/release/installer/*.exe
@@ -211,7 +211,7 @@ jobs:
         id: download_payload_manifests
         if: always()
         continue-on-error: true
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           pattern: payload-manifest-*
           merge-multiple: true
@@ -269,7 +269,7 @@ jobs:
 
       - name: Upload payload reproducibility evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: payload-reproducibility-evidence
           path: |
@@ -298,13 +298,13 @@ jobs:
       # Downloaded outside the checkout on purpose. The provenance step refuses to attest a dirty
       # working tree, and an artifact unpacked into the repository makes it dirty.
       - name: Download the verified candidate installer
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: candidate-installer
           path: ${{ runner.temp }}/candidate
 
       - name: Download payload manifest
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: payload-manifest-a
           path: ${{ runner.temp }}/manifests
@@ -347,7 +347,7 @@ jobs:
           node scripts/ci-gate-status.cjs --gate release-provenance --status "$status" --reason "$reason" --owner release-engineering --required
 
       - name: Upload release provenance
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: release-provenance
           path: release-provenance.json
@@ -384,7 +384,7 @@ jobs:
         run: ./.github/scripts/prepare-windows-packaged-verifier.ps1
 
       - name: Download the attested candidate installer
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: candidate-installer
           path: ${{ runner.temp }}/candidate
@@ -463,7 +463,7 @@ jobs:
 
       - name: Upload installed-contract evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: installed-contract-evidence
           path: |

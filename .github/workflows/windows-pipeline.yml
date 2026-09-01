@@ -217,7 +217,7 @@ jobs:
           $manifest | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $artifactRoot "artifact-manifest.json") -Encoding utf8NoBOM
 
       - name: Upload exact directory package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: mktbrowser-win-unpacked
           path: ${{ runner.temp }}/mktbrowser-package/*
@@ -273,7 +273,7 @@ jobs:
         run: ./.github/scripts/prepare-windows-packaged-verifier.ps1
 
       - name: Download exact directory package
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: mktbrowser-win-unpacked
           path: ${{ runner.temp }}/mktbrowser-artifact
@@ -311,7 +311,7 @@ jobs:
 
       - name: Upload packaged contract evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: packaged-contract-evidence
           path: |

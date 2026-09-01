@@ -273,8 +273,8 @@ test("builds one hashed package and verifies that artifact in a fresh CI job", (
   assert.match(workflow, /quality:/);
   assert.match(workflow, /package:\s*\n\s+needs: quality/);
   assert.match(workflow, /packaged-contract:\s*\n\s+needs: package/);
-  assert.match(workflow, /actions\/upload-artifact@v4/);
-  assert.match(workflow, /actions\/download-artifact@v5/);
+  assert.match(workflow, /actions\/upload-artifact@v6/);
+  assert.match(workflow, /actions\/download-artifact@v7/);
   assert.match(workflow, /Get-FileHash[^\n]+SHA256/);
   assert.match(workflow, /verify-packaged-runtime-contract\.cjs --repeat/);
 
