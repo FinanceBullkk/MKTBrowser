@@ -6,6 +6,13 @@ const execFileAsync = promisify(execFile);
 const MAX_NETSTAT_OUTPUT_BYTES = 1_048_576;
 const MAX_WINDOWS_PROCESS_OUTPUT_BYTES = 1_048_576;
 const WINDOWS_PROCESS_INSPECTION_TIMEOUT_MS = 5_000;
+// A machine that has just booted pays for WinMgmt starting up on its first CIM query, and that one
+// call can outrun the warm budget above by a wide margin. Reading that as "the process table cannot
+// be read" is the wrong conclusion, and an expensive one: a shutdown sweep then fails closed over a
+// browser that is still holding the single licence seat. It is not hypothetical - on a fresh CI
+// runner the discovery contract failed at exactly the 5s mark. A timeout is evidence the machine is
+// cold rather than hung, so the one retry gets a budget sized for a cold WMI.
+const WINDOWS_PROCESS_INSPECTION_COLD_TIMEOUT_MS = 20_000;
 
 export interface BrowserProcessInfo {
   pid: number;
@@ -182,6 +189,7 @@ export async function enumerateLoopbackPortOwners(
 async function listWindowsProcesses(): Promise<BrowserProcessInfo[]> {
   const systemRoot = windowsSystemRootFromEnv();
   if (!systemRoot) throw new Error("Windows system root is unavailable");
+  const powershell = join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const script = [
     "$ErrorActionPreference = 'Stop'",
     "$ProgressPreference = 'SilentlyContinue'",
@@ -192,23 +200,52 @@ async function listWindowsProcesses(): Promise<BrowserProcessInfo[]> {
   ].join("; ");
 
   try {
-    const { stdout } = await execFileAsync(
-      join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
-      ["-NoProfile", "-NonInteractive", "-Command", script],
-      {
-        encoding: "utf8",
-        windowsHide: true,
-        timeout: WINDOWS_PROCESS_INSPECTION_TIMEOUT_MS,
-        maxBuffer: MAX_WINDOWS_PROCESS_OUTPUT_BYTES,
-      },
-    );
-    if (!stdout.trim()) return [];
-    const parsed = JSON.parse(stdout) as BrowserProcessInfo[] | BrowserProcessInfo;
-    return (Array.isArray(parsed) ? parsed : [parsed]).filter(isBrowserProcessInfo);
+    return await queryWindowsProcesses(powershell, script, WINDOWS_PROCESS_INSPECTION_TIMEOUT_MS);
   } catch (cause) {
-    // Propagate: the one caller that cannot tolerate a false empty checks for it.
+    // Only a timeout earns the second, longer attempt. Anything else - a missing shell, refused
+    // access, unparseable output - would fail the same way twice and only delay the answer.
+    if (!isChildProcessTimeout(cause)) {
+      // Propagate: the one caller that cannot tolerate a false empty checks for it.
+      throw new Error("could not enumerate Windows processes", { cause });
+    }
+  }
+
+  try {
+    return await queryWindowsProcesses(
+      powershell,
+      script,
+      WINDOWS_PROCESS_INSPECTION_COLD_TIMEOUT_MS,
+    );
+  } catch (cause) {
     throw new Error("could not enumerate Windows processes", { cause });
   }
+}
+
+async function queryWindowsProcesses(
+  powershell: string,
+  script: string,
+  timeoutMs: number,
+): Promise<BrowserProcessInfo[]> {
+  const { stdout } = await execFileAsync(
+    powershell,
+    ["-NoProfile", "-NonInteractive", "-Command", script],
+    {
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: timeoutMs,
+      maxBuffer: MAX_WINDOWS_PROCESS_OUTPUT_BYTES,
+    },
+  );
+  if (!stdout.trim()) return [];
+  const parsed = JSON.parse(stdout) as BrowserProcessInfo[] | BrowserProcessInfo;
+  return (Array.isArray(parsed) ? parsed : [parsed]).filter(isBrowserProcessInfo);
+}
+
+/** `execFile` kills a child that outruns its budget, so a timeout arrives as a killed signal. */
+function isChildProcessTimeout(cause: unknown): boolean {
+  if (typeof cause !== "object" || cause === null) return false;
+  const failure = cause as { killed?: unknown; signal?: unknown };
+  return failure.killed === true && typeof failure.signal === "string";
 }
 
 export function windowsSystemRootFromEnv(
