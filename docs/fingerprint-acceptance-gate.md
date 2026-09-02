@@ -1,7 +1,8 @@
 # Fingerprint acceptance gate
 
 **Created:** 2 September 2026
-**Status:** experimental gate. Runs **in parallel** with `G2-IDENTITY`; replaces nothing yet.
+**Status:** experimental gate; first applied to Brave on 2 September 2026. Runs **in parallel** with
+`G2-IDENTITY`; replaces nothing.
 **Plan:** [phase 01](../../plans/260902-0544-fingerprint-gate-and-brave-spike/phase-01-acceptance-gate-specification.md)
 
 ## What this document is for
@@ -156,17 +157,17 @@ Every surface is read in all four contexts required by criterion A.
 condition; their per-surface readings are inputs. A score can improve while the joint identity gets
 worse.
 
-## Known harness coverage gap
+## Harness status
 
-`scripts/measure-mkb01e-packaged-fingerprint.cjs` (253 lines) currently reads: canvas, deviceMemory,
-hardwareConcurrency, language, platform, screen, timezone, userAgent, WebGL.
+The original coverage gap closed in MKTBrowser commit `76d74bf`. The measurement modules now cover
+fonts, audio, WebGL 1/2, WebGPU, canvas, client rects, UA/client hints/plugins, screen/locale, and an
+aggregate hash. They exercise document, iframe, worker, and offscreen-canvas contexts according to
+the context support matrix used by criterion A.
 
-It does **not** read **fonts** or **audio** — two of the three surfaces that produced the recorded
-collision — and does not read WebGPU, client rects, or plugins. It also does not exercise the
-iframe/worker/offscreen-canvas contexts criterion A requires.
-
-Any measurement using the harness as-is is blind to the actual defect. Closing this gap is the first
-task of the measurement phase, and no verdict may be issued from the unextended harness.
+The analyser computes the stable subset from the readings, reports stable-subset and full-tuple
+collisions separately, and classifies each component against a same-machine stock control. Raw
+host-identifying values remain temporary; committed evidence uses aliases, classifications, counts,
+and digests.
 
 ## Reporting rules
 
@@ -188,6 +189,26 @@ Do not commit fingerprint values that identify the project's own physical machin
 be traced back to it. Where a value must be shown, prefer the comparison (matches stock / differs)
 over the raw hash.
 
+## First application - 2 September 2026
+
+The gate was applied to official Brave `v1.94.117` at the declared pool of five, with two runs per
+profile and an exact Chromium `152.0.7977.64` CFT control on the same machine.
+
+| Criterion | Result | Evidence |
+|---|---|---|
+| A - consistency | `FAIL` | `65` restart mismatches, `20` cross-context mismatches, `0` coverage gaps |
+| B - stable-subset collision | `FAIL` | `62`/`63` stable components; all `10/10` profile pairs collided in both runs; full tuple had `0/10` collisions |
+| C - cohort plausibility | `FAIL` | Rendered audio and canvas changed after restart; UA-CH and available screen height retained invariant stock differences |
+
+The decisive audio result is neither a stock cohort nor an invariant Brave mark. Seven audio
+components matched stock. Five rendered hashes varied across profiles but also changed for the same
+profile after restart, so the identity is session-drifting rather than persistent.
+
+CloakBrowser Stable `.2` remains `BLOCKED` with `0/10` readings and is not assigned a fabricated
+A/B/C verdict. The Brave result therefore does not prove a better/equal/worse rank against `.2`; it
+independently fails the gate. Full evidence:
+[Phase 04 report](../../plans/260902-0544-fingerprint-gate-and-brave-spike/reports/brave-identity.md).
+
 ## Relationship to `G2-IDENTITY`
 
 This gate is **experimental** and runs alongside the existing one. `G2-IDENTITY` keeps its current
@@ -203,6 +224,11 @@ gate does not replace anything on its own authority.
 3. An explicit written decision by the project owner citing that measurement.
 
 Until all three exist, `G2-IDENTITY=FAIL` stands, and no identity-isolation claim may be made.
+
+The first application does not satisfy those retirement conditions. The current pinned engine was
+not measured and Brave failed A/B/C. The owner signed the Phase 05 `NO-GO`, explicitly retaining
+`G2-IDENTITY=FAIL`; that signature closes the decision plan, but it does not supply the missing
+pinned-engine measurement or authorize retirement of the gate.
 
 ## What a pass does not mean
 
