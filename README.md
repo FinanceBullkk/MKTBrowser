@@ -27,6 +27,23 @@ collisions. There is no CloakBrowser channel, so Lane C is **CLOSED**: no vendor
 “coming soon” promise. MKT Browser remains a controlled Lane A/B tool with one profile at a time,
 human login/input, and no identity-isolation claim.
 
+## Fingerprint decision - 2 September 2026
+
+The experimental acceptance gate has now been applied for the first time. CloakBrowser Stable `.2`
+remains `BLOCKED` with `0/10` valid profile readings because the licensed engine would not launch.
+Official Brave `v1.94.117` was measured with five disposable profiles, two runs each, against an
+exact-revision same-machine CFT control. Brave failed all three criteria: restart/context
+consistency, stable-subset collision, and cohort plausibility.
+
+Brave audio did not form an invariant Brave vendor mark: seven components matched stock and five
+rendered hashes varied by profile. Those five hashes also changed after restart, so they do not form
+a persistent profile identity. Every pair still collided on a `62`/`63`-component stable subset.
+The product can drive Brave with ordinary application/installer work, but identity evidence rejects
+an engine migration under the Phase 05 proposed NO-GO. No migration work is authorized;
+`G2-IDENTITY` remains `FAIL`, and no rollout or real-account permission changed.
+See the [Phase 04 report](../plans/260902-0544-fingerprint-gate-and-brave-spike/reports/brave-identity.md)
+and the [Phase 05 decision draft](../plans/260902-0544-fingerprint-gate-and-brave-spike/reports/go-no-go.md).
+
 ## Current status
 
 - Upstream application baseline: MultiZen `v0.3.1` at commit
