@@ -39,10 +39,10 @@ Brave audio did not form an invariant Brave vendor mark: seven components matche
 rendered hashes varied by profile. Those five hashes also changed after restart, so they do not form
 a persistent profile identity. Every pair still collided on a `62`/`63`-component stable subset.
 The product can drive Brave with ordinary application/installer work, but identity evidence rejects
-an engine migration under the Phase 05 proposed NO-GO. No migration work is authorized;
+an engine migration under the owner-signed Phase 05 NO-GO. No migration work is authorized;
 `G2-IDENTITY` remains `FAIL`, and no rollout or real-account permission changed.
 See the [Phase 04 report](../plans/260902-0544-fingerprint-gate-and-brave-spike/reports/brave-identity.md)
-and the [Phase 05 decision draft](../plans/260902-0544-fingerprint-gate-and-brave-spike/reports/go-no-go.md).
+and the [signed Phase 05 decision](../plans/260902-0544-fingerprint-gate-and-brave-spike/reports/go-no-go.md).
 
 ## Current status
 

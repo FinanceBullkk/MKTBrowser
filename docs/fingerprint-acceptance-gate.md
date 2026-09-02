@@ -226,8 +226,9 @@ gate does not replace anything on its own authority.
 Until all three exist, `G2-IDENTITY=FAIL` stands, and no identity-isolation claim may be made.
 
 The first application does not satisfy those retirement conditions. The current pinned engine was
-not measured, Brave failed A/B/C, and the Phase 05 owner decision is not yet signed. `G2-IDENTITY`
-therefore remains `FAIL` without qualification.
+not measured and Brave failed A/B/C. The owner signed the Phase 05 `NO-GO`, explicitly retaining
+`G2-IDENTITY=FAIL`; that signature closes the decision plan, but it does not supply the missing
+pinned-engine measurement or authorize retirement of the gate.
 
 ## What a pass does not mean
 
