@@ -266,6 +266,7 @@ exact engine license and checksum before operational use.
 - [MKB-W01 Windows product isolation](docs/mkb-w01-windows-product-isolation.md)
 - [MKB-W02 Windows internal clean break](docs/mkb-w02-windows-internal-clean-break.md)
 - [Deferred MKB-07 Apple Silicon verification runbook](docs/mkb-00-apple-silicon-verification.md)
+- [First attested release candidate, 23 August 2026](docs/first-attested-release-candidate.md)
 
 ### Change history
 

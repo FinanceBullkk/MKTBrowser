@@ -82,6 +82,9 @@ docs/**
 # Durable technical contract, not a strategy memo: it defines how identity is judged, phase 05
 # records results into it, and the committed plan links to it.
 !docs/fingerprint-acceptance-gate.md
+# Release provenance: the unsigned candidate's SHA-256 was its only origin evidence, so the
+# record is versioned rather than kept local.
+!docs/first-attested-release-candidate.md
 
 # Python bytecode caches
 __pycache__/
