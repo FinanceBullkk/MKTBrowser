@@ -246,6 +246,7 @@ export async function waitForOwnedDevToolsEndpoint(
     // Re-read the profile process set after the listener query. A PID can be reused between the
     // two OS snapshots; requiring the same primary PID and command line in both prevents a stale
     // process record from authenticating a different process that inherited the port.
+    stage = "process";
     let refreshed: { processes: BrowserProcessInfo[]; enumerated: boolean };
     try {
       refreshed = await withinDeadline(
@@ -272,6 +273,7 @@ export async function waitForOwnedDevToolsEndpoint(
       continue;
     }
 
+    stage = "ownership";
     let confirmedOwners: LoopbackPortOwnersInspection;
     try {
       confirmedOwners = await withinDeadline(

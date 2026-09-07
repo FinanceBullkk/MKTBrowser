@@ -32,6 +32,7 @@ const PROTECTED_MODULES = [
   ["src/main/safe-archive-entry-validation.ts", "refuses traversal, links, and collisions"],
   ["src/main/devtools-port-discovery.ts", "binds a browser to the profile that owns it"],
   ["src/main/browser-process-discovery.ts", "identifies which process a port belongs to"],
+  ["src/main/windows-process-query-worker.ts", "keeps Windows ownership snapshots fresh and bounded"],
   ["src/main/startup-orphan-sweep.ts", "reclaims browsers a crashed app left behind"],
   [
     "src/main/startup-license-lease-reconciliation.ts",
@@ -50,6 +51,7 @@ const TEST_FILES = [
   "src/main/safe-archive-extraction.test.ts",
   "src/main/devtools-port-discovery.test.ts",
   "src/main/browser-process-discovery.test.ts",
+  "src/main/windows-process-query-worker.test.ts",
   "src/main/startup-orphan-sweep.test.ts",
   "src/main/startup-license-lease-reconciliation.test.ts",
   "src/main/license-key-pool.test.ts",

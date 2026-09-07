@@ -245,6 +245,7 @@ test("lets Chromium assign the DevTools port instead of consuming fixed ports", 
   const driver = source("apps/desktop/src/main/ChromiumBrowserDriver.ts");
   const desktop = source("apps/desktop/src/main/index.ts");
   const processDiscovery = source("apps/desktop/src/main/browser-process-discovery.ts");
+  const processWorker = source("apps/desktop/src/main/windows-process-query-worker.ts");
 
   assert.doesNotMatch(driver, /nextPort\s*=\s*9222/);
   assert.doesNotMatch(driver, /allocatePort\(\)/);
@@ -261,8 +262,9 @@ test("lets Chromium assign the DevTools port instead of consuming fixed ports", 
   assert.match(processDiscovery, /System32.*netstat\.exe/);
   assert.match(processDiscovery, /System32.*WindowsPowerShell.*powershell\.exe/);
   assert.match(processDiscovery, /Get-CimInstance -Query \$query -ErrorAction Stop/);
-  assert.match(processDiscovery, /Console\]::OutputEncoding = \[System\.Text\.UTF8Encoding\]/);
-  assert.match(processDiscovery, /maxBuffer: MAX_WINDOWS_PROCESS_OUTPUT_BYTES/);
+  assert.match(processWorker, /Console\]::OutputEncoding = \[System\.Text\.UTF8Encoding\]/);
+  assert.match(processWorker, /Buffer\.byteLength\(this\.output, "utf8"\) > MAX_OUTPUT_BYTES/);
+  assert.match(processWorker, /MAX_OUTPUT_BYTES = 1_048_576/);
   assert.doesNotMatch(processDiscovery, /Get-NetTCPConnection/);
   assert.doesNotMatch(processDiscovery, /LocalAddress -in @\('127\.0\.0\.1','0\.0\.0\.0'\)/);
 });
