@@ -9,6 +9,25 @@ browser service, or an authorization boundary. MKTTool Web decides which account
 the Relay verifies signed tickets and holds operator secrets, and MKT Browser stores and launches
 profiles on the operator device.
 
+## Product direction - 8 September 2026
+
+The owner accepted MKT Browser as a **browser profile manager with proxy binding**. Its value is
+local browser data, assigned proxy, explicit nick/PC ownership, and human-controlled lifecycle
+through Relay. It makes no antidetect, unique-fingerprint, identity-isolation, or account-safety
+promise. Prioritize Proxy vault and Relay operations, then reliable manual profile use.
+
+Active antidetect/identity-engine research, custom Chromium fingerprint work, and further
+Brave/Cloak identity experiments are closed. Security and compatibility maintenance continue;
+existing runtime code, engine pins, adapters, and measured evidence remain intact. A future vendor
+integration requires a separate owner decision with API, licensing, and measured acceptance
+evidence; no vendor contact or integration is scheduled.
+
+Current use remains bounded, admin-led technical demonstration with disposable data, one profile
+at a time, and human login/input. Lane C stays **CLOSED**, `G2-IDENTITY=FAIL` remains recorded,
+and the Browser release gates stay open. This scope decision does not approve team distribution
+or real-account use. See the [product decision](../MKTTool/docs/project-overview-pdr.md#product-direction-decision---8-september-2026)
+and [release boundary](../MKTTool/docs/internal-beta-release.md).
+
 ## Consolidation truth — 1 September 2026
 
 The current consolidation branch is `release/consolidation-20260830` at `b9f9477`. The accepted provenance
