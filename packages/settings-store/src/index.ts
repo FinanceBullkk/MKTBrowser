@@ -58,9 +58,8 @@ export interface AppSettings {
 const DEFAULTS: AppSettings = {
   theme: "dark",
   mcpHttpEnabled: true,
-  // Prefer CloakBrowser as the primary runtime. Chrome for Testing stays
-  // available as a compatibility fallback from Settings.
-  browserEngine: "cloakbrowser",
+  // Fresh profile-manager installs need no vendor licence. Explicit saved selections are retained.
+  browserEngine: "cft",
   cloakBrowserLicenseKey: "",
   cloakBrowserLicenseKeys: [],
   startupOrphanSweep: true,

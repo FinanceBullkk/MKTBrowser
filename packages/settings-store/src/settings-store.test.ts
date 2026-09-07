@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -9,8 +9,8 @@ test("does not publish settings to memory when persistence fails", async () => {
   const root = await mkdtemp(join(tmpdir(), "mkt-browser-settings-store-"));
   try {
     const store = new SettingsStore(root);
-    await assert.rejects(store.update({ browserEngine: "cft" }));
-    assert.equal((await store.load()).browserEngine, "cloakbrowser");
+    await assert.rejects(store.update({ browserEngine: "cloakbrowser" }));
+    assert.equal((await store.load()).browserEngine, "cft");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -31,6 +31,39 @@ async function withSettingsFile(
     await rm(root, { recursive: true, force: true });
   }
 }
+
+test("fresh installations use the unlicensed compatibility engine", async () => {
+  await withSettingsFile(async (path) => {
+    const loaded = await new SettingsStore(path).load();
+    assert.equal(loaded.browserEngine, "cft");
+    assert.equal(loaded.cloakBrowserLicenseKey, "");
+    assert.deepEqual(loaded.cloakBrowserLicenseKeys, []);
+  });
+});
+
+for (const browserEngine of ["cft", "cloakbrowser"] as const) {
+  test(`preserves an explicit saved ${browserEngine} selection without rewriting settings`, async () => {
+    await withSettingsFile(async (path) => {
+      const original = JSON.stringify({ browserEngine, startupOrphanSweep: false });
+      await writeFile(path, original, "utf8");
+      const loaded = await new SettingsStore(path).load();
+      assert.equal(loaded.browserEngine, browserEngine);
+      assert.equal(loaded.startupOrphanSweep, false);
+      assert.equal(await readFile(path, "utf8"), original);
+    });
+  });
+}
+
+test("missing or unsupported saved engine falls back to CFT without rewriting settings", async () => {
+  await withSettingsFile(async (path) => {
+    for (const saved of [{}, { browserEngine: "unsupported" }]) {
+      const original = JSON.stringify(saved);
+      await writeFile(path, original, "utf8");
+      assert.equal((await new SettingsStore(path).load()).browserEngine, "cft");
+      assert.equal(await readFile(path, "utf8"), original);
+    }
+  });
+});
 
 test("folds the primary key into the list, first, so an older install keeps working", async () => {
   await withSettingsFile(async (path) => {
