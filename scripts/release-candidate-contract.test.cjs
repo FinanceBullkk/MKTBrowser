@@ -4,7 +4,9 @@ const { tmpdir } = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const {
+  APPROVED_ENGINE,
   EXPECTED_RELAY,
+  assertEnginePin,
   assertNoBadTuple,
   assertPackagedEnginePinned,
   assertRelayPin,
@@ -17,6 +19,20 @@ test("accepts the immutable Relay v16 tuple and guarded engine source", () => {
   const result = verifyReleaseCandidate({ repoRoot });
   assert.equal(result.relay.version, EXPECTED_RELAY.version);
   assert.deepEqual(result.engine, { checked: false });
+});
+
+test("requires every measured CFT tuple field, not merely a compatible engine kind", () => {
+  assert.doesNotThrow(() => assertEnginePin({ ...APPROVED_ENGINE }));
+  for (const [field, value] of Object.entries({
+    engineKind: "cloakbrowser", source: "licensed-channel", version: "152.0.0.0",
+    url: "https://example.test/chrome.zip", sha256: "0".repeat(64), sizeBytes: 1,
+  })) {
+    assert.throws(() => assertEnginePin({ ...APPROVED_ENGINE, [field]: value }), /reviewed CFT/);
+    const missing = { ...APPROVED_ENGINE };
+    delete missing[field];
+    assert.throws(() => assertEnginePin(missing), /reviewed CFT/);
+  }
+  assert.throws(() => assertEnginePin(null), /reviewed CFT/);
 });
 
 test("rejects a known-bad Relay hash and quarantined installer version", () => {

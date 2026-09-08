@@ -27,7 +27,12 @@ test("ships a valid pinned engine release beside the pinned Relay release", () =
   // here rather than discovering it again at the end of a Windows build.
   const record = readEngineRelease(path.join(__dirname, "..", "windows-engine-release.json"));
   assert.equal(record.type, "mktbrowser.windows-engine-release");
-  assert.equal(record.engineKind, "cloakbrowser");
+  assert.equal(record.engineKind, "cft");
+  assert.equal(record.source, "chrome-for-testing");
+  assert.equal(record.version, "152.0.7977.64");
+  assert.equal(record.sha256, "b0db25dea445822429d8ebd36d53344cadcd63127308759456964029bbe18004");
+  assert.equal(record.sizeBytes, 202713690);
+  assert.equal(record.url, "https://storage.googleapis.com/chrome-for-testing-public/152.0.7977.64/win64/chrome-win64.zip");
 });
 
 function writeRecord(record) {

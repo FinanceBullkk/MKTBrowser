@@ -16,6 +16,7 @@ const repoRoot = path.resolve(__dirname, "..");
 const MKTTOOL_FILES = [
   "src/lib/setup/windows-installer-release.ts",
   "src/lib/setup/windows-installer-release-metadata.ts",
+  "src/lib/setup/windows-installer-candidate.ts",
 ];
 
 /**
@@ -52,6 +53,17 @@ function readJson(relativePath) {
   return JSON.parse(readFileSync(path.join(repoRoot, relativePath), "utf8"));
 }
 
+function assertCandidateEngine(candidate, engine) {
+  for (const [field, expected] of Object.entries({
+    engineKind: engine.engineKind, engineChannel: engine.source, engineVersion: engine.version,
+    engineSha256: engine.sha256, engineSizeBytes: engine.sizeBytes,
+  })) {
+    const match = new RegExp(`^\\s*${field}:\\s*("[^"]*"|[0-9]+),\\s*$`, "m").exec(candidate);
+    assert.ok(match, `Missing exact candidate field ${field}`);
+    assert.equal(JSON.parse(match[1]), expected, `Candidate field ${field} differs from Browser pin`);
+  }
+}
+
 test("keeps the Windows candidate version and pinned Relay coherent", () => {
   const root = readJson("package.json");
   const desktop = readJson("apps/desktop/package.json");
@@ -70,11 +82,16 @@ test("keeps the Windows candidate version and pinned Relay coherent", () => {
 
   const mktToolRoot = resolveMktToolRoot();
   const mktToolReader = readFileSync(path.join(mktToolRoot, MKTTOOL_FILES[0]), "utf8");
-  assert.match(mktToolReader, /EXPECTED_WINDOWS_INSTALLER_VERSION = "0\.3\.13"/);
+  assert.match(mktToolReader, /EXPECTED_WINDOWS_INSTALLER_VERSION = WINDOWS_INSTALLER_CANDIDATE\.browserVersion/);
   assert.match(
     mktToolReader,
-    /EXPECTED_WINDOWS_INSTALLER_CANDIDATE_ID = "20260830-browser-0\.3\.13-relay-16"/,
+    /EXPECTED_WINDOWS_INSTALLER_CANDIDATE_ID = WINDOWS_INSTALLER_CANDIDATE\.id/,
   );
+  const candidate = readFileSync(path.join(mktToolRoot, MKTTOOL_FILES[2]), "utf8");
+  assert.match(candidate, /id: "20260908-browser-0\.3\.13-relay-16-cft"/);
+  assert.match(candidate, /browserVersion: "0\.3\.13"/);
+  const engine = readJson("apps/desktop/windows-engine-release.json");
+  assertCandidateEngine(candidate, engine);
   const mktToolMetadata = readFileSync(path.join(mktToolRoot, MKTTOOL_FILES[1]), "utf8");
   assert.match(mktToolMetadata, /payloadManifestSha256/);
   assert.match(mktToolMetadata, /payloadFileCount/);
@@ -98,6 +115,15 @@ test("keeps the Windows candidate version and pinned Relay coherent", () => {
     assert.equal(evidence.browserVersion, expectedVersion, "generated installer evidence is stale");
     assert.equal(evidence.artifacts.relay.version, "16", "generated Relay evidence is stale");
   }
+});
+
+test("engine coherence is field-bound even when the candidate ID still contains cft", () => {
+  const candidate = readFileSync(path.join(resolveMktToolRoot(), MKTTOOL_FILES[2]), "utf8");
+  const engine = readJson("apps/desktop/windows-engine-release.json");
+  const changed = candidate.replace('engineKind: "cft"', 'engineKind: "cloakbrowser"');
+  assert.notEqual(changed, candidate);
+  assert.ok(changed.includes("cft"));
+  assert.throws(() => assertCandidateEngine(changed, engine), /engineKind differs/);
 });
 
 test("honours an explicit MKTTOOL_ROOT and rejects a missing checkout", () => {
