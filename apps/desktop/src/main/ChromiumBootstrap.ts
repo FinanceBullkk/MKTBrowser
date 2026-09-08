@@ -67,6 +67,7 @@ import {
 } from "./chromium-runtime-path.ts";
 import { isCachedEngineVersionAllowed } from "./compatibility-engine-pin.ts";
 import { resolveCloakBrowserProManifest } from "./cloakbrowser-pro-channel.ts";
+import { findActivatedWindowsEngine } from "./activated-windows-engine-cache.ts";
 
 const execFileP = promisify(execFile);
 
@@ -238,11 +239,11 @@ export class ChromiumBootstrap extends EventEmitter {
    * Idempotent. Downloads + verifies + extracts if not cached. Emits
    * status throughout. Returns `ready` on success, throws on failure.
    */
-  async ensure(): Promise<ChromiumStatus> {
+  async ensure(ignoreCache = false): Promise<ChromiumStatus> {
     await mkdir(this.cacheDir, { recursive: true });
 
     // Cached version available?
-    const cached = await this.findCached();
+    const cached = ignoreCache ? null : await this.findCached();
     if (cached) {
       this.setStatus({
         kind: "ready",
@@ -376,7 +377,7 @@ export class ChromiumBootstrap extends EventEmitter {
   /** Trigger a fresh manifest fetch + download, ignoring any cache. */
   async retry(): Promise<ChromiumStatus> {
     await rm(join(this.cacheDir, "current.json"), { force: true });
-    return this.ensure();
+    return this.ensure(true);
   }
 
   // ─── internals ──────────────────────────────────────────────────────
@@ -387,6 +388,8 @@ export class ChromiumBootstrap extends EventEmitter {
   }
 
   private async findCached(): Promise<{ version: string; binaryPath: string } | null> {
+    const activated = await findActivatedWindowsEngine(this.cacheDir, this.pinnedManifest);
+    if (activated) return activated;
     const manifestPath = join(this.cacheDir, "current.json");
     if (!existsSync(manifestPath)) return null;
     try {

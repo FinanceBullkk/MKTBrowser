@@ -11,10 +11,13 @@ profiles on the operator device.
 
 ## Single-entry startup candidate - 8 September 2026
 
-Replacement candidate **0.3.14 / Relay 17** is under verification and has no MSI acceptance yet.
-Retained 0.3.13 / Relay 16 is rejected for promotion after actual signed VM activation failed while
-stopping already-absent runtimes. Relay 17 corrects that shutdown behavior. Independent builds and
-exact replacement installer acceptance are required before delivery.
+Replacement candidate **0.3.15 / Relay 17** is under verification and has no MSI acceptance yet.
+Retained 0.3.14 / Relay 17 reached signed activation smoke, then Browser failed to recognize the
+Relay-installed engine without a download index and retried its authenticated artifact URL without
+authorization. The replacement recognizes an existing stable runtime only when its metadata matches
+the signed engine version. Actual bootstrap regression: failed before, four tests passed after.
+The unchanged Relay 17 fixes the earlier 0.3.13 / Relay 16 shutdown defect. Both older installers
+remain rejected for promotion. Independent builds and exact VM/MSI acceptance precede delivery.
 
 For normal packaged Windows sessions, open **MKT Browser** as the single entry point. It checks
 the installed current-user Relay and starts it only when the owned executable and installation
