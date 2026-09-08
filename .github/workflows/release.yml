@@ -1,42 +1,7 @@
 name: Windows Technical Build
 
-# Fast feedback on pushes to the branches that decide something, the nightly stability sweep, and
-# the manual dispatch used for stability streaks and Phase 4 installer builds.
-#
-# Merge authority does not live here. It lives in the gate workflow, which is the only file allowed
-# to carry the required check name, because a job disabled by a condition still publishes a check
-# run under its name and a skipped required check counts as satisfied. This workflow therefore
-# triggers only on push, schedule, and manual dispatch.
-
+# Optional manual diagnostics; local validation and clean-VM acceptance gate releases.
 on:
-  push:
-    # Scoped rather than open. On GitHub-hosted runners this workflow packages MKT Browser on a
-    # Windows machine, billed at the 2x Windows rate, so an open trigger charged a packaging run for
-    # every commit on every scratch branch. The default branch and the release lanes are where a red
-    # result changes what anyone does next; everywhere else the gate workflow covers the merge.
-    branches: [main, "release/**"]
-    # Documentation cannot change a packaged byte, and this workflow is the most expensive thing in
-    # the repository: three Windows jobs, billed at the 2x rate, roughly twenty billed minutes for a
-    # README edit. Nine of the last sixty commits on `main` changed nothing but Markdown.
-    #
-    # A skip here costs no evidence. The gate workflow has already built this exact tree, because a
-    # pull-request event builds the merge commit — what `main` is about to become — so for a
-    # documentation change the push run is pure duplication. That is the same reasoning the MKTTool
-    # sibling already applies to its `relay-executable` job.
-    #
-    # Note for whoever edits this comment next: `runtime-contract.test.ts` asserts that this file
-    # does not contain the pull-request trigger token, and it does so by substring over the whole
-    # file rather than over the trigger block. Spelling that token here, even inside a comment,
-    # turns the suite red. The bluntness is deliberate and worth keeping: it fails safe, and it
-    # guards the 22 August incident where this workflow republished the required check name as
-    # `skipped` on the same head commit as the real result.
-    #
-    # The gate workflow is deliberately left alone. It carries the required check name and is the
-    # only merge authority, so it keeps running on every pull request including documentation ones.
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
-      - "plans/**"
   workflow_dispatch:
     inputs:
       contract_iterations:
@@ -47,8 +12,6 @@ on:
         description: "Packaged-verifier engine version to require"
         required: false
         default: ""
-  schedule:
-    - cron: "17 19 * * *"
 
 permissions:
   contents: read
@@ -57,7 +20,7 @@ jobs:
   windows:
     uses: ./.github/workflows/windows-pipeline.yml
     with:
-      contract_iterations: ${{ github.event_name == 'workflow_dispatch' && inputs.contract_iterations || (github.event_name == 'schedule' && '20' || '5') }}
-      expected_engine_version: ${{ github.event_name == 'workflow_dispatch' && inputs.expected_engine_version || '' }}
+      contract_iterations: ${{ inputs.contract_iterations }}
+      expected_engine_version: ${{ inputs.expected_engine_version }}
     secrets:
       MKTTOOL_DEPLOY_KEY: ${{ secrets.MKTTOOL_DEPLOY_KEY }}

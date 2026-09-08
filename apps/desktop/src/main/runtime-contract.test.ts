@@ -330,7 +330,7 @@ test("prepares a pinned verifier engine on Windows jobs", () => {
   );
 });
 
-test("exposes one required merge gate that a push cannot satisfy and a skip cannot fake", () => {
+test("keeps optional hosted diagnostics manual and refuses skipped pipeline evidence", () => {
   const gate = source(".github/workflows/pr-release-gate.yml");
   const push = source(".github/workflows/release.yml");
   const pipeline = source(".github/workflows/windows-pipeline.yml");
@@ -339,7 +339,12 @@ test("exposes one required merge gate that a push cannot satisfy and a skip cann
     gate.includes("mktbrowser-pr-release-gate:"),
     "the required status check must exist under a stable name",
   );
-  assert.ok(gate.includes("  pull_request:"), "the gate workflow triggers on pull_request");
+  for (const workflow of [gate, push]) {
+    assert.ok(workflow.includes("  workflow_dispatch:"), "hosted diagnostics require explicit dispatch");
+    assert.doesNotMatch(workflow, /^ {2}(?:push|pull_request|schedule):/m);
+  }
+  assert.match(source("scripts/local-release-quality-contract.cjs"), /test:critical-coverage/);
+  assert.match(source("scripts/local-release-quality.cjs"), /releaseReady: false/);
 
   // Measured on 22 August, after the first attempt at this gate shipped. An `if:` condition stops a
   // job from running but not from publishing a check run under its name, and GitHub counts a
@@ -568,13 +573,13 @@ test("routes every GitHub Actions job through a GitHub-hosted runner", () => {
   assert.equal(windowsPipeline.match(/runs-on: windows-latest/g)?.length, 3);
 });
 
-test("does not send fork pull requests to jobs that carry repository secrets", () => {
+test("does not send automatic fork events to jobs that carry repository secrets", () => {
   const gate = source(".github/workflows/pr-release-gate.yml");
   const push = source(".github/workflows/release.yml");
 
   assert.match(
     gate,
-    /windows:[\s\S]+if: github\.event\.pull_request\.head\.repo\.full_name == github\.repository[\s\S]+uses: \.\/\.github\/workflows\/windows-pipeline\.yml/,
+    /windows:[\s\S]+if: github\.event_name == 'workflow_dispatch'[\s\S]+uses: \.\/\.github\/workflows\/windows-pipeline\.yml/,
   );
   assert.equal(gate.includes("secrets: inherit"), false);
   assert.equal(push.includes("secrets: inherit"), false);
