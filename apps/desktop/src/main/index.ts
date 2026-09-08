@@ -3,7 +3,9 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  Menu,
   nativeImage,
+  Tray,
   type IpcMainInvokeEvent,
 } from "electron";
 import { join, resolve, sep } from "node:path";
@@ -57,6 +59,11 @@ import {
 import { probeProxyGeo, type ProxyGeoResult } from "./proxyGeo.ts";
 import { deleteBrowserProfile } from "./profile-deletion-lifecycle.ts";
 import { WindowsLocalInstallInspector } from "./windows-local-install-inspector.ts";
+import { WindowsRelayCompanion } from "./windows-relay-companion.ts";
+import {
+  WindowsBackgroundLifecycle,
+  usesNormalWindowsSession,
+} from "./windows-background-lifecycle.ts";
 import {
   type CompatibilityEnginePin,
   isDisposableUnpinnedEngineRun,
@@ -70,10 +77,7 @@ import { appendProfileLifecycleLine } from "./profile-lifecycle-log.ts";
 import { LICENSE_SEAT_COOLDOWN_MS, LicenseKeyPool } from "./license-key-pool.ts";
 import { LicenseLeaseJournal } from "./license-lease-journal.ts";
 import { LicenseLeaseRecorder } from "./license-lease-recorder.ts";
-import {
-  sweepOrphanedProfileBrowsers,
-  type OrphanSweepOutcome,
-} from "./startup-orphan-sweep.ts";
+import { sweepOrphanedProfileBrowsers, type OrphanSweepOutcome } from "./startup-orphan-sweep.ts";
 import { reconcileStartupOrphanLeases } from "./startup-license-lease-reconciliation.ts";
 import {
   createIpcRuntimeRegistration,
@@ -127,6 +131,30 @@ let licenseLeaseJournal: LicenseLeaseJournal;
 let browserDriverReady = false;
 let switchToCftInFlight: Promise<ChromiumStatus> | null = null;
 let activeCompatibilityEnginePin: CompatibilityEnginePin | null = null;
+let backgroundLifecycle: WindowsBackgroundLifecycle | null = null;
+let relayCompanion: WindowsRelayCompanion | null = null;
+let activationPending = false;
+let shutdownStarted = false;
+let checkingRelay = false;
+
+async function checkRelayCompanion(notifyFailure = false): Promise<void> {
+  if (!relayCompanion || shutdownStarted || checkingRelay) return;
+  checkingRelay = true;
+  try {
+    const result = await relayCompanion.start();
+    if (shutdownStarted || result.status === "cancelled") return;
+    backgroundLifecycle?.setRelayStatus(result.message);
+    if (["blocked", "not-installed", "failed"].includes(result.status)) {
+      if (notifyFailure || !backgroundLifecycle?.canHide) {
+        dialog.showErrorBox("Relay needs attention", result.message);
+      } else {
+        backgroundLifecycle.notify("Relay needs attention", result.message);
+      }
+    }
+  } finally {
+    checkingRelay = false;
+  }
+}
 
 /**
  * Additional vendor seats are not verified for this build. Keep this as a code-controlled
@@ -139,7 +167,9 @@ const ADDITIONAL_LICENSE_KEYS_ENABLED = false;
 /** Recover a legacy/list-only primary without activating any additional seat. */
 function resolvePrimaryLicenseKey(settings: AppSettings | null): string {
   if (!settings) return "";
-  return settings.cloakBrowserLicenseKey.trim() || settings.cloakBrowserLicenseKeys[0]?.trim() || "";
+  return (
+    settings.cloakBrowserLicenseKey.trim() || settings.cloakBrowserLicenseKeys[0]?.trim() || ""
+  );
 }
 
 const ipcRegistration = createIpcRuntimeRegistration<IpcMainInvokeEvent>({
@@ -196,7 +226,16 @@ function startChromiumBootstrap(bootstrap: ChromiumBootstrap): void {
 
 function createWindow(): void {
   const iconPath = resolveAppIcon();
-  mainWindow = new BrowserWindow(mainWindowOptions({ mainDir: __dirname, iconPath }));
+  const startHidden =
+    Boolean(backgroundLifecycle?.canHide) &&
+    app.commandLine.hasSwitch("background") &&
+    !activationPending;
+  const windowInput = { mainDir: __dirname, iconPath, initiallyHidden: startHidden };
+  mainWindow = new BrowserWindow(mainWindowOptions(windowInput));
+  backgroundLifecycle?.attachWindow(mainWindow);
+  mainWindow.on("closed", () => {
+    mainWindow = null;
+  });
 
   applyNavigationHardening(mainWindow.webContents);
 
@@ -237,6 +276,33 @@ const compatibilityActivationBlock =
 const compatibilitySmokeAuthorizationId = app.commandLine.getSwitchValue(
   COMPATIBILITY_SMOKE_SWITCH,
 );
+const normalWindowsSession = usesNormalWindowsSession({
+  platform: process.platform,
+  isPackaged: app.isPackaged,
+  explicitUserData: app.commandLine.hasSwitch("user-data-dir"),
+  compatibilitySmoke: Boolean(compatibilitySmokeAuthorizationId),
+  userDataPath: app.getPath("userData"),
+  canonicalUserDataPath: resolveProductUserDataPath({
+    platform: process.platform,
+    appData: app.getPath("appData"),
+    localAppData: process.env.LOCALAPPDATA,
+  }),
+});
+// Lock the canonical root before opening settings, SQLite, tokens, or lease journals.
+if (normalWindowsSession && !app.requestSingleInstanceLock()) app.exit(0);
+if (normalWindowsSession) {
+  app.on("second-instance", () => {
+    if (shutdownStarted) return;
+    activationPending = true;
+    if (backgroundLifecycle) backgroundLifecycle.show();
+    else if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+      void checkRelayCompanion(true);
+    }
+  });
+}
 app.setAboutPanelOptions({
   applicationName: PRODUCT_NAME,
   applicationVersion: app.getVersion(),
@@ -1006,10 +1072,46 @@ app
     }));
     ipcRegistration.assertComplete();
 
+    if (normalWindowsSession) {
+      relayCompanion = new WindowsRelayCompanion({
+        scriptPath: join(process.resourcesPath, "installer", "windows-relay-companion.ps1"),
+        browserPath: process.execPath,
+        startupDirectory: join(
+          app.getPath("appData"),
+          "Microsoft",
+          "Windows",
+          "Start Menu",
+          "Programs",
+          "Startup",
+        ),
+      });
+      const iconPath = resolveAppIcon();
+      const trayIcon = iconPath
+        ? nativeImage.createFromPath(iconPath)
+        : await app.getFileIcon(process.execPath).catch(() => nativeImage.createEmpty());
+      if (shutdownStarted) return;
+      backgroundLifecycle = new WindowsBackgroundLifecycle({
+        createTray: () => {
+          if (trayIcon.isEmpty()) throw new Error("Application tray icon unavailable");
+          return new Tray(trayIcon);
+        },
+        buildMenu: (items) => Menu.buildFromTemplate(items),
+        getWindow: () => mainWindow,
+        quit: () => app.quit(),
+        endSession: () => {
+          void shutdownDesktop();
+        },
+        retryRelay: () => {
+          void checkRelayCompanion(true);
+        },
+      });
+    }
     createWindow();
+    void checkRelayCompanion();
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
+      else if (backgroundLifecycle) backgroundLifecycle.show();
     });
   })
   .catch((e: unknown) => {
@@ -1061,13 +1163,28 @@ async function backfillProxyCountries(): Promise<void> {
   }
 }
 
-app.on("before-quit", async (e) => {
-  e.preventDefault();
+async function shutdownDesktop(): Promise<void> {
+  if (shutdownStarted) return;
+  shutdownStarted = true;
+  backgroundLifecycle?.beginQuit();
+  relayCompanion?.dispose();
   try {
-    await browserDriver?.closeAll();
-    await httpTransport?.stop();
-    profileManager?.close();
+    try {
+      await browserDriver?.closeAll();
+    } finally {
+      try {
+        await httpTransport?.stop();
+      } finally {
+        profileManager?.close();
+      }
+    }
   } finally {
+    backgroundLifecycle?.dispose();
     app.exit(0);
   }
+}
+
+app.on("before-quit", (event) => {
+  event.preventDefault();
+  void shutdownDesktop();
 });

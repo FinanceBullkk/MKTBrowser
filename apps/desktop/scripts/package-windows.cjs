@@ -46,6 +46,7 @@ const {
   assertWorkspaceQualityContract,
 } = require("../../../scripts/workspace-quality-contract.cjs");
 const { fetchPinnedRelay } = require("./fetch-pinned-relay.cjs");
+const { verifyRelayExecutablePin } = require("./verify-relay-executable-pin.cjs");
 const {
   emitWindowsCompatibilityEvidence,
 } = require("./emit-windows-compatibility-evidence.cjs");
@@ -100,6 +101,7 @@ async function packageWindows({ builderArgs, label, includeRelay = false }) {
 
   if (includeRelay) {
     const { manifest, archivePath } = await fetchPinnedRelay();
+    await verifyRelayExecutablePin(archivePath, manifest);
     stageVerifiedRelayPayload(archivePath, relayPayloadPath, manifest);
     process.stdout.write(`[${label}] staged verified Relay v${manifest.version}.\n`);
   }

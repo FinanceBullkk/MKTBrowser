@@ -7,3 +7,5 @@ extraResources:
     to: relay/relay-release.json
   - from: build/windows-install-conflict-detection.ps1
     to: installer/windows-install-conflict-detection.ps1
+  - from: build/windows-relay-companion.ps1
+    to: installer/windows-relay-companion.ps1

@@ -2,5 +2,7 @@
   "version": 16,
   "sizeBytes": 33342752,
   "sha256": "5c98cf460e62f83b484c9ecd55bc80b650f2e19a09e8ded6e99eafb682e1842e",
+  "executableSizeBytes": 87987200,
+  "executableSha256": "300646e1ea35aa47ece1b0d608d9b9681ee5bde82dd084bcdc5145345d07b60e",
   "url": "https://mkttool-web-production.up.railway.app/api/relay/download/v16"
 }

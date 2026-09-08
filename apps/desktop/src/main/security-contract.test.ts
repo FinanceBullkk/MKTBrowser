@@ -50,6 +50,18 @@ test("sandboxes the renderer", () => {
   assert.equal(prefs.experimentalFeatures ?? false, false);
 });
 
+test("background startup changes visibility without changing renderer security", () => {
+  const visible = mainWindowOptions({ mainDir: "/app/out/main", iconPath: null });
+  const hidden = mainWindowOptions({
+    mainDir: "/app/out/main",
+    iconPath: null,
+    initiallyHidden: true,
+  });
+  assert.equal(visible.show, true);
+  assert.equal(hidden.show, false);
+  assert.deepEqual(hidden.webPreferences, visible.webPreferences);
+});
+
 test("refuses renderer-initiated navigation and window opening", () => {
   // Drives the real hardening function with a recording stub and checks the resulting behavior,
   // rather than matching the source text of the call.

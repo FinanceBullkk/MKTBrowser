@@ -12,6 +12,18 @@
   File /oname=$PLUGINSDIR\windows-install-relay-payload.ps1 "${PROJECT_DIR}\build\windows-install-relay-payload.ps1"
 !macroend
 
+!macro stageStartupCoordinationScript
+  InitPluginsDir
+  File /oname=$PLUGINSDIR\windows-startup-coordination.ps1 "${PROJECT_DIR}\build\windows-startup-coordination.ps1"
+!macroend
+
+!macro inspectStartupShortcutOwnership
+  !insertmacro stageStartupCoordinationScript
+  nsExec::ExecToStack 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File "$PLUGINSDIR\windows-startup-coordination.ps1" -Mode Preflight -ExpectedBrowserPath "$INSTDIR\${APP_FILENAME}.exe" -ExpectedRelayPath "$LOCALAPPDATA\MKTTool-Relay\MKTTool-Relay.exe" -StartupDirectory "$SMSTARTUP"'
+  Pop $0
+  Pop $1
+!macroend
+
 !ifndef BUILD_UNINSTALLER
 !macro preserveRelayOwnershipForUpgrade
   # Older MKB-03 uninstallers embedded Relay cleanup in a fragile quoted command. Preserve
@@ -36,6 +48,10 @@
 !macroend
 
 Function MktBrowserInspectInstallConflicts
+  !insertmacro inspectStartupShortcutOwnership
+  ${If} $0 != 0
+    Return
+  ${EndIf}
   !insertmacro stageFirewallScript
   nsExec::ExecToStack 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File "$PLUGINSDIR\windows-webrtc-firewall.ps1" -Mode CheckOwner -CftPath "$LOCALAPPDATA\MKTTool\MKTBrowser\chromium\cft\runtime\chrome.exe" -CloakBrowserPath "$LOCALAPPDATA\MKTTool\MKTBrowser\chromium\cloakbrowser\runtime\chrome.exe"'
   Pop $0
@@ -108,6 +124,11 @@ FunctionEnd
 !endif
 
 !macro customInstall
+  !insertmacro inspectStartupShortcutOwnership
+  ${If} $0 != 0
+    MessageBox MB_ICONSTOP "$1$\r$\n$\r$\nExisting Startup entries were not changed. Resolve the ownership conflict before retrying."
+    Abort
+  ${EndIf}
   DetailPrint "Installing mandatory WebRTC containment rules"
   !insertmacro stageFirewallScript
   nsExec::ExecToStack 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File "$PLUGINSDIR\windows-webrtc-firewall.ps1" -Mode CheckProfiles'
@@ -171,7 +192,15 @@ FunctionEnd
   WriteRegDWORD SHELL_CONTEXT "${UNINSTALL_REGISTRY_KEY}" "RelayOwned" $2
   DeleteRegKey HKEY_CURRENT_USER "${MKT_BROWSER_INSTALLER_REPAIR_KEY}"
 
-  CreateShortCut "$SMSTARTUP\MKT Browser.lnk" "$appExe" "" "$appExe" 0
+  !insertmacro stageStartupCoordinationScript
+  nsExec::ExecToStack 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File "$PLUGINSDIR\windows-startup-coordination.ps1" -Mode Takeover -ExpectedBrowserPath "$appExe" -ExpectedRelayPath "$LOCALAPPDATA\MKTTool-Relay\MKTTool-Relay.exe" -StartupDirectory "$SMSTARTUP"'
+  Pop $0
+  Pop $1
+  ${If} $0 != 0
+    MessageBox MB_ICONSTOP "MKT Browser startup coordination could not be configured safely. Run installer repair after inspecting current-user Startup entries.$\r$\n$\r$\n$1"
+    Abort
+  ${EndIf}
+  WriteRegDWORD SHELL_CONTEXT "${UNINSTALL_REGISTRY_KEY}" "RelayStartupManaged" 1
   WriteRegStr SHELL_CONTEXT "${UNINSTALL_REGISTRY_KEY}" "Publisher" "Techieslab"
 !macroend
 
@@ -214,9 +243,28 @@ FunctionEnd
       Abort
     ${EndIf}
   ${Else}
-    DetailPrint "Preserving the pre-existing MKTTool Relay, its shortcuts, and relay-config.json"
+    DetailPrint "Preserving the pre-existing MKTTool Relay and relay-config.json"
+    StrCpy $3 0
+    ReadRegDWORD $3 SHELL_CONTEXT "${UNINSTALL_REGISTRY_KEY}" "RelayStartupManaged"
+    ${If} $3 == 1
+      !insertmacro stageStartupCoordinationScript
+      nsExec::ExecToStack 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File "$PLUGINSDIR\windows-startup-coordination.ps1" -Mode Restore -ExpectedBrowserPath "$INSTDIR\${APP_FILENAME}.exe" -ExpectedRelayPath "$LOCALAPPDATA\MKTTool-Relay\MKTTool-Relay.exe" -StartupDirectory "$SMSTARTUP"'
+      Pop $0
+      Pop $1
+      ${If} $0 != 0
+        MessageBox MB_ICONSTOP "The retained Relay startup entry could not be restored safely. Uninstall was stopped.$\r$\n$\r$\n$1"
+        Abort
+      ${EndIf}
+    ${EndIf}
   ${EndIf}
 
   DetailPrint "Removing MKT Browser autostart entry"
-  Delete "$SMSTARTUP\MKT Browser.lnk"
+  !insertmacro stageStartupCoordinationScript
+  nsExec::ExecToStack 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File "$PLUGINSDIR\windows-startup-coordination.ps1" -Mode RemoveBrowser -ExpectedBrowserPath "$INSTDIR\${APP_FILENAME}.exe" -ExpectedRelayPath "$LOCALAPPDATA\MKTTool-Relay\MKTTool-Relay.exe" -StartupDirectory "$SMSTARTUP"'
+  Pop $0
+  Pop $1
+  ${If} $0 != 0
+    MessageBox MB_ICONSTOP "The MKT Browser startup entry could not be removed safely. Uninstall was stopped.$\r$\n$\r$\n$1"
+    Abort
+  ${EndIf}
 !macroend

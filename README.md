@@ -9,6 +9,29 @@ browser service, or an authorization boundary. MKTTool Web decides which account
 the Relay verifies signed tickets and holds operator secrets, and MKT Browser stores and launches
 profiles on the operator device.
 
+## Single-entry startup candidate - 8 September 2026
+
+Source is under verification; this behavior is **not delivered in a new installer** and has no
+MSI acceptance yet. The previously frozen installer tuple remains unchanged.
+
+For normal packaged Windows sessions, open **MKT Browser** as the single entry point. It checks
+the installed current-user Relay and starts it only when the owned executable and installation
+checks permit it. Reopening Browser activates the existing manager and can retry Relay startup;
+there is no background restart loop, automatic registration, or ownership repair.
+
+Closing the manager hides it only when its tray is usable; browser profiles stay open. The tray
+offers **Open MKT Browser**, **Check Relay**, and **Quit MKT Browser**. Quit closes browser profiles
+and the Browser control endpoint, but leaves Relay available for vault operations. If tray setup
+fails, the manager stays visible and closing it quits normally. Development, disposable
+`--user-data-dir`, and compatibility-smoke sessions keep their existing lifecycle.
+
+The combined installer makes Browser `--background` the sole owned login entry, replacing only
+the verified Relay Startup shortcut. Uninstall restores standalone Relay startup when that Relay
+is retained. Relay v16 bytes, device identity, profiles, and signed authorization remain unchanged.
+The Web candidate distinguishes an outdated Relay from an unavailable Browser and offers
+**Check again**. Follow the [current checkpoint](../MKTTool/docs/development-roadmap.md#single-entry-browser-startup---8-september-2026)
+for verification and new-candidate delivery; source checks are not installer acceptance.
+
 ## Product direction - 8 September 2026
 
 The owner accepted MKT Browser as a **browser profile manager with proxy binding**. Its value is

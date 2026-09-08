@@ -18,6 +18,8 @@ export interface MainWindowOptionsInput {
   mainDir: string;
   /** Resolved application icon, or `null` when none was found for this platform. */
   iconPath: string | null;
+  /** Set only after a usable tray exists, so a background start cannot strand the window. */
+  initiallyHidden?: boolean;
 }
 
 /**
@@ -36,6 +38,7 @@ export function mainWindowOptions(input: MainWindowOptionsInput): BrowserWindowC
     titleBarStyle: "hiddenInset",
     backgroundColor: "#0a0b0f",
     icon: input.iconPath ?? undefined,
+    show: !input.initiallyHidden,
     webPreferences: {
       preload: join(input.mainDir, "../preload/index.cjs"),
       sandbox: true,
