@@ -42,7 +42,7 @@ export async function probeProxyGeo(
         agent,
         method: "GET",
         headers: {
-          "user-agent": "MKTBrowser/0.3.13 (proxy-geo-probe)",
+          "user-agent": "MKTBrowser/0.3.14 (proxy-geo-probe)",
           accept: "application/json",
         },
       },

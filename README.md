@@ -11,8 +11,10 @@ profiles on the operator device.
 
 ## Single-entry startup candidate - 8 September 2026
 
-Source is under verification; this behavior is **not delivered in a new installer** and has no
-MSI acceptance yet. The previously frozen installer tuple remains unchanged.
+Replacement candidate **0.3.14 / Relay 17** is under verification and has no MSI acceptance yet.
+Retained 0.3.13 / Relay 16 is rejected for promotion after actual signed VM activation failed while
+stopping already-absent runtimes. Relay 17 corrects that shutdown behavior. Independent builds and
+exact replacement installer acceptance are required before delivery.
 
 For normal packaged Windows sessions, open **MKT Browser** as the single entry point. It checks
 the installed current-user Relay and starts it only when the owned executable and installation
@@ -27,7 +29,7 @@ fails, the manager stays visible and closing it quits normally. Development, dis
 
 The combined installer makes Browser `--background` the sole owned login entry, replacing only
 the verified Relay Startup shortcut. Uninstall restores standalone Relay startup when that Relay
-is retained. Relay v16 bytes, device identity, profiles, and signed authorization remain unchanged.
+is retained. Device identity, profile ownership, and signed authorization retain their contracts.
 The Web candidate distinguishes an outdated Relay from an unavailable Browser and offers
 **Check again**. Follow the [current checkpoint](../MKTTool/docs/development-roadmap.md#single-entry-browser-startup---8-september-2026)
 for verification and new-candidate delivery; source checks are not installer acceptance.

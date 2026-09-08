@@ -68,17 +68,17 @@ test("keeps the Windows candidate version and pinned Relay coherent", () => {
   const root = readJson("package.json");
   const desktop = readJson("apps/desktop/package.json");
   const relay = readJson("apps/desktop/relay-release.json");
-  const expectedVersion = "0.3.13";
+  const expectedVersion = "0.3.14";
 
   assert.equal(root.version, expectedVersion, "root package version drifted");
   assert.equal(desktop.version, expectedVersion, "desktop package version drifted");
-  assert.equal(relay.version, 16, "the candidate must carry immutable Relay v16");
-  assert.equal(relay.sizeBytes, 33342752);
-  assert.equal(relay.sha256, "5c98cf460e62f83b484c9ecd55bc80b650f2e19a09e8ded6e99eafb682e1842e");
-  assert.match(relay.url, /\/api\/relay\/download\/v16$/);
+  assert.equal(relay.version, 17, "the candidate must carry immutable Relay v17");
+  assert.equal(relay.sizeBytes, 34289393);
+  assert.equal(relay.sha256, "d8bf25dcb446d779bd5461419ea7562044e280ac1d16592a71a52f156f6359cf");
+  assert.match(relay.url, /\/api\/relay\/download\/v17$/);
 
   const proxyGeo = readFileSync(path.join(repoRoot, "apps/desktop/src/main/proxyGeo.ts"), "utf8");
-  assert.match(proxyGeo, /MKTBrowser\/0\.3\.13/);
+  assert.match(proxyGeo, /MKTBrowser\/0\.3\.14/);
 
   const mktToolRoot = resolveMktToolRoot();
   const mktToolReader = readFileSync(path.join(mktToolRoot, MKTTOOL_FILES[0]), "utf8");
@@ -88,8 +88,8 @@ test("keeps the Windows candidate version and pinned Relay coherent", () => {
     /EXPECTED_WINDOWS_INSTALLER_CANDIDATE_ID = WINDOWS_INSTALLER_CANDIDATE\.id/,
   );
   const candidate = readFileSync(path.join(mktToolRoot, MKTTOOL_FILES[2]), "utf8");
-  assert.match(candidate, /id: "20260908-browser-0\.3\.13-relay-16-cft"/);
-  assert.match(candidate, /browserVersion: "0\.3\.13"/);
+  assert.match(candidate, /id: "20260909-browser-0\.3\.14-relay-17-activation-repair-cft"/);
+  assert.match(candidate, /browserVersion: "0\.3\.14"/);
   const engine = readJson("apps/desktop/windows-engine-release.json");
   assertCandidateEngine(candidate, engine);
   const mktToolMetadata = readFileSync(path.join(mktToolRoot, MKTTOOL_FILES[1]), "utf8");
@@ -113,7 +113,7 @@ test("keeps the Windows candidate version and pinned Relay coherent", () => {
       "apps/desktop/release/installer/windows-compatibility-artifacts.json",
     );
     assert.equal(evidence.browserVersion, expectedVersion, "generated installer evidence is stale");
-    assert.equal(evidence.artifacts.relay.version, "16", "generated Relay evidence is stale");
+    assert.equal(evidence.artifacts.relay.version, "17", "generated Relay evidence is stale");
   }
 });
 
