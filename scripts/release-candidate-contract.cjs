@@ -7,10 +7,10 @@ const path = require("node:path");
 const APPROVED_ENGINE = Object.freeze(require("../apps/desktop/windows-engine-release.json"));
 
 const EXPECTED_RELAY = Object.freeze({
-  version: 16,
-  sizeBytes: 33342752,
-  sha256: "5c98cf460e62f83b484c9ecd55bc80b650f2e19a09e8ded6e99eafb682e1842e",
-  urlSuffix: "/api/relay/download/v16",
+  version: 17,
+  sizeBytes: 34289393,
+  sha256: "d8bf25dcb446d779bd5461419ea7562044e280ac1d16592a71a52f156f6359cf",
+  urlSuffix: "/api/relay/download/v17",
 });
 const FORBIDDEN_RELAY_HASHES = Object.freeze([
   "cfeefc7f1284492a64f5cf8b29603b3e9a36e5d488ac676d2d109b2c4364b261",
@@ -37,11 +37,11 @@ function assertRelayPin(repoRoot) {
     );
   }
   if (relay.sizeBytes !== EXPECTED_RELAY.sizeBytes || relay.sha256 !== EXPECTED_RELAY.sha256) {
-    throw new Error("Relay v16 size/SHA does not match the immutable approved payload.");
+    throw new Error(`Relay v${EXPECTED_RELAY.version} size/SHA does not match the immutable approved payload.`);
   }
   if (typeof relay.url !== "string" || !relay.url.endsWith(EXPECTED_RELAY.urlSuffix)) {
     throw new Error(
-      "Relay release URL must resolve to the immutable /api/relay/download/v16 object.",
+      `Relay release URL must resolve to the immutable ${EXPECTED_RELAY.urlSuffix} object.`,
     );
   }
   if (FORBIDDEN_RELAY_HASHES.includes(String(relay.sha256).toLowerCase())) {
@@ -163,7 +163,7 @@ function assertPackagedEnginePinned(repoRoot, packageDirectory) {
   if (existsSync(relayMetadataPath)) {
     const relay = readJson(relayMetadataPath);
     if (relay.version !== EXPECTED_RELAY.version || relay.sha256 !== EXPECTED_RELAY.sha256) {
-      throw new Error("Packaged Relay metadata does not match the approved v16 tuple.");
+      throw new Error(`Packaged Relay metadata does not match the approved v${EXPECTED_RELAY.version} tuple.`);
     }
     const archivePath = path.join(packageDirectory, "resources", "relay", "MKTTool-Relay.zip");
     if (!existsSync(archivePath)) throw new Error("Packaged Relay archive is missing.");
@@ -171,7 +171,7 @@ function assertPackagedEnginePinned(repoRoot, packageDirectory) {
       const stats = statSync(archivePath);
       const sha256 = createHash("sha256").update(readFileSync(archivePath)).digest("hex");
       if (stats.size !== EXPECTED_RELAY.sizeBytes || sha256 !== EXPECTED_RELAY.sha256) {
-        throw new Error("Packaged Relay archive bytes do not match the approved v16 tuple.");
+        throw new Error(`Packaged Relay archive bytes do not match the approved v${EXPECTED_RELAY.version} tuple.`);
       }
     }
   }
