@@ -11,7 +11,13 @@ profiles on the operator device.
 
 ## Single-entry startup candidate - 8 September 2026
 
-Replacement candidate **0.3.16 / Relay 17** is under verification and has no MSI acceptance yet.
+Replacement candidate **0.3.17 / Relay 17** is under verification and has no MSI acceptance yet.
+The retained 0.3.16 passes the native nonblocking notice and empty-session tray checks, but signed
+activation smoke fails because the geolocation service presents a Cloudflare HTML challenge.
+The replacement uses an IP-only browser observer and still requires its address to match the
+independent proxy probe. Invalid responses and redirects fail closed without exposing response
+content. A disposable CFT diagnostic reaches that observer through the same proxy with normal TLS;
+this is diagnostic evidence only. New independent builds and exact VM/MSI acceptance remain required.
 The retained 0.3.15 is rejected: its native Relay failure dialog blocked Browser MCP and tray
 handling until dismissed. The replacement uses an asynchronous, deduplicated error notice while
 preserving owned-installation checks. Five notification regressions cover pending dialogs,
