@@ -11,7 +11,12 @@ profiles on the operator device.
 
 ## Single-entry startup candidate - 8 September 2026
 
-Replacement candidate **0.3.15 / Relay 17** is under verification and has no MSI acceptance yet.
+Replacement candidate **0.3.16 / Relay 17** is under verification and has no MSI acceptance yet.
+The retained 0.3.15 is rejected: its native Relay failure dialog blocked Browser MCP and tray
+handling until dismissed. The replacement uses an asynchronous, deduplicated error notice while
+preserving owned-installation checks. Five notification regressions cover pending dialogs,
+background notices, presentation failure and the actual Electron API wiring. Exact VM verification
+must include an unanswered Relay error with responsive MCP before the replacement can be accepted.
 Retained 0.3.14 / Relay 17 reached signed activation smoke, then Browser failed to recognize the
 Relay-installed engine without a download index and retried its authenticated artifact URL without
 authorization. The replacement recognizes an existing stable runtime only when its metadata matches

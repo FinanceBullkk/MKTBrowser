@@ -60,6 +60,7 @@ import { probeProxyGeo, type ProxyGeoResult } from "./proxyGeo.ts";
 import { deleteBrowserProfile } from "./profile-deletion-lifecycle.ts";
 import { WindowsLocalInstallInspector } from "./windows-local-install-inspector.ts";
 import { WindowsRelayCompanion } from "./windows-relay-companion.ts";
+import { RelayFailureNotifier } from "./relay-failure-notifier.ts";
 import {
   WindowsBackgroundLifecycle,
   usesNormalWindowsSession,
@@ -136,6 +137,10 @@ let relayCompanion: WindowsRelayCompanion | null = null;
 let activationPending = false;
 let shutdownStarted = false;
 let checkingRelay = false;
+const relayFailureNotifier = new RelayFailureNotifier({
+  showMessageBox: (options) => dialog.showMessageBox(options),
+  notify: (title, message) => backgroundLifecycle?.notify(title, message),
+});
 
 async function checkRelayCompanion(notifyFailure = false): Promise<void> {
   if (!relayCompanion || shutdownStarted || checkingRelay) return;
@@ -145,11 +150,7 @@ async function checkRelayCompanion(notifyFailure = false): Promise<void> {
     if (shutdownStarted || result.status === "cancelled") return;
     backgroundLifecycle?.setRelayStatus(result.message);
     if (["blocked", "not-installed", "failed"].includes(result.status)) {
-      if (notifyFailure || !backgroundLifecycle?.canHide) {
-        dialog.showErrorBox("Relay needs attention", result.message);
-      } else {
-        backgroundLifecycle.notify("Relay needs attention", result.message);
-      }
+      relayFailureNotifier.show(result.message, notifyFailure || !backgroundLifecycle?.canHide);
     }
   } finally {
     checkingRelay = false;
