@@ -20,6 +20,7 @@ test("protects the modules whose regression crosses an identity boundary", () =>
     "src/main/safe-archive-entry-validation.ts",
     "src/main/devtools-port-discovery.ts",
     "src/main/browser-process-discovery.ts",
+    "src/main/windows-process-query-worker.ts",
     "src/main/startup-orphan-sweep.ts",
     "src/main/license-key-pool.ts",
     "src/main/license-lease-journal.ts",

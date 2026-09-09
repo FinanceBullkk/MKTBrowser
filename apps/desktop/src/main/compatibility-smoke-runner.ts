@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import type { BrowserDriver, RunningProfileState } from "@mktbrowser/mcp-server";
 import type { ProfileManager } from "@mktbrowser/profile-manager";
 import type { Profile, ProxyConfig } from "@mktbrowser/types";
@@ -7,7 +8,8 @@ import {
 } from "./compatibility-smoke-authorization.ts";
 
 const COOKIE_URL = "https://example.com/";
-const PROXY_CHECK_URL = "https://ipapi.co/json/";
+// The browser check only needs an IP; the geo service can present an HTML challenge.
+const PROXY_CHECK_URL = "https://api.ipify.org/?format=json";
 
 export interface CompatibilitySmokeDependencies {
   profileManager: Pick<ProfileManager, "get" | "list">;
@@ -105,14 +107,24 @@ async function verifyBrowserProxy(
   profileId: string,
   expectedIp: string,
 ): Promise<void> {
-  await driver.navigate(profileId, PROXY_CHECK_URL);
+  const navigation = await driver.navigate(profileId, PROXY_CHECK_URL);
+  if (navigation.url !== PROXY_CHECK_URL) {
+    throw new Error("The Browser IP check was redirected. Check the proxy connection and retry compatibility repair.");
+  }
   const result = (await driver.cdpSend(profileId, "Runtime.evaluate", {
     expression: "document.body.innerText",
     returnByValue: true,
   })) as { result?: { value?: unknown } };
   const body = result.result?.value;
-  if (typeof body !== "string") throw new Error("The Browser proxy probe returned no body.");
-  const payload = JSON.parse(body) as { ip?: unknown };
+  let payload: { ip?: unknown } | null = null;
+  try {
+    if (typeof body === "string") payload = JSON.parse(body) as { ip?: unknown } | null;
+  } catch {
+    // Do not include provider pages or malformed response content in operator errors.
+  }
+  if (typeof payload?.ip !== "string" || isIP(payload.ip) === 0) {
+    throw new Error("The Browser IP check did not return a valid address. Check the proxy connection and retry compatibility repair.");
+  }
   if (payload.ip !== expectedIp) {
     throw new Error("The Browser egress did not match the configured static proxy.");
   }

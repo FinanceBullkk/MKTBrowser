@@ -28,10 +28,18 @@ const ABSOLUTE_FLOORS = { lines: 70, branches: 60, functions: 70 };
 // Each entry pairs a protected module with the reason it is protected. The reason is not decoration:
 // when someone later proposes removing an entry, the sentence is the argument they have to answer.
 const PROTECTED_MODULES = [
+  [
+    "src/main/activated-windows-engine-cache.ts",
+    "binds a Relay-installed runtime to the signed engine version",
+  ],
   ["src/main/safe-archive-extraction.ts", "extracts engine and extension archives"],
   ["src/main/safe-archive-entry-validation.ts", "refuses traversal, links, and collisions"],
   ["src/main/devtools-port-discovery.ts", "binds a browser to the profile that owns it"],
   ["src/main/browser-process-discovery.ts", "identifies which process a port belongs to"],
+  [
+    "src/main/windows-process-query-worker.ts",
+    "keeps Windows ownership snapshots fresh and bounded",
+  ],
   ["src/main/startup-orphan-sweep.ts", "reclaims browsers a crashed app left behind"],
   [
     "src/main/startup-license-lease-reconciliation.ts",
@@ -47,9 +55,11 @@ const PROTECTED_MODULES = [
 ];
 
 const TEST_FILES = [
+  "src/main/activated-windows-engine-cache.test.ts",
   "src/main/safe-archive-extraction.test.ts",
   "src/main/devtools-port-discovery.test.ts",
   "src/main/browser-process-discovery.test.ts",
+  "src/main/windows-process-query-worker.test.ts",
   "src/main/startup-orphan-sweep.test.ts",
   "src/main/startup-license-lease-reconciliation.test.ts",
   "src/main/license-key-pool.test.ts",
@@ -83,7 +93,8 @@ function assertThresholdsAreLegal() {
 function assertProtectedFilesExist() {
   const missing = [];
   for (const [relativePath, reason] of PROTECTED_MODULES) {
-    if (!existsSync(path.join(DESKTOP_ROOT, relativePath))) missing.push(`${relativePath} (${reason})`);
+    if (!existsSync(path.join(DESKTOP_ROOT, relativePath)))
+      missing.push(`${relativePath} (${reason})`);
   }
   for (const relativePath of TEST_FILES) {
     if (!existsSync(path.join(DESKTOP_ROOT, relativePath))) missing.push(relativePath);

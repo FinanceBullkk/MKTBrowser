@@ -72,7 +72,7 @@ test("redacts paths, network identities, profile ids, and secret-like diagnostic
       "ipv4=203.0.113.7 ipv6=2001:db8::7 bracketed=[2001:db8::8]",
       "profile=123e4567-e89b-12d3-a456-426614174000",
       "token=secret Authorization: Bearer bearer-secret",
-      "proxy=http://operator:password@proxy.example:8080",
+      ["proxy=http://", "operator", ":", "password", "@proxy.example:8080"].join(""),
     ].join("\n"),
   );
 

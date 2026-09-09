@@ -61,6 +61,9 @@ function Assert-Named-Processes(
             Stop-With $Code "A different $Label installation is running. Safe action: close that process; do not delete its files, then retry."
         }
         if (-not $AllowExpectedPath) {
+            if ($Label -eq "MKT Browser") {
+                Stop-With $Code "MKT Browser is running. Safe action: choose Quit MKT Browser from its system tray menu, then retry. Closing its window only keeps it running in the background; profiles and data will be preserved."
+            }
             Stop-With $Code "$Label is running. Safe action: close it, then retry. Its profiles and data will be preserved."
         }
     }

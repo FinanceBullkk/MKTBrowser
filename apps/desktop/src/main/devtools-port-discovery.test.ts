@@ -187,6 +187,41 @@ test("does not return success after an ownership query exceeds the budget", asyn
   });
 });
 
+test("reports process stage when the identity refresh exceeds the budget", async () => {
+  const clock = createClock();
+  const deps = harnessDeps(clock);
+  let reads = 0;
+  deps.enumerateProcesses = async () => {
+    if (++reads === 2) await clock.sleep(1_000);
+    return { enumerated: true, processes: [browser(20)] };
+  };
+
+  await assert.rejects(discover(deps, 100), (error: unknown) => {
+    assert.ok(error instanceof DevToolsPortDiscoveryError);
+    assert.equal(error.diagnostics.stage, "process");
+    assert.deepEqual(error.diagnostics.portOwnerPids, [20]);
+    assert.equal(reads, 2);
+    return true;
+  });
+});
+
+test("reports ownership stage when the final listener snapshot exceeds the budget", async () => {
+  const clock = createClock();
+  const deps = harnessDeps(clock);
+  let reads = 0;
+  deps.enumeratePortOwners = async () => {
+    if (++reads === 2) await clock.sleep(1_000);
+    return { inspected: true, pids: [20] };
+  };
+
+  await assert.rejects(discover(deps, 100), (error: unknown) => {
+    assert.ok(error instanceof DevToolsPortDiscoveryError);
+    assert.equal(error.diagnostics.stage, "ownership");
+    assert.equal(reads, 2);
+    return true;
+  });
+});
+
 test("times out at the active-port stage with bounded diagnostics", async () => {
   const clock = createClock();
   const deps = harnessDeps(clock, { activePortRecord: null });
@@ -253,10 +288,7 @@ function harnessDeps(
 }
 
 function discover(deps: DevToolsPortDiscoveryDeps, budgetMs = 120) {
-  return waitForOwnedDevToolsEndpoint(
-    { dataDir: DATA_DIR, childPid: 20, budgetMs },
-    deps,
-  );
+  return waitForOwnedDevToolsEndpoint({ dataDir: DATA_DIR, childPid: 20, budgetMs }, deps);
 }
 
 function hasCode(expected: string) {

@@ -9,6 +9,64 @@ browser service, or an authorization boundary. MKTTool Web decides which account
 the Relay verifies signed tickets and holds operator secrets, and MKT Browser stores and launches
 profiles on the operator device.
 
+## Single-entry startup candidate - 8 September 2026
+
+Replacement candidate **0.3.17 / Relay 17** is under verification and has no MSI acceptance yet.
+The retained 0.3.16 passes the native nonblocking notice and empty-session tray checks, but signed
+activation smoke fails because the geolocation service presents a Cloudflare HTML challenge.
+The replacement uses an IP-only browser observer and still requires its address to match the
+independent proxy probe. Invalid responses and redirects fail closed without exposing response
+content. A disposable CFT diagnostic reaches that observer through the same proxy with normal TLS;
+this is diagnostic evidence only. New independent builds and exact VM/MSI acceptance remain required.
+The retained 0.3.15 is rejected: its native Relay failure dialog blocked Browser MCP and tray
+handling until dismissed. The replacement uses an asynchronous, deduplicated error notice while
+preserving owned-installation checks. Five notification regressions cover pending dialogs,
+background notices, presentation failure and the actual Electron API wiring. Exact VM verification
+must include an unanswered Relay error with responsive MCP before the replacement can be accepted.
+Retained 0.3.14 / Relay 17 reached signed activation smoke, then Browser failed to recognize the
+Relay-installed engine without a download index and retried its authenticated artifact URL without
+authorization. The replacement recognizes an existing stable runtime only when its metadata matches
+the signed engine version. Actual bootstrap regression: failed before, four tests passed after.
+The unchanged Relay 17 fixes the earlier 0.3.13 / Relay 16 shutdown defect. Both older installers
+remain rejected for promotion. Independent builds and exact VM/MSI acceptance precede delivery.
+
+For normal packaged Windows sessions, open **MKT Browser** as the single entry point. It checks
+the installed current-user Relay and starts it only when the owned executable and installation
+checks permit it. Reopening Browser activates the existing manager and can retry Relay startup;
+there is no background restart loop, automatic registration, or ownership repair.
+
+Closing the manager hides it only when its tray is usable; browser profiles stay open. The tray
+offers **Open MKT Browser**, **Check Relay**, and **Quit MKT Browser**. Quit closes browser profiles
+and the Browser control endpoint, but leaves Relay available for vault operations. If tray setup
+fails, the manager stays visible and closing it quits normally. Development, disposable
+`--user-data-dir`, and compatibility-smoke sessions keep their existing lifecycle.
+
+The combined installer makes Browser `--background` the sole owned login entry, replacing only
+the verified Relay Startup shortcut. Uninstall restores standalone Relay startup when that Relay
+is retained. Device identity, profile ownership, and signed authorization retain their contracts.
+The Web candidate distinguishes an outdated Relay from an unavailable Browser and offers
+**Check again**. Follow the [current checkpoint](../MKTTool/docs/development-roadmap.md#single-entry-browser-startup---8-september-2026)
+for verification and new-candidate delivery; source checks are not installer acceptance.
+
+## Product direction - 8 September 2026
+
+The owner accepted MKT Browser as a **browser profile manager with proxy binding**. Its value is
+local browser data, assigned proxy, explicit nick/PC ownership, and human-controlled lifecycle
+through Relay. It makes no antidetect, unique-fingerprint, identity-isolation, or account-safety
+promise. Prioritize Proxy vault and Relay operations, then reliable manual profile use.
+
+Active antidetect/identity-engine research, custom Chromium fingerprint work, and further
+Brave/Cloak identity experiments are closed. Security and compatibility maintenance continue;
+existing runtime code, engine pins, adapters, and measured evidence remain intact. A future vendor
+integration requires a separate owner decision with API, licensing, and measured acceptance
+evidence; no vendor contact or integration is scheduled.
+
+Current use remains bounded, admin-led technical demonstration with disposable data, one profile
+at a time, and human login/input. Lane C stays **CLOSED**, `G2-IDENTITY=FAIL` remains recorded,
+and the Browser release gates stay open. This scope decision does not approve team distribution
+or real-account use. See the [product decision](../MKTTool/docs/project-overview-pdr.md#product-direction-decision---8-september-2026)
+and [release boundary](../MKTTool/docs/internal-beta-release.md).
+
 ## Consolidation truth — 1 September 2026
 
 The current consolidation branch is `release/consolidation-20260830` at `b9f9477`. The accepted provenance

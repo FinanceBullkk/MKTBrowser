@@ -1,10 +1,13 @@
 import { execFile } from "node:child_process";
 import { join, win32 } from "node:path";
 import { promisify } from "node:util";
+import {
+  createWindowsProcessQueryWorker,
+  type WindowsProcessQueryWorker,
+} from "./windows-process-query-worker.ts";
 
 const execFileAsync = promisify(execFile);
 const MAX_NETSTAT_OUTPUT_BYTES = 1_048_576;
-const MAX_WINDOWS_PROCESS_OUTPUT_BYTES = 1_048_576;
 const WINDOWS_PROCESS_INSPECTION_TIMEOUT_MS = 5_000;
 // A machine that has just booted pays for WinMgmt starting up on its first CIM query, and that one
 // call can outrun the warm budget above by a wide margin. Reading that as "the process table cannot
@@ -13,6 +16,7 @@ const WINDOWS_PROCESS_INSPECTION_TIMEOUT_MS = 5_000;
 // runner the discovery contract failed at exactly the 5s mark. A timeout is evidence the machine is
 // cold rather than hung, so the one retry gets a budget sized for a cold WMI.
 const WINDOWS_PROCESS_INSPECTION_COLD_TIMEOUT_MS = 20_000;
+let windowsProcessWorker: { powershell: string; worker: WindowsProcessQueryWorker } | undefined;
 
 export interface BrowserProcessInfo {
   pid: number;
@@ -148,9 +152,7 @@ export function parseLoopbackPortOwners(raw: string, port: number): number[] {
 
   const owners = new Set<number>();
   for (const line of raw.split(/\r?\n/)) {
-    const match = line.match(
-      /^\s*TCP\s+127\.0\.0\.1:(\d+)\s+0\.0\.0\.0:0\s+\S+\s+(\d+)\s*$/i,
-    );
+    const match = line.match(/^\s*TCP\s+127\.0\.0\.1:(\d+)\s+0\.0\.0\.0:0\s+\S+\s+(\d+)\s*$/i);
     if (!match || Number(match[1]) !== port) continue;
     const pid = Number(match[2]);
     if (Number.isInteger(pid) && pid > 0) owners.add(pid);
@@ -191,16 +193,21 @@ async function listWindowsProcesses(): Promise<BrowserProcessInfo[]> {
   if (!systemRoot) throw new Error("Windows system root is unavailable");
   const powershell = join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const script = [
-    "$ErrorActionPreference = 'Stop'",
-    "$ProgressPreference = 'SilentlyContinue'",
-    "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
     "$query = \"SELECT ProcessId, CommandLine FROM Win32_Process WHERE CommandLine LIKE '%--user-data-dir=%'\"",
     "$items = Get-CimInstance -Query $query -ErrorAction Stop | ForEach-Object { [pscustomobject]@{ pid = [int]$_.ProcessId; commandLine = [string]$_.CommandLine } }",
-    "if ($items) { [Console]::Out.Write((ConvertTo-Json -InputObject @($items) -Compress)) }",
+    "if ($items) { [Console]::Out.WriteLine((ConvertTo-Json -InputObject @($items) -Compress)) } else { [Console]::Out.WriteLine('[]') }",
   ].join("; ");
+  if (windowsProcessWorker?.powershell !== powershell) {
+    windowsProcessWorker?.worker.dispose();
+    windowsProcessWorker = {
+      powershell,
+      worker: createWindowsProcessQueryWorker(powershell, script),
+    };
+  }
+  const worker = windowsProcessWorker.worker;
 
   try {
-    return await queryWindowsProcesses(powershell, script, WINDOWS_PROCESS_INSPECTION_TIMEOUT_MS);
+    return (await worker.query(WINDOWS_PROCESS_INSPECTION_TIMEOUT_MS)).filter(isBrowserProcessInfo);
   } catch (cause) {
     // Only a timeout earns the second, longer attempt. Anything else - a missing shell, refused
     // access, unparseable output - would fail the same way twice and only delay the answer.
@@ -211,37 +218,15 @@ async function listWindowsProcesses(): Promise<BrowserProcessInfo[]> {
   }
 
   try {
-    return await queryWindowsProcesses(
-      powershell,
-      script,
-      WINDOWS_PROCESS_INSPECTION_COLD_TIMEOUT_MS,
+    return (await worker.query(WINDOWS_PROCESS_INSPECTION_COLD_TIMEOUT_MS)).filter(
+      isBrowserProcessInfo,
     );
   } catch (cause) {
     throw new Error("could not enumerate Windows processes", { cause });
   }
 }
 
-async function queryWindowsProcesses(
-  powershell: string,
-  script: string,
-  timeoutMs: number,
-): Promise<BrowserProcessInfo[]> {
-  const { stdout } = await execFileAsync(
-    powershell,
-    ["-NoProfile", "-NonInteractive", "-Command", script],
-    {
-      encoding: "utf8",
-      windowsHide: true,
-      timeout: timeoutMs,
-      maxBuffer: MAX_WINDOWS_PROCESS_OUTPUT_BYTES,
-    },
-  );
-  if (!stdout.trim()) return [];
-  const parsed = JSON.parse(stdout) as BrowserProcessInfo[] | BrowserProcessInfo;
-  return (Array.isArray(parsed) ? parsed : [parsed]).filter(isBrowserProcessInfo);
-}
-
-/** `execFile` kills a child that outruns its budget, so a timeout arrives as a killed signal. */
+/** A query timeout retires its shell before any retry can observe a late response. */
 function isChildProcessTimeout(cause: unknown): boolean {
   if (typeof cause !== "object" || cause === null) return false;
   const failure = cause as { killed?: unknown; signal?: unknown };
@@ -286,6 +271,8 @@ function normalizePath(value: string): string {
   return value.replace(/\/+$/, "");
 }
 
-function isBrowserProcessInfo(value: BrowserProcessInfo): boolean {
-  return Number.isInteger(value?.pid) && value.pid > 0 && typeof value.commandLine === "string";
+function isBrowserProcessInfo(value: unknown): value is BrowserProcessInfo {
+  if (typeof value !== "object" || value === null) return false;
+  const item = value as BrowserProcessInfo;
+  return Number.isInteger(item.pid) && item.pid > 0 && typeof item.commandLine === "string";
 }

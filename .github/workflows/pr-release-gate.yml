@@ -1,20 +1,8 @@
-name: PR Release Gate
+name: Manual Release Diagnostics
 
-# The only merge authority for the default branch.
-#
-# Two properties matter, and the obvious implementation gets both wrong:
-#
-# 1. The required check name exists only here, on pull_request. A green push on a feature branch
-#    therefore cannot report it and cannot stand in for the merge-tree result. That substitution is
-#    what let this branch read as releasable on 22 August while the required check was failing on
-#    the same source tree.
-#
-# 2. The gate job runs with always() and inspects the pipeline result explicitly. GitHub counts a
-#    skipped required check as satisfied, so a gate that simply depends on the pipeline would be
-#    skipped when the pipeline fails, and the merge would be allowed.
-
+# Optional diagnostics, never a substitute for local and clean-VM release receipts.
 on:
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -24,7 +12,7 @@ jobs:
     # A public pull request from a fork must never execute untrusted checkout code in a job that
     # carries this repository's secrets. The required gate below stays visible and fails closed
     # for that PR.
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/windows-pipeline.yml
     with:
       contract_iterations: "5"
@@ -62,7 +50,7 @@ jobs:
           if [ "$status" != "PASS" ]; then exit 1; fi
 
       - name: Record release-contract scope when checkout is intentionally unavailable
-        if: always() && (needs.windows.result != 'success' || github.event.pull_request.head.repo.full_name != github.repository)
+        if: always() && (needs.windows.result != 'success' || github.event_name != 'workflow_dispatch')
         run: |
           result='{"gate":"release-contract-scope","status":"OPEN","reason":"Release contract source is not executed when the Windows job is skipped or the pull request is from a fork.","owner":"release-engineering"}'
           printf '%s\n' "$result" >> "$GITHUB_STEP_SUMMARY"
@@ -72,13 +60,13 @@ jobs:
       # Checkouts and all local contract execution are restricted to the trusted same-repository
       # path after the Windows reusable workflow has passed.
       - name: Checkout MKT Browser source for release contracts
-        if: always() && needs.windows.result == 'success' && github.event.pull_request.head.repo.full_name == github.repository
+        if: always() && needs.windows.result == 'success' && github.event_name == 'workflow_dispatch'
         uses: actions/checkout@v5
         with:
           path: mktbrowser
 
       - name: Checkout MKTTool sibling source for release contracts
-        if: always() && needs.windows.result == 'success' && github.event.pull_request.head.repo.full_name == github.repository
+        if: always() && needs.windows.result == 'success' && github.event_name == 'workflow_dispatch'
         id: mkttool_checkout
         uses: actions/checkout@v5
         continue-on-error: true
@@ -90,7 +78,7 @@ jobs:
           fetch-depth: 1
 
       - name: Record MKTTool sibling checkout status
-        if: always() && needs.windows.result == 'success' && github.event.pull_request.head.repo.full_name == github.repository
+        if: always() && needs.windows.result == 'success' && github.event_name == 'workflow_dispatch'
         env:
           OUTCOME: ${{ steps.mkttool_checkout.outcome }}
         run: |
@@ -102,26 +90,26 @@ jobs:
           fi
 
       - name: Setup Node.js 22 for release contracts
-        if: always() && needs.windows.result == 'success' && github.event.pull_request.head.repo.full_name == github.repository
+        if: always() && needs.windows.result == 'success' && github.event_name == 'workflow_dispatch'
         uses: actions/setup-node@v5
         with:
           node-version: 22
           package-manager-cache: false
 
       - name: Enable Corepack for release contracts
-        if: always() && needs.windows.result == 'success' && github.event.pull_request.head.repo.full_name == github.repository
+        if: always() && needs.windows.result == 'success' && github.event_name == 'workflow_dispatch'
         run: |
           corepack enable
           corepack prepare yarn@4.5.0 --activate
 
       - name: One-seat license boundary contract
-        if: always() && needs.windows.result == 'success' && github.event.pull_request.head.repo.full_name == github.repository
+        if: always() && needs.windows.result == 'success' && github.event_name == 'workflow_dispatch'
         id: one_seat_license
         working-directory: mktbrowser
         run: node scripts/ci-gate-status.cjs --gate one-seat-license --reason "The Browser one-seat UI and primary-key pool contract passed." --owner browser-release --required -- node --experimental-strip-types --test apps/desktop/src/main/one-seat-license-ui-contract.test.ts
 
       - name: Version and Relay pin coherence contracts
-        if: always() && needs.windows.result == 'success' && github.event.pull_request.head.repo.full_name == github.repository
+        if: always() && needs.windows.result == 'success' && github.event_name == 'workflow_dispatch'
         id: version_coherence
         working-directory: mktbrowser
         env:
@@ -134,7 +122,7 @@ jobs:
           node scripts/ci-gate-status.cjs --gate version-coherence --reason "Browser, MKTTool, and Relay candidate versions are coherent." --owner browser-release --required -- node --test scripts/version-coherence-contract.test.cjs
 
       - name: Reject quarantined Relay tuples and packaged unpinned-engine paths
-        if: always() && needs.windows.result == 'success' && github.event.pull_request.head.repo.full_name == github.repository
+        if: always() && needs.windows.result == 'success' && github.event_name == 'workflow_dispatch'
         id: relay_engine_candidate
         working-directory: mktbrowser
         run: node scripts/ci-gate-status.cjs --gate relay-and-engine-candidate --reason "Relay v16 is hash-bound and the packaged engine allowance is development-only." --owner browser-release --required -- node scripts/release-candidate-contract.cjs

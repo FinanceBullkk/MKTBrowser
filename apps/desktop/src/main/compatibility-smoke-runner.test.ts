@@ -74,7 +74,55 @@ test("closes the profile when cookie or proxy verification fails", async () => {
   assert.equal(calls.at(-1), "close");
 });
 
-function createDriver(calls: string[], options: { browserIp?: string } = {}) {
+test("uses the browser-readable IP-only observer with the independent proxy IP", async () => {
+  const driver = createDriver([]);
+  const urls: string[] = [];
+  driver.navigate = async (_profileId, url) => {
+    urls.push(url);
+    return { url };
+  };
+  await runCompatibilitySmoke(authorization, {
+    profileManager: { list: () => [summary(profile)], get: () => profile },
+    browserDriver: driver,
+    verifyHealth: async () => {},
+  });
+  assert.deepEqual(urls, ["https://api.ipify.org/?format=json"]);
+});
+
+for (const body of [
+  "ipapi.co\nPerforming security verification\nprivate-provider-detail",
+  "{invalid-json-private-provider-detail",
+  "null",
+  '{"ip":null}',
+  '{"ip":123}',
+  '{"ip":"invalid-address"}',
+  '{}',
+]) {
+  test(`fails closed and closes the profile for an unusable IP response: ${body.slice(0, 20)}`, async () => {
+    const calls: string[] = [];
+    await assert.rejects(runCompatibilitySmoke(authorization, {
+      profileManager: { list: () => [summary(profile)], get: () => profile },
+      browserDriver: createDriver(calls, { browserBody: body }),
+      verifyHealth: async () => {},
+    }), { message: "The Browser IP check did not return a valid address. Check the proxy connection and retry compatibility repair." });
+    assert.equal(calls.at(-1), "close");
+  });
+}
+
+test("rejects a redirected IP observer even if its body reports the expected IP", async () => {
+  const calls: string[] = [];
+  const driver = createDriver(calls);
+  driver.navigate = async () => ({ url: "https://unexpected.test/" });
+  await assert.rejects(runCompatibilitySmoke(authorization, {
+    profileManager: { list: () => [summary(profile)], get: () => profile },
+    browserDriver: driver,
+    verifyHealth: async () => {},
+  }), /IP check was redirected/);
+  assert.equal(calls.at(-1), "close");
+  assert.equal(calls.includes("proxy:read"), false);
+});
+
+function createDriver(calls: string[], options: { browserIp?: string; browserBody?: string } = {}) {
   return {
     launch: async () => {
       calls.push("open");
@@ -83,9 +131,9 @@ function createDriver(calls: string[], options: { browserIp?: string } = {}) {
     close: async () => void calls.push("close"),
     isRunning: () => false,
     getRunningProfileState: () => ({ proxy, observedProxyIp: "203.0.113.10" }),
-    navigate: async () => {
+    navigate: async (_profileId: string, url: string) => {
       calls.push("proxy:navigate");
-      return { url: "https://ipapi.co/json/" };
+      return { url };
     },
     cdpSend: async (_profileId: string, method: string) => {
       if (method === "Network.setCookie") {
@@ -101,7 +149,7 @@ function createDriver(calls: string[], options: { browserIp?: string } = {}) {
         return {};
       }
       calls.push("proxy:read");
-      return { result: { value: JSON.stringify({ ip: options.browserIp ?? "203.0.113.10" }) } };
+      return { result: { value: options.browserBody ?? JSON.stringify({ ip: options.browserIp ?? "203.0.113.10" }) } };
     },
   };
 }

@@ -4,12 +4,13 @@
 const { createHash } = require("node:crypto");
 const { existsSync, readdirSync, readFileSync, statSync } = require("node:fs");
 const path = require("node:path");
+const APPROVED_ENGINE = Object.freeze(require("../apps/desktop/windows-engine-release.json"));
 
 const EXPECTED_RELAY = Object.freeze({
-  version: 16,
-  sizeBytes: 33342752,
-  sha256: "5c98cf460e62f83b484c9ecd55bc80b650f2e19a09e8ded6e99eafb682e1842e",
-  urlSuffix: "/api/relay/download/v16",
+  version: 17,
+  sizeBytes: 34289393,
+  sha256: "d8bf25dcb446d779bd5461419ea7562044e280ac1d16592a71a52f156f6359cf",
+  urlSuffix: "/api/relay/download/v17",
 });
 const FORBIDDEN_RELAY_HASHES = Object.freeze([
   "cfeefc7f1284492a64f5cf8b29603b3e9a36e5d488ac676d2d109b2c4364b261",
@@ -17,6 +18,13 @@ const FORBIDDEN_RELAY_HASHES = Object.freeze([
 ]);
 function readJson(filePath) {
   return JSON.parse(readFileSync(filePath, "utf8"));
+}
+
+function assertEnginePin(engine) {
+  const fields = ["engineKind", "source", "version", "url", "sha256", "sizeBytes"];
+  if (!engine || fields.some((field) => engine[field] !== APPROVED_ENGINE[field])) {
+    throw new Error("The engine does not match the reviewed CFT profile-manager release tuple.");
+  }
 }
 
 function assertRelayPin(repoRoot) {
@@ -29,11 +37,11 @@ function assertRelayPin(repoRoot) {
     );
   }
   if (relay.sizeBytes !== EXPECTED_RELAY.sizeBytes || relay.sha256 !== EXPECTED_RELAY.sha256) {
-    throw new Error("Relay v16 size/SHA does not match the immutable approved payload.");
+    throw new Error(`Relay v${EXPECTED_RELAY.version} size/SHA does not match the immutable approved payload.`);
   }
   if (typeof relay.url !== "string" || !relay.url.endsWith(EXPECTED_RELAY.urlSuffix)) {
     throw new Error(
-      "Relay release URL must resolve to the immutable /api/relay/download/v16 object.",
+      `Relay release URL must resolve to the immutable ${EXPECTED_RELAY.urlSuffix} object.`,
     );
   }
   if (FORBIDDEN_RELAY_HASHES.includes(String(relay.sha256).toLowerCase())) {
@@ -147,28 +155,23 @@ function assertPackagedEnginePinned(repoRoot, packageDirectory) {
     path.join(path.dirname(packageDirectory), "windows-compatibility-artifacts.json"),
   ];
   const metadataPath = metadataCandidates.find((candidate) => existsSync(candidate));
-  if (metadataPath) {
-    const metadata = readJson(metadataPath);
-    const engine = metadata.artifacts?.engine;
-    if (!engine || engine.engineKind !== "cloakbrowser" || engine.source !== "licensed-channel") {
-      throw new Error(
-        "Packaged candidate must identify the licensed CloakBrowser engine, not CFT.",
-      );
-    }
-  }
+  if (!metadataPath) throw new Error("Packaged compatibility artifact metadata is missing.");
+  assertEnginePin(readJson(metadataPath).artifacts?.engine);
 
   const relayMetadataPath = path.join(packageDirectory, "resources", "relay", "relay-release.json");
+  if (!existsSync(relayMetadataPath)) throw new Error("Packaged Relay metadata is missing.");
   if (existsSync(relayMetadataPath)) {
     const relay = readJson(relayMetadataPath);
     if (relay.version !== EXPECTED_RELAY.version || relay.sha256 !== EXPECTED_RELAY.sha256) {
-      throw new Error("Packaged Relay metadata does not match the approved v16 tuple.");
+      throw new Error(`Packaged Relay metadata does not match the approved v${EXPECTED_RELAY.version} tuple.`);
     }
     const archivePath = path.join(packageDirectory, "resources", "relay", "MKTTool-Relay.zip");
+    if (!existsSync(archivePath)) throw new Error("Packaged Relay archive is missing.");
     if (existsSync(archivePath)) {
       const stats = statSync(archivePath);
       const sha256 = createHash("sha256").update(readFileSync(archivePath)).digest("hex");
       if (stats.size !== EXPECTED_RELAY.sizeBytes || sha256 !== EXPECTED_RELAY.sha256) {
-        throw new Error("Packaged Relay archive bytes do not match the approved v16 tuple.");
+        throw new Error(`Packaged Relay archive bytes do not match the approved v${EXPECTED_RELAY.version} tuple.`);
       }
     }
   }
@@ -180,6 +183,7 @@ function verifyReleaseCandidate({
   packageDirectory,
 } = {}) {
   const relay = assertRelayPin(repoRoot);
+  assertEnginePin(readJson(path.join(repoRoot, "apps", "desktop", "windows-engine-release.json")));
   assertNoBadTuple(repoRoot);
   const engine = assertPackagedEnginePinned(repoRoot, packageDirectory);
   return { relay, engine };
@@ -210,9 +214,11 @@ if (require.main === module) {
 }
 
 module.exports = {
+  APPROVED_ENGINE,
   EXPECTED_RELAY,
   FORBIDDEN_RELAY_HASHES,
   assertNoBadTuple,
+  assertEnginePin,
   assertPackagedEnginePinned,
   assertRelayPin,
   parseArguments,

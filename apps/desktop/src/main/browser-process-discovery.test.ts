@@ -35,7 +35,10 @@ test("selects the browser process instead of a short-lived launcher or helper", 
   const pid = selectPrimaryBrowserPid(
     [
       { pid: 20, commandLine: `chrome.exe --type=renderer --user-data-dir="${DATA_DIR}"` },
-      { pid: 30, commandLine: `chrome.exe --user-data-dir="${DATA_DIR}" --remote-debugging-port=9222` },
+      {
+        pid: 30,
+        commandLine: `chrome.exe --user-data-dir="${DATA_DIR}" --remote-debugging-port=9222`,
+      },
     ],
     10,
   );
@@ -58,7 +61,9 @@ test("reads the DevTools port an orphaned browser was started with", () => {
   assert.equal(debugPortFromCommandLine("chrome.exe --remote-debugging-port=70000"), null);
   // Chromium honours the last occurrence, so this must agree with it.
   assert.equal(
-    debugPortFromCommandLine("chrome.exe --remote-debugging-port=9222 --remote-debugging-port=9333"),
+    debugPortFromCommandLine(
+      "chrome.exe --remote-debugging-port=9222 --remote-debugging-port=9333",
+    ),
     9333,
   );
   // A flag that merely starts with the same text is a different flag.
@@ -131,10 +136,25 @@ test(
     try {
       const result = await enumerateBrowserProcessesUsingDataDir(dataDir);
       assert.equal(result.enumerated, true);
-      assert.equal(result.processes.some((candidate) => candidate.pid === child.pid), true);
-    } finally {
+      assert.equal(
+        result.processes.some((candidate) => candidate.pid === child.pid),
+        true,
+      );
+      const exited = once(child, "exit");
       child.kill();
-      await once(child, "exit");
+      await exited;
+      const refreshed = await enumerateBrowserProcessesUsingDataDir(dataDir);
+      assert.equal(refreshed.enumerated, true);
+      assert.equal(
+        refreshed.processes.some((candidate) => candidate.pid === child.pid),
+        false,
+      );
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        const exited = once(child, "exit");
+        child.kill();
+        await exited;
+      }
     }
   },
 );
@@ -149,10 +169,7 @@ test("matches profiles beneath the app root without reaching past it", () => {
   );
   // Same directory expressed the Windows way still has to match the root it sits under.
   assert.equal(
-    commandLineUsesDataDirUnder(
-      `chrome.exe --user-data-dir="${ROOT}\\p1"`,
-      ROOT_FWD,
-    ),
+    commandLineUsesDataDirUnder(`chrome.exe --user-data-dir="${ROOT}\\p1"`, ROOT_FWD),
     true,
   );
   assert.equal(
