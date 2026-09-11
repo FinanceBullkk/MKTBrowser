@@ -1,5 +1,5 @@
-import { createReadStream, createWriteStream, existsSync, statSync } from "node:fs";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { createReadStream, statSync } from "node:fs";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import {
   createHash,
@@ -11,6 +11,15 @@ import {
 } from "node:crypto";
 import { promisify } from "node:util";
 import type { Profile } from "@mktbrowser/types";
+import { publishImportedProfile, type StagedExtension } from "./archive-publication.js";
+import {
+  archiveFilePath,
+  isSafeSegment,
+  validateManifest,
+  type ArchiveManifest,
+  type BundledExtension,
+  type FileMeta,
+} from "./archive-validation.js";
 
 const scrypt = promisify(scryptCb);
 
@@ -25,28 +34,6 @@ const ALGO = "aes-256-gcm";
 const KEY_LEN = 32;
 const SALT_LEN = 16;
 const IV_LEN = 12;
-
-interface FileMeta {
-  path: string;
-  size: number;
-  sha256: string;
-}
-
-interface BundledExtension {
-  id: string;
-  version: string;
-  files: FileMeta[];
-}
-
-interface ArchiveManifest {
-  magic: typeof MAGIC;
-  version: number;
-  profile: Profile;
-  files: FileMeta[];
-  /** v2+: shared-store extensions bundled into the archive. Their file
-   *  payloads follow the profile files in the same sequential framing. */
-  extensions?: BundledExtension[];
-}
 
 export interface ExportOptions {
   /**
@@ -153,16 +140,38 @@ export interface ImportOptions {
    * untouched (never clobbered). When unset, bundled extensions are ignored.
    */
   extensionStoreRoot?: string;
+  /** Commit the restored row synchronously. If insertion fails, extraction is rolled back. */
+  persist?: (profile: Profile) => Profile;
 }
 
-export async function importProfile(
+// Imports share the extension store. Serialize publication and rollback so another
+// import cannot adopt an entry that a failing transaction is about to remove.
+let importQueue: Promise<unknown> = Promise.resolve();
+
+export function importProfile(
+  archivePath: string,
+  passphrase: string,
+  destProfilesRoot: string,
+  opts: ImportOptions = {},
+): Promise<Profile> {
+  const run = importQueue.then(() =>
+    restoreProfile(archivePath, passphrase, destProfilesRoot, opts),
+  );
+  importQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+async function restoreProfile(
   archivePath: string,
   passphrase: string,
   destProfilesRoot: string,
   opts: ImportOptions = {},
 ): Promise<Profile> {
   const buf = await readFile(archivePath);
-  if (buf.subarray(0, 4).toString("ascii") !== MAGIC) {
+  if (buf.length < 54 || buf.subarray(0, 4).toString("ascii") !== MAGIC) {
     throw new Error("Not an MKT Browser archive");
   }
   const version = buf.readUInt16BE(4);
@@ -187,12 +196,34 @@ export async function importProfile(
   }
 
   let cursor = 0;
+  if (plaintext.length < 4) throw new Error("Invalid archive manifest.");
   const manifestLen = plaintext.readUInt32BE(cursor);
   cursor += 4;
-  const manifest = JSON.parse(
+  if (manifestLen > plaintext.length - cursor) throw new Error("Invalid archive manifest.");
+  const manifest: unknown = JSON.parse(
     plaintext.subarray(cursor, cursor + manifestLen).toString("utf8"),
-  ) as ArchiveManifest;
+  );
   cursor += manifestLen;
+  validateManifest(manifest, version);
+
+  // Authenticate every frame before creating any destination, including skipped extensions.
+  const contents = new Map<FileMeta, Buffer>();
+  for (const meta of [
+    ...manifest.files,
+    ...(manifest.extensions ?? []).flatMap((ext) => ext.files),
+  ]) {
+    if (cursor + 4 > plaintext.length) throw new Error("Truncated archive frame.");
+    const length = plaintext.readUInt32BE(cursor);
+    cursor += 4;
+    if (length !== meta.size || length > plaintext.length - cursor) {
+      throw new Error("Invalid archive frame size.");
+    }
+    const content = plaintext.subarray(cursor, cursor + length);
+    verifyChecksum(meta, content);
+    contents.set(meta, content);
+    cursor += length;
+  }
+  if (cursor !== plaintext.length) throw new Error("Unexpected trailing archive data.");
 
   // Preserve the original id when free (faithful move to another machine); mint
   // a fresh one if it's already taken here (duplicate import), OR if the
@@ -200,47 +231,73 @@ export async function importProfile(
   // (`<profilesRoot>/<id>`), so an attacker-crafted id like "" or ".." could
   // otherwise redirect the whole restore outside its own dataDir.
   const original = manifest.profile.id;
-  const idUsable = isSafeIdSegment(original) && !opts.idTaken?.(original);
-  const targetId = idUsable ? original : randomUUID();
+  await mkdir(destProfilesRoot, { recursive: true });
+  const existingIds = new Set((await readdir(destProfilesRoot)).map((id) => id.toLowerCase()));
+  let targetId = original;
+  while (true) {
+    if (
+      !isSafeSegment(targetId) ||
+      existingIds.has(targetId.toLowerCase()) ||
+      opts.idTaken?.(targetId)
+    ) {
+      targetId = randomUUID();
+      continue;
+    }
+    try {
+      await mkdir(join(destProfilesRoot, targetId));
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      targetId = randomUUID();
+    }
+  }
   const restored: Profile = {
     ...manifest.profile,
     id: targetId,
     dataDir: join(destProfilesRoot, targetId),
   };
 
-  await mkdir(restored.dataDir, { recursive: true });
-
-  for (const fileMeta of manifest.files) {
-    const len = plaintext.readUInt32BE(cursor);
-    cursor += 4;
-    const content = plaintext.subarray(cursor, cursor + len);
-    cursor += len;
-    verifyChecksum(fileMeta, content);
-    await writeGuarded(restored.dataDir, fileMeta.path, content);
-  }
-
-  // v2: restore bundled shared-store extensions. The chunks follow the profile
-  // files in the same order as manifest.extensions[].files. We always read the
-  // chunks (to stay checksum-honest even when we skip writing), but only write
-  // to the store when a root is provided and the entry isn't already present.
-  for (const ext of manifest.extensions ?? []) {
-    const destDir = opts.extensionStoreRoot
-      ? join(opts.extensionStoreRoot, sanitizeSegment(ext.id), sanitizeSegment(ext.version || "0"))
-      : null;
-    // Don't clobber an extension the user already has in the store.
-    const skipWrite = !destDir || existsSync(destDir);
-    for (const fileMeta of ext.files) {
-      const len = plaintext.readUInt32BE(cursor);
-      cursor += 4;
-      const content = plaintext.subarray(cursor, cursor + len);
-      cursor += len;
-      verifyChecksum(fileMeta, content);
-      if (skipWrite || !destDir) continue;
-      await writeGuarded(destDir, fileMeta.path, content);
+  const createdDirectories = [restored.dataDir];
+  const stagedExtensions: StagedExtension[] = [];
+  let stagingRoot: string | undefined;
+  try {
+    for (const meta of manifest.files) {
+      await writeGuarded(restored.dataDir, meta.path, contents.get(meta)!);
     }
+    if (opts.extensionStoreRoot) {
+      await mkdir(opts.extensionStoreRoot, { recursive: true });
+      stagingRoot = await mkdtemp(join(opts.extensionStoreRoot, ".mzar-import-"));
+      createdDirectories.push(stagingRoot);
+      for (const ext of manifest.extensions ?? []) {
+        const stagingDir = join(stagingRoot, String(stagedExtensions.length));
+        await mkdir(stagingDir);
+        for (const meta of ext.files) {
+          await writeGuarded(stagingDir, meta.path, contents.get(meta)!);
+        }
+        stagedExtensions.push({
+          source: stagingDir,
+          destination: join(opts.extensionStoreRoot, ext.id, ext.version || "0"),
+        });
+      }
+    }
+    return publishImportedProfile(restored, stagedExtensions, stagingRoot, opts.persist);
+  } catch (error) {
+    const failed: unknown[] = [];
+    for (const dir of createdDirectories.reverse()) {
+      try {
+        await rm(dir, { recursive: true, force: true });
+      } catch (cleanupError) {
+        failed.push(cleanupError);
+      }
+    }
+    if (failed.length)
+      throw new AggregateError(
+        [error, ...failed],
+        "Profile import failed and cleanup was incomplete.",
+        { cause: error },
+      );
+    throw error;
   }
-
-  return restored;
 }
 
 /** Throw if the content's SHA-256 doesn't match the manifest entry. */
@@ -258,37 +315,14 @@ function verifyChecksum(fileMeta: FileMeta, content: Buffer): void {
  */
 async function writeGuarded(baseDir: string, relPath: string, content: Buffer): Promise<void> {
   const base = resolve(baseDir);
-  const absPath = resolve(base, relPath);
+  const absPath = resolve(base, archiveFilePath(relPath));
   // Reject the base itself as a file target AND anything outside it. `base + sep`
   // stops a sibling sharing the prefix (…/<id>-evil) from slipping through.
   if (absPath === base || !absPath.startsWith(base + sep)) {
     throw new Error(`Refusing path-traversal entry: ${relPath}`);
   }
   await mkdir(join(absPath, ".."), { recursive: true });
-  await writeFile(absPath, content);
-}
-
-/**
- * A store path segment (extension id / version) taken from an untrusted archive
- * becomes a directory name, so reject anything that isn't a plain segment —
- * "", ".", "..", or containing a separator would let a crafted archive escape
- * the store root.
- */
-function sanitizeSegment(seg: string): string {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(seg) || seg === "." || seg === "..") {
-    throw new Error(`Refusing unsafe extension path segment: ${seg}`);
-  }
-  return seg;
-}
-
-/**
- * A profile id is used verbatim as a directory name, so restrict it to a plain
- * single path segment (uuids qualify). Rejects "", ".", "..", and anything with
- * a path separator — the values that would let a crafted archive escape its
- * dataDir.
- */
-function isSafeIdSegment(id: string): boolean {
-  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id) && id !== "." && id !== "..";
+  await writeFile(absPath, content, { flag: "wx" });
 }
 
 interface CollectedFile {
@@ -336,6 +370,3 @@ function fileSha256(path: string): Promise<string> {
     stream.on("error", reject);
   });
 }
-
-// Suppress unused-import warning for createWriteStream (kept for potential streaming variant)
-void createWriteStream;
