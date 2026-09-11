@@ -1,9 +1,79 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { SettingsStore } from "./index.js";
+
+test("an interrupted temporary write preserves the previous settings file", async (context) => {
+  await withSettingsFile(async (path) => {
+    const store = new SettingsStore(path);
+    await store.update({ mcpHttpEnabled: false });
+    const original = await readFile(path, "utf8");
+    const write = fs.writeFileSync;
+    context.mock.method(fs, "writeFileSync", (target: fs.PathOrFileDescriptor) => {
+      write(target, "partial write");
+      throw new Error("simulated disk failure");
+    });
+    syncBuiltinESMExports();
+    try {
+      await assert.rejects(
+        store.update({ browserEngine: "cloakbrowser" }),
+        /simulated disk failure/,
+      );
+      assert.equal(await readFile(path, "utf8"), original);
+      assert.equal((await store.load()).browserEngine, "cft");
+    } finally {
+      context.mock.restoreAll();
+      syncBuiltinESMExports();
+    }
+    await store.update({ startupOrphanSweep: false });
+    assert.equal((await new SettingsStore(path).load()).mcpHttpEnabled, false);
+  });
+});
+
+test("concurrent setting changes preserve both patches in memory and on disk", async () => {
+  await withSettingsFile(async (path) => {
+    const store = new SettingsStore(path);
+    await Promise.all([
+      store.update({ mcpHttpEnabled: false }),
+      store.update({ browserEngine: "cloakbrowser" }),
+      store.update({ startupOrphanSweep: false }),
+    ]);
+    for (const value of [await store.load(), await new SettingsStore(path).load()]) {
+      assert.equal(value.mcpHttpEnabled, false);
+      assert.equal(value.browserEngine, "cloakbrowser");
+      assert.equal(value.startupOrphanSweep, false);
+    }
+  });
+});
+
+test("failed atomic replacement leaves cache unchanged, removes its temp file and permits retry", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mkt-settings-retry-"));
+  try {
+    const path = join(root, "settings.json");
+    const store = new SettingsStore(path);
+    await store.update({ mcpHttpEnabled: false });
+    const original = await readFile(path, "utf8");
+    await rename(path, join(root, "original.json"));
+    await mkdir(path);
+    await assert.rejects(store.update({ browserEngine: "cloakbrowser" }));
+    assert.equal((await store.load()).browserEngine, "cft");
+    assert.deepEqual((await readdir(root)).sort(), ["original.json", "settings.json"]);
+    assert.equal(await readFile(join(root, "original.json"), "utf8"), original);
+    await rm(path, { recursive: true });
+    await rename(join(root, "original.json"), path);
+    await store.update({ startupOrphanSweep: false });
+    const loaded = await new SettingsStore(path).load();
+    assert.equal(loaded.mcpHttpEnabled, false);
+    assert.equal(loaded.startupOrphanSweep, false);
+    assert.equal(loaded.browserEngine, "cft");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("does not publish settings to memory when persistence fails", async () => {
   const root = await mkdtemp(join(tmpdir(), "mkt-browser-settings-store-"));
@@ -21,9 +91,7 @@ test("does not publish settings to memory when persistence fails", async () => {
  * drops, or keeps is load-bearing rather than cosmetic. Each case is read back through a second
  * store instance, because the folding happens on load and not on write.
  */
-async function withSettingsFile(
-  fn: (path: string) => Promise<void>,
-): Promise<void> {
+async function withSettingsFile(fn: (path: string) => Promise<void>): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), "mkt-browser-settings-keys-"));
   try {
     await fn(join(root, "settings.json"));

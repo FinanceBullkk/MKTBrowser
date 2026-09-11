@@ -236,13 +236,11 @@ export function App(): JSX.Element {
   }
 
   async function closeProfile(id: string): Promise<void> {
-    // close() may reject if graceful shutdown throws, but the driver's
-    // finally still emits "closed" (which drives its own refresh), so a
-    // rejection here is cosmetic — swallow it to avoid an unhandled rejection.
+    // A failed close can leave the process active; refresh its actual state and explain the retry.
     try {
       await window.mktBrowser.profiles.close(id);
-    } catch {
-      /* driver emits "closed" regardless; state self-heals */
+    } catch (error) {
+      showToast(`Close incomplete: ${(error as Error).message}. Retry after checking the browser process.`);
     }
     await refresh();
   }
