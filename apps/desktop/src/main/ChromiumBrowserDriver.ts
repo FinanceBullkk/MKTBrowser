@@ -229,6 +229,9 @@ interface DriverEvents {
 export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver {
   private readonly running = new Map<ProfileId, RunningProcess>();
   private readonly launching = new Set<ProfileId>();
+  private readonly launchPromises = new Map<ProfileId, Promise<LaunchedProfile>>();
+  private closeAllPromise: Promise<void> | null = null;
+  private shuttingDown = false;
   private readonly launchingProcesses = new Map<ProfileId, LaunchingProcess>();
   private readonly closing = new Set<ProfileId>();
   private readonly shutdowns = new Map<ProfileId, Promise<void>>();
@@ -275,9 +278,9 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
   }
 
   async launch(profileId: ProfileId): Promise<LaunchedProfile> {
-    // A startup orphan sweep owns the same data directories. Let it finish before the first launch
-    // so a slow process-table query cannot classify the newly spawned browser as crash residue.
-    await this.startupBarrier;
+    if (this.shuttingDown || this.closeAllPromise) {
+      throw new Error("Browser is closing profiles. Wait before launching another profile.");
+    }
     if (
       this.launching.has(profileId) ||
       this.launchingProcesses.has(profileId) ||
@@ -295,10 +298,20 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       };
     }
     this.launching.add(profileId);
+    // Track even launches waiting for the orphan sweep, before shutdown can take its snapshot.
+    const launch = (async () => {
+      await this.startupBarrier;
+      if (this.shuttingDown || this.closeAllPromise) {
+        throw new Error("Profile launch cancelled because Browser is closing profiles.");
+      }
+      return this.launchWithKeyRotation(profileId);
+    })();
+    this.launchPromises.set(profileId, launch);
     try {
-      return await this.launchWithKeyRotation(profileId);
+      return await launch;
     } finally {
       this.launching.delete(profileId);
+      if (this.launchPromises.get(profileId) === launch) this.launchPromises.delete(profileId);
     }
   }
 
@@ -1549,9 +1562,21 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     return session.cdpSend(method, params, sessionId, opts);
   }
 
-  async closeAll(): Promise<void> {
-    const ids = new Set([...this.running.keys(), ...this.launchingProcesses.keys()]);
-    await Promise.all([...ids].map((id) => this.close(id)));
+  closeAll(options: { shutdown?: boolean } = {}): Promise<void> {
+    if (options.shutdown) this.shuttingDown = true;
+    if (this.closeAllPromise) return this.closeAllPromise;
+    const closing = (async () => {
+      await Promise.allSettled([...this.launchPromises.values()]);
+      const ids = new Set([...this.running.keys(), ...this.launchingProcesses.keys()]);
+      // Wait for every close even if one fails; callers must not dispose shared state early.
+      const results = await Promise.allSettled([...ids].map((id) => this.close(id)));
+      const failures = results.filter((result) => result.status === "rejected");
+      if (failures.length) {
+        throw new AggregateError(failures.map((failure) => failure.reason), "Some browser profiles could not be closed.");
+      }
+    })();
+    this.closeAllPromise = closing.finally(() => { this.closeAllPromise = null; });
+    return this.closeAllPromise;
   }
 
   private requireSession(profileId: ProfileId): CdpSession {
