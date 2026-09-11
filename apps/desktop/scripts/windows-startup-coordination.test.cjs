@@ -138,6 +138,30 @@ Assert ($shell.CreateShortcut($relayLink).TargetPath -eq ($relay + '.foreign.exe
 `);
 });
 
+test("Browser removal tolerates an absent Startup directory but refuses an existing file", { skip: process.platform !== "win32" }, (t) => {
+  runFixture(t, `
+Remove-Item -LiteralPath $startup -Force
+Assert ((Run 'RemoveBrowser')[-1] -eq 0) 'missing Startup blocked uninstall'
+Assert (-not (Test-Path -LiteralPath $startup)) 'uninstall recreated Startup'
+[IO.File]::WriteAllText($startup, 'unrelated file')
+Assert ((Run 'RemoveBrowser')[-1] -eq 1) 'file accepted as absent directory'
+Assert ([IO.File]::ReadAllText($startup) -ceq 'unrelated file') 'unrelated file changed'
+`);
+});
+
+test("Browser removal refuses a Startup junction and preserves the target shortcut", { skip: process.platform !== "win32" }, (t) => {
+  runFixture(t, `
+Remove-Item -LiteralPath $startup -Force
+$target = Join-Path (Split-Path $startup) 'ForeignStartup'
+$null = New-Item -ItemType Directory -Path $target
+$foreignLink = Join-Path $target 'MKT Browser.lnk'
+Link $foreignLink $browser '--background'
+$null = New-Item -ItemType Junction -Path $startup -Target $target
+Assert ((Run 'RemoveBrowser')[-1] -eq 1) 'junction accepted as owned directory'
+Assert (Test-Path -LiteralPath $foreignLink) 'target shortcut removed'
+`);
+});
+
 test("installer tracks takeover separately from Relay executable cleanup ownership", () => {
   const installer = readFileSync(join(desktop, "build", "installer.nsh"), "utf8");
   const takeOverAt = installer.indexOf('-Mode Takeover');
