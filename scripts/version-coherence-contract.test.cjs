@@ -68,7 +68,7 @@ test("keeps the Windows candidate version and pinned Relay coherent", () => {
   const root = readJson("package.json");
   const desktop = readJson("apps/desktop/package.json");
   const relay = readJson("apps/desktop/relay-release.json");
-  const expectedVersion = "0.3.19";
+  const expectedVersion = "0.3.20";
 
   assert.equal(root.version, expectedVersion, "root package version drifted");
   assert.equal(desktop.version, expectedVersion, "desktop package version drifted");
@@ -78,7 +78,7 @@ test("keeps the Windows candidate version and pinned Relay coherent", () => {
   assert.match(relay.url, /\/api\/relay\/download\/v17$/);
 
   const proxyGeo = readFileSync(path.join(repoRoot, "apps/desktop/src/main/proxyGeo.ts"), "utf8");
-  assert.match(proxyGeo, /MKTBrowser\/0\.3\.19/);
+  assert.match(proxyGeo, /MKTBrowser\/0\.3\.20/);
 
   const mktToolRoot = resolveMktToolRoot();
   const mktToolReader = readFileSync(path.join(mktToolRoot, MKTTOOL_FILES[0]), "utf8");
@@ -88,8 +88,8 @@ test("keeps the Windows candidate version and pinned Relay coherent", () => {
     /EXPECTED_WINDOWS_INSTALLER_CANDIDATE_ID = WINDOWS_INSTALLER_CANDIDATE\.id/,
   );
   const candidate = readFileSync(path.join(mktToolRoot, MKTTOOL_FILES[2]), "utf8");
-  assert.match(candidate, /id: "20260911-browser-0\.3\.19-relay-17-uninstall-host-bitness-cft"/);
-  assert.match(candidate, /browserVersion: "0\.3\.19"/);
+  assert.match(candidate, /id: "20260911-browser-0\.3\.20-relay-17-repair-host-bitness-cft"/);
+  assert.match(candidate, /browserVersion: "0\.3\.20"/);
   const engine = readJson("apps/desktop/windows-engine-release.json");
   assertCandidateEngine(candidate, engine);
   const mktToolMetadata = readFileSync(path.join(mktToolRoot, MKTTOOL_FILES[1]), "utf8");
