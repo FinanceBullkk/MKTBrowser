@@ -126,9 +126,16 @@ test("runs Relay uninstall cleanup from a parser-safe script file", () => {
   assert.match(relayCleanup, /GetFolderPath\("Startup"\)/);
   assert.match(relayCleanup, /GetFolderPath\("Desktop"\)/);
   assert.match(relayCleanup, /\.Equals\(\s*\$relayExe,\s*\[StringComparison\]::OrdinalIgnoreCase/s);
+  // Both process sources are required, and the reason is not stylistic. NSIS is 32-bit, so the
+  // powershell.exe it launches is the WOW64 host, where Process.Path throws for a 64-bit target;
+  // WMI is bitness independent but empty when the WMI service is off. An earlier revision asserted
+  // that Get-CimInstance was absent, which pinned the Get-Process-only shape that could not stop
+  // the Relay from the host NSIS actually uses.
   assert.match(relayCleanup, /Get-Process -ErrorAction SilentlyContinue/);
-  assert.doesNotMatch(relayCleanup, /Get-CimInstance/);
-  assert.match(relayCleanup, /Stop-Process -Id \$process\.Id -Force -ErrorAction Stop/);
+  assert.match(relayCleanup, /Get-CimInstance -ClassName Win32_Process/);
+  assert.match(relayCleanup, /Stop-Process -Id \$processId -Force -ErrorAction SilentlyContinue/);
+  // Ownership that cannot be proved must stay untouched.
+  assert.match(relayCleanup, /not ownership, and killing an unidentified process/);
   assert.match(relayCleanup, /Remove-Item -LiteralPath \$_\.FullName -Force -ErrorAction Stop/);
   assert.match(relayCleanup, /Ownership is unknown, so preserve the shortcut/);
   assert.match(relayCleanup, /owned MKTTool Relay shortcut could not be removed/);
