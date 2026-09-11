@@ -32,7 +32,7 @@ test("packaged engine bootstrap consumes only a compatibility-set pin", () => {
   );
   assert.ok(unpinnedRefusal, "missing the unpinned-manifest refusal message");
   assert.doesNotMatch(unpinnedRefusal[0], /Run installer repair/);
-  assert.match(unpinnedRefusal[0], /Relay activates the pin/);
+  assert.match(unpinnedRefusal[0], /verified compatibility activation through the paired Relay/);
   assert.match(bootstrap, /manifest\.sizeBytes/);
   assert.match(main, /readCompatibilityEnginePin/);
   assert.match(main, /MKT_BROWSER_ALLOW_UNPINNED_ENGINE/);
