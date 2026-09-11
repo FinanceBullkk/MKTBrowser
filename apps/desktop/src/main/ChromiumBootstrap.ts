@@ -507,7 +507,11 @@ export class ChromiumBootstrap extends EventEmitter {
     if (this.pinnedManifest) return this.pinnedManifest;
     if (!this.allowUnpinnedManifest) {
       throw new Error(
-        "This MKT Browser build has no verified compatibility-set engine pin. Run installer repair instead of resolving an upstream latest version.",
+        // Not "run installer repair": the pin is written by the Relay from a published
+        // compatibility set (MKTTool relay/src/active-engine-pin.ts), so reinstalling MKT Browser
+        // cannot produce one. A clean-VM acceptance run followed that advice to completion and the
+        // pin was still absent, leaving the operator with no working next step.
+        "This MKT Browser build has no verified compatibility-set engine pin, so it will not resolve an upstream latest version. The Relay activates the pin from a published compatibility set; installer repair does not create one.",
       );
     }
     if (this.engine === "cloakbrowser") {

@@ -85,7 +85,10 @@ function subtitleFor(status: ChromiumStatus): string {
     case "extracting":
       return `Unpacking runtime ${status.version}…`;
     case "error":
-      return "We could not download the Chromium binary.";
+      // Not "we could not download": the most common packaged failure is a refusal to resolve an
+      // engine at all (no verified compatibility-set pin), where nothing was ever downloaded.
+      // Naming a download sends the reader looking at their network for a problem that is not there.
+      return "The browser runtime is not ready.";
     default:
       return "";
   }

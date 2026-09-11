@@ -27,13 +27,65 @@ function Stop-With([int]$Code, [string]$Message) {
     exit $Code
 }
 
-function Process-Path([int]$ProcessId) {
+<#
+  NSIS is a 32-bit application, so the powershell.exe it launches is the 32-bit host under WOW64.
+  `System.Diagnostics.Process.Path` reads the target's module list, which a 32-bit process cannot do
+  for a 64-bit process: it throws. This script had only that source and read the throw as "no
+  path", so the running 64-bit Relay resolved to nothing and every repair or upgrade over a normal
+  installation stopped with "MKTTool Relay is running, but its executable ownership could not be
+  verified" — refusing a Relay this script is explicitly told to allow (Assert-Named-Processes is
+  called for it with $AllowExpectedPath true). Installing starts the Relay, so operators met this on
+  the ordinary path. Under the 64-bit host it passed, which is why no gate caught it.
+
+  QueryFullProcessImageName asks the kernel for the image path instead of reading the target's
+  modules, so it is bitness independent, and PROCESS_QUERY_LIMITED_INFORMATION is available to the
+  same user without elevation. That matters here: this preflight deliberately avoids privileged CIM
+  (see the netstat parsing above), and must keep working for a standard user.
+
+  A process neither source can resolve is still treated as unverified and still refused. Ownership
+  that cannot be proved is not ownership.
+#>
+Add-Type -Namespace MktBrowser -Name NativeProcessPath -MemberDefinition @'
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern IntPtr OpenProcess(int access, bool inherit, int processId);
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool CloseHandle(IntPtr handle);
+[DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+public static extern bool QueryFullProcessImageNameW(IntPtr handle, int flags, System.Text.StringBuilder path, ref int size);
+'@
+
+function Native-Process-Path([int]$ProcessId) {
+    $PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
     try {
-        $process = Get-Process -Id $ProcessId -ErrorAction Stop
-        return $process.Path
+        $handle = [MktBrowser.NativeProcessPath]::OpenProcess(
+            $PROCESS_QUERY_LIMITED_INFORMATION, $false, $ProcessId
+        )
     } catch {
         return $null
     }
+    if ($handle -eq [IntPtr]::Zero) { return $null }
+    try {
+        $size = 1024
+        $buffer = New-Object System.Text.StringBuilder $size
+        if ([MktBrowser.NativeProcessPath]::QueryFullProcessImageNameW($handle, 0, $buffer, [ref]$size)) {
+            return $buffer.ToString()
+        }
+        return $null
+    } catch {
+        return $null
+    } finally {
+        [void][MktBrowser.NativeProcessPath]::CloseHandle($handle)
+    }
+}
+
+function Process-Path([int]$ProcessId) {
+    try {
+        $process = Get-Process -Id $ProcessId -ErrorAction Stop
+        if (-not [string]::IsNullOrWhiteSpace($process.Path)) { return $process.Path }
+    } catch {
+        # 32-bit host cannot read a 64-bit target's module list; fall through to the kernel query.
+    }
+    return Native-Process-Path $ProcessId
 }
 
 function Assert-Named-Processes(
