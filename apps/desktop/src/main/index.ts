@@ -327,7 +327,25 @@ app
       return;
     }
     if (compatibilityActivationBlock) {
-      dialog.showErrorBox("MKT Browser update incomplete", compatibilityActivationBlock);
+      // Only the exact pinned, owned Relay may attempt its existing startup recovery.
+      // A mixed Relay/Browser payload remains blocked and requires installer repair.
+      let recoveryMessage = "";
+      if (normalWindowsSession) {
+        const recoveryCompanion = new WindowsRelayCompanion({
+          scriptPath: join(process.resourcesPath, "installer", "windows-relay-companion.ps1"),
+          browserPath: process.execPath,
+          startupDirectory: join(app.getPath("appData"), "Microsoft", "Windows", "Start Menu", "Programs", "Startup"),
+        });
+        relayCompanion = recoveryCompanion;
+        try {
+          const recovery = await recoveryCompanion.start();
+          recoveryMessage = `\n\n${recovery.message} This does not confirm update recovery.`;
+        } finally {
+          recoveryCompanion.dispose();
+          relayCompanion = null;
+        }
+      }
+      dialog.showErrorBox("MKT Browser update incomplete", compatibilityActivationBlock + recoveryMessage);
       app.quit();
       return;
     }
@@ -1038,17 +1056,16 @@ app
             passphrase,
             join(dataRoot, "profiles"),
             {
-              idTaken: (id) => Boolean(profileManager.get(id)),
+              idTaken: (id) => profileManager.list().some((profile) =>
+                profile.id.toLowerCase() === id.toLowerCase()) ||
+                existsSync(join(dataRoot, "profiles", id)),
               // Restore bundled (v2) extensions into the shared store so they work
               // on this machine without the user re-adding them.
               extensionStoreRoot,
+              persist: (profile) => profileManager.insertImported(profile),
             },
           );
-          // Insert the row verbatim so the DB entry points at the restored files
-          // (the old create()-based path minted a new id/dataDir and orphaned the
-          // cookies/logins that were just restored).
-          const inserted = profileManager.insertImported(restored);
-          return { ok: true, id: inserted.id };
+          return { ok: true, id: restored.id };
         } catch (e) {
           return { ok: false, reason: (e as Error).message };
         }
@@ -1171,7 +1188,7 @@ async function shutdownDesktop(): Promise<void> {
   relayCompanion?.dispose();
   try {
     try {
-      await browserDriver?.closeAll();
+      await browserDriver?.closeAll({ shutdown: true });
     } finally {
       try {
         await httpTransport?.stop();

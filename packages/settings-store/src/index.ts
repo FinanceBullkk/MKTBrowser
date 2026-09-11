@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 
 /**
@@ -89,6 +90,7 @@ function normalizeLicenseKeys(raw: Record<string, unknown>): string[] {
 }
 
 export class SettingsStore {
+  private updateQueue: Promise<unknown> = Promise.resolve();
   private readonly jsonPath: string;
   private cache: AppSettings | null = null;
 
@@ -133,11 +135,30 @@ export class SettingsStore {
   }
 
   async update(patch: Partial<AppSettings>): Promise<AppSettings> {
-    const current = await this.load();
-    const next = { ...current, ...patch };
-    writeFileSync(this.jsonPath, JSON.stringify(next, null, 2), "utf8");
-    this.cache = next;
-    return next;
+    const run = this.updateQueue.then(async () => {
+      const current = await this.load();
+      const next = { ...current, ...patch };
+      const temporaryPath = `${this.jsonPath}.${randomUUID()}.tmp`;
+      try {
+        // Replace only after the complete file is flushed; a failed write leaves the old file intact.
+        writeFileSync(temporaryPath, JSON.stringify(next, null, 2), {
+          encoding: "utf8",
+          flag: "wx",
+          mode: 0o600,
+          flush: true,
+        });
+        renameSync(temporaryPath, this.jsonPath);
+      } finally {
+        rmSync(temporaryPath, { force: true });
+      }
+      this.cache = next;
+      return next;
+    });
+    this.updateQueue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }
 }
 

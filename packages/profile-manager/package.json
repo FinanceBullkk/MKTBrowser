@@ -14,6 +14,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:legacy": "node --experimental-strip-types --test src/legacy-multizen-import.test.ts",
     "test:managed": "tsx --test src/managed-profile-create.test.ts",
+    "test:archive": "tsx --test src/archive.test.ts",
     "test:deletion": "tsx --test src/permanent-profile-deletion.test.ts"
   },
   "dependencies": {

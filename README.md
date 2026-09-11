@@ -9,6 +9,16 @@ browser service, or an authorization boundary. MKTTool Web decides which account
 the Relay verifies signed tickets and holds operator secrets, and MKT Browser stores and launches
 profiles on the operator device.
 
+## Quality review source repairs - 10 September 2026
+
+Current source hardens pending-launch shutdown, archive validation and rollback, concurrent settings
+updates, missing Startup cleanup, and pinned-Relay recovery attempts during an interrupted update.
+These changes are not included in the accepted 0.3.17 / Relay 17 installer. That exact installer is
+available for controlled internal Windows distribution; its acceptance is recorded in the workspace
+release report and MKTTool roadmap. A replacement still needs fresh build and exact-tuple acceptance.
+Starting a pinned Relay during an update block is an attempt, not proof of mixed-version recovery.
+Historical candidate checkpoints below describe earlier verification, not current release status.
+
 ## Single-entry startup candidate - 8 September 2026
 
 Replacement candidate **0.3.17 / Relay 17** is under verification and has no MSI acceptance yet.

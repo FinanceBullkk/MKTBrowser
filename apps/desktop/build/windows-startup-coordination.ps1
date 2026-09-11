@@ -46,7 +46,10 @@ try {
     Write-Output "No existing Startup directory to inspect."
     exit 0
   }
-  if (-not (Test-Path -LiteralPath $StartupDirectory -PathType Container)) { throw "startup-directory-missing" }
+  if (-not (Test-Path -LiteralPath $StartupDirectory -PathType Container)) {
+    if ($Mode -eq "RemoveBrowser" -and -not (Test-Path -LiteralPath $StartupDirectory)) { exit 0 }
+    throw "startup-directory-missing"
+  }
   if ((Get-Item -LiteralPath $StartupDirectory).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "startup-directory-not-owned" }
   $browserLink = Join-Path $StartupDirectory "MKT Browser.lnk"
   $relayLink = Join-Path $StartupDirectory "MKTTool Relay.lnk"
