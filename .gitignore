@@ -23,6 +23,7 @@ apps/desktop/build/*
 !apps/desktop/build/windows-install-conflict-detection.ps1
 !apps/desktop/build/windows-relay-companion.ps1
 !apps/desktop/build/windows-startup-coordination.ps1
+!apps/desktop/build/windows-engine-cache-cleanup.ps1
 
 apps/desktop/.installer-generated/
 

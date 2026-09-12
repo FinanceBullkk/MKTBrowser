@@ -104,6 +104,24 @@ test("removes only owned stale rules after verification and on uninstall", () =>
   assert.match(installer, /pre-launch check refuses to run without the exact firewall rules/);
 });
 
+test("clears the engine cache last and never aborts uninstall over it", () => {
+  const uninstallMacro = installer.match(/!macro customUnInstall[\s\S]*?!macroend/)?.[0];
+  assert.ok(uninstallMacro);
+  assert.match(uninstallMacro, /-File "\$PLUGINSDIR\\windows-engine-cache-cleanup\.ps1"/);
+
+  // Last, so a failure cannot interfere with a fail-closed step that has yet to run.
+  const startupRemovalAt = uninstallMacro.indexOf("-Mode RemoveBrowser");
+  const engineCacheAt = uninstallMacro.indexOf("windows-engine-cache-cleanup.ps1");
+  assert.ok(startupRemovalAt >= 0 && engineCacheAt > startupRemovalAt);
+
+  // Every other step aborts on failure; this one reports and continues, because a retained cache is
+  // disk usage and is what earlier versions left behind. Regressing that would make uninstall fail
+  // for a reason no previous version failed for.
+  const engineCacheBlock = uninstallMacro.slice(engineCacheAt);
+  assert.doesNotMatch(engineCacheBlock, /Abort/);
+  assert.match(engineCacheBlock, /can be deleted manually/);
+});
+
 test("rejects another Windows user's firewall ownership before any mutation", () => {
   const ownerCheckAt = firewall.indexOf("Assert-FirewallOwnership $cft $cloak");
   const firstMutationAt = Math.min(
@@ -152,7 +170,15 @@ test("Relay installer failures remain retryable without uninstalling local state
   assert.match(installMacro, /MKTTool Relay installation failed/);
   assert.doesNotMatch(installMacro, /windows-relay-cleanup/);
   assert.doesNotMatch(installMacro, /relay-config\.json/);
-  assert.match(relayInstall, /Expand-Archive -LiteralPath \$archive/);
+  // Extraction stays inside the script file rather than an inline NSIS -Command, and refuses any
+  // entry resolving outside the staging directory. Behaviour is covered by
+  // windows-install-relay-payload.test.cjs; this only pins that the guarded path is the shipped one.
+  assert.match(relayInstall, /\[IO\.Compression\.ZipFile\]::OpenRead\(\$archive\)/);
+  assert.match(relayInstall, /relay-archive-entry-escapes-staging/);
+  // Matches an invocation (a following switch), not the comment explaining why it was replaced.
+  assert.doesNotMatch(relayInstall, /Expand-Archive\s+-/);
+  // The payload is re-verified against its pinned manifest before anything is extracted or run.
+  assert.match(relayInstall, /relay-archive-checksum-mismatch/);
   assert.match(relayInstall, /relay-staging-outside-temp/);
   assert.match(relayInstall, /Test-Path -LiteralPath \$installer -PathType Leaf/);
   assert.match(relayInstall, /\$env:RELAY_SKIP_BROWSER = "1"/);

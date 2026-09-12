@@ -267,4 +267,19 @@ FunctionEnd
     MessageBox MB_ICONSTOP "The MKT Browser startup entry could not be removed safely. Uninstall was stopped.$\r$\n$\r$\n$1"
     Abort
   ${EndIf}
+
+  # Last, and deliberately not fail-closed. Every step above aborts when it cannot finish because
+  # leaving a firewall rule, a foreign shortcut or a half-removed Relay behind is a correctness
+  # problem. A retained engine cache is only disk usage, and it is what every earlier version left
+  # behind, so a failure here must not turn a cleanup improvement into a new uninstall failure.
+  # Profiles, settings and the engine pin are outside the removed directory and are preserved.
+  DetailPrint "Removing the downloaded browser engine cache"
+  InitPluginsDir
+  File /oname=$PLUGINSDIR\windows-engine-cache-cleanup.ps1 "${PROJECT_DIR}\build\windows-engine-cache-cleanup.ps1"
+  nsExec::ExecToStack 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File "$PLUGINSDIR\windows-engine-cache-cleanup.ps1"'
+  Pop $0
+  Pop $1
+  ${If} $0 != 0
+    DetailPrint "The downloaded engine cache was left in place and can be deleted manually: $LOCALAPPDATA\MKTTool\MKTBrowser\chromium"
+  ${EndIf}
 !macroend

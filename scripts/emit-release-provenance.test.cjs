@@ -75,9 +75,34 @@ test("states that the release is unsigned instead of leaving a silence", () => {
   assert.equal(provenance.signing.authenticode, false);
   assert.equal(provenance.signing.status, "unsigned-internal-exception");
   assert.deepEqual(provenance.signing.allowedLanes, ["A", "B"]);
-  assert.ok(Date.parse(provenance.signing.exceptionExpiresAt) > Date.parse(provenance.generatedAt));
   assert.match(provenance.signing.note, /unsigned by owner decision/);
   assert.match(provenance.signing.note, /SmartScreen/);
+});
+
+test("dates the unsigned exception as this artifact's shelf life, not the decision's deadline", () => {
+  const { installerPath, manifestPath } = fixtures();
+  const provenance = buildProvenance({
+    installerPath,
+    payloadManifestPath: manifestPath,
+    dependencyAudit: "clean",
+  });
+
+  /*
+   * The previous assertion here was `expiresAt > generatedAt`, which holds for any rolling window
+   * and for any absolute date still in the future, so it pinned nothing. The field is named
+   * `exceptionExpiresAt` and published as `signing-exception-expires-at`, both of which read as a
+   * deadline for the owner's decision to ship unsigned; the behaviour is a per-artifact shelf life
+   * that restarts on every build. Owner confirmed the shelf-life reading on 13 September 2026, so
+   * the exact offset is pinned here -- a future change to an absolute date is then a deliberate
+   * edit to this test rather than a silent change of meaning.
+   */
+  const SIXTY_DAYS_MS = 60 * 24 * 60 * 60 * 1000;
+  assert.equal(
+    Date.parse(provenance.signing.exceptionExpiresAt) - Date.parse(provenance.generatedAt),
+    SIXTY_DAYS_MS,
+  );
+  assert.match(provenance.signing.note, /shelf life/);
+  assert.match(provenance.signing.note, /not on a fixed date/);
 });
 
 test("requires the artifact, the payload manifest, and an output path", () => {

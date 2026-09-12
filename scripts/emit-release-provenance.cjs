@@ -24,6 +24,27 @@ const path = require("node:path");
 
 const repoRoot = path.resolve(__dirname, "..");
 
+/**
+ * Shelf life of one unsigned artifact, counted from the build that produced it.
+ *
+ * The wire field is `signing.exceptionExpiresAt` and the R2 metadata key is
+ * `signing-exception-expires-at`, both of which read as though they date the owner's decision to
+ * ship unsigned. They do not, and the difference decides whether the mechanism can ever fire.
+ *
+ * What this actually expresses, confirmed by the owner on 13 September 2026: each published
+ * installer stops being downloadable this many days after it was built. The metadata travels on the
+ * individual R2 object, so an old artifact expires on its own schedule while newer ones keep their
+ * full window. That is a staleness control on artifacts -- it forces a stale build to be rebuilt,
+ * re-verified and re-published rather than served indefinitely on an unsigned binary nobody has
+ * looked at in months.
+ *
+ * It is deliberately NOT a deadline for the unsigned-shipping decision. Such a deadline would have
+ * to be an absolute date anchored to that decision; this window resets on every build by design.
+ * Both the publisher (`publish-windows-installer.ts`) and the download route fail closed once it
+ * passes, so the rolling window is the only thing keeping a published installer available.
+ */
+const UNSIGNED_ARTIFACT_USABLE_DAYS = 60;
+
 function readJson(relativePath) {
   return JSON.parse(readFileSync(path.join(repoRoot, relativePath), "utf8"));
 }
@@ -107,8 +128,8 @@ function buildProvenance({
   const payloadManifest = JSON.parse(readFileSync(payloadManifestPath, "utf8"));
   const desktopPackage = readJson("apps/desktop/package.json");
   const generatedAt = new Date();
-  const unsignedExceptionExpiresAt = new Date(
-    generatedAt.getTime() + 60 * 24 * 60 * 60 * 1000,
+  const artifactUsableUntil = new Date(
+    generatedAt.getTime() + UNSIGNED_ARTIFACT_USABLE_DAYS * 24 * 60 * 60 * 1000,
   );
 
   return {
@@ -118,14 +139,17 @@ function buildProvenance({
     signing: {
       authenticode: false,
       status: "unsigned-internal-exception",
-      exceptionExpiresAt: unsignedExceptionExpiresAt.toISOString(),
+      exceptionExpiresAt: artifactUsableUntil.toISOString(),
       allowedLanes: ["A", "B"],
       // Written here rather than left as an absence, so a reader never has to decide whether the
       // missing signature was a decision or an oversight.
       note:
         "V1 ships unsigned by owner decision reaffirmed on 22 August 2026. Windows publisher " +
         "verification is unavailable, so the published installerSha256 below and the distribution " +
-        "channel are the only origin evidence. Onboarding must announce SmartScreen in advance.",
+        "channel are the only origin evidence. Onboarding must announce SmartScreen in advance. " +
+        `exceptionExpiresAt is this artifact's shelf life: it expires ${UNSIGNED_ARTIFACT_USABLE_DAYS} ` +
+        "days after this build, not on a fixed date, and it does not express a deadline for the " +
+        "unsigned-shipping decision itself.",
     },
     source: frozenSource(),
     // The candidate id is supplied by the release manifest, never inferred from a filename. Keep it
