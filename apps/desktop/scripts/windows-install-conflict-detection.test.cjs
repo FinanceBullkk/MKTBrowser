@@ -126,3 +126,24 @@ test("repairs only exact-target owned shortcut duplicates after all conflict che
   assert.doesNotMatch(detector, /Stop-Process|taskkill|Remove-Item[^\n]+MultiZen/i);
   assert.match(detector, /MultiZen data was not modified/);
 });
+
+test("resolves a 64-bit process path from the 32-bit NSIS host without privileged CIM", () => {
+  // Get-Process().Path throws under WOW64 for a 64-bit target, which made the running Relay
+  // unverifiable and blocked every repair over a normal installation. QueryFullProcessImageName
+  // asks the kernel instead of reading the target's modules, so it is bitness independent, and
+  // PROCESS_QUERY_LIMITED_INFORMATION needs no elevation — keeping the no-privileged-CIM rule
+  // asserted above intact. Behavioural coverage lives in
+  // windows-install-conflict-detection-process-path.test.cjs.
+  assert.match(detector, /QueryFullProcessImageNameW/);
+  assert.match(detector, /0x1000/);
+  assert.match(detector, /function Process-Path/);
+
+  // An unresolvable process must still be refused: unprovable ownership is not ownership.
+  const nativeResolver = detector.match(/function Native-Process-Path\([^)]*\) \{[\s\S]*?\n\}/);
+  assert.ok(nativeResolver, "missing Native-Process-Path");
+  assert.match(nativeResolver[0], /return \$null/);
+  assert.match(
+    detector,
+    /is running, but its executable ownership could not be verified/,
+  );
+});

@@ -24,6 +24,15 @@ test("packaged engine bootstrap consumes only a compatibility-set pin", () => {
   const pin = source("compatibility-engine-pin.ts");
   assert.match(bootstrap, /pinnedManifest/);
   assert.match(bootstrap, /no verified compatibility-set engine pin/);
+  // The Relay writes the pin from a published compatibility set, so the unpinned refusal must not
+  // send the operator to installer repair: a clean-VM run did exactly that, ran repair to
+  // completion, and the pin was still absent.
+  const unpinnedRefusal = bootstrap.match(
+    /"This MKT Browser build has no verified compatibility-set engine pin[^"]*"/,
+  );
+  assert.ok(unpinnedRefusal, "missing the unpinned-manifest refusal message");
+  assert.doesNotMatch(unpinnedRefusal[0], /Run installer repair/);
+  assert.match(unpinnedRefusal[0], /verified compatibility activation through the paired Relay/);
   assert.match(bootstrap, /manifest\.sizeBytes/);
   assert.match(main, /readCompatibilityEnginePin/);
   assert.match(main, /MKT_BROWSER_ALLOW_UNPINNED_ENGINE/);
