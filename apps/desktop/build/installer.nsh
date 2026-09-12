@@ -268,18 +268,32 @@ FunctionEnd
     Abort
   ${EndIf}
 
-  # Last, and deliberately not fail-closed. Every step above aborts when it cannot finish because
-  # leaving a firewall rule, a foreign shortcut or a half-removed Relay behind is a correctness
-  # problem. A retained engine cache is only disk usage, and it is what every earlier version left
-  # behind, so a failure here must not turn a cleanup improvement into a new uninstall failure.
-  # Profiles, settings and the engine pin are outside the removed directory and are preserved.
-  DetailPrint "Removing the downloaded browser engine cache"
-  InitPluginsDir
-  File /oname=$PLUGINSDIR\windows-engine-cache-cleanup.ps1 "${PROJECT_DIR}\build\windows-engine-cache-cleanup.ps1"
-  nsExec::ExecToStack 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File "$PLUGINSDIR\windows-engine-cache-cleanup.ps1"'
-  Pop $0
-  Pop $1
-  ${If} $0 != 0
-    DetailPrint "The downloaded engine cache was left in place and can be deleted manually: $LOCALAPPDATA\MKTTool\MKTBrowser\chromium"
+  # Only on a real uninstall, never on an upgrade.
+  #
+  # electron-builder installs a new version by running the PREVIOUS version's uninstaller first, so
+  # customUnInstall runs on every upgrade as well as on an uninstall. Without this guard the
+  # operator loses the engine download, hundreds of megabytes, each time they move to a new
+  # version, and has to fetch it again. Found on the 0.3.21 clean-VM run: a repair over an existing
+  # install deleted a staged engine cache while leaving profiles and the pin intact, which is this
+  # block doing exactly what it was told, at the wrong moment.
+  #
+  # `isUpdated` is the flag the installer passes to that uninstaller (`--updated`); the template
+  # itself guards app-data deletion the same way, so this matches how the surrounding code already
+  # separates "the user is removing the product" from "the product is being replaced".
+  ${ifNot} ${isUpdated}
+    # Deliberately not fail-closed. Every step above aborts when it cannot finish because leaving a
+    # firewall rule, a foreign shortcut or a half-removed Relay behind is a correctness problem. A
+    # retained engine cache is only disk usage, and it is what every earlier version left behind, so
+    # a failure here must not turn a cleanup improvement into a new uninstall failure.
+    # Profiles, settings and the engine pin are outside the removed directory and are preserved.
+    DetailPrint "Removing the downloaded browser engine cache"
+    InitPluginsDir
+    File /oname=$PLUGINSDIR\windows-engine-cache-cleanup.ps1 "${PROJECT_DIR}\build\windows-engine-cache-cleanup.ps1"
+    nsExec::ExecToStack 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File "$PLUGINSDIR\windows-engine-cache-cleanup.ps1"'
+    Pop $0
+    Pop $1
+    ${If} $0 != 0
+      DetailPrint "The downloaded engine cache was left in place and can be deleted manually: $LOCALAPPDATA\MKTTool\MKTBrowser\chromium"
+    ${EndIf}
   ${EndIf}
 !macroend

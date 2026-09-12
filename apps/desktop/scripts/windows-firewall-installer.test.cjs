@@ -122,6 +122,29 @@ test("clears the engine cache last and never aborts uninstall over it", () => {
   assert.match(engineCacheBlock, /can be deleted manually/);
 });
 
+test("keeps the engine cache when the uninstaller is running as part of an upgrade", () => {
+  // electron-builder installs a new version by running the PREVIOUS version's uninstaller, so
+  // customUnInstall fires on every upgrade as well. Unguarded, that discards the operator's engine
+  // download on each new version. The 0.3.21 clean-VM run caught it: a repair over an existing
+  // install removed a staged engine cache while leaving profiles and the pin intact.
+  const uninstallMacro = installer.match(/!macro customUnInstall[\s\S]*?!macroend/)?.[0];
+  assert.ok(uninstallMacro);
+
+  const guardAt = uninstallMacro.indexOf("${ifNot} ${isUpdated}");
+  const engineCacheAt = uninstallMacro.indexOf("windows-engine-cache-cleanup.ps1");
+  assert.ok(guardAt >= 0, "the engine cache cleanup must be guarded by isUpdated");
+  assert.ok(engineCacheAt > guardAt, "the guard must open before the cleanup runs");
+
+  // Only this block is guarded. Firewall, Relay and Startup cleanup must still run on an upgrade,
+  // because ownership state has to be handed over rather than stranded.
+  const firewallAt = uninstallMacro.indexOf("-Mode Uninstall");
+  const relayAt = uninstallMacro.indexOf("windows-relay-cleanup.ps1");
+  const startupAt = uninstallMacro.indexOf("-Mode RemoveBrowser");
+  for (const [name, at] of [["firewall", firewallAt], ["relay", relayAt], ["startup", startupAt]]) {
+    assert.ok(at >= 0 && at < guardAt, `${name} cleanup must stay outside the isUpdated guard`);
+  }
+});
+
 test("rejects another Windows user's firewall ownership before any mutation", () => {
   const ownerCheckAt = firewall.indexOf("Assert-FirewallOwnership $cft $cloak");
   const firstMutationAt = Math.min(
