@@ -9,6 +9,31 @@ browser service, or an authorization boundary. MKTTool Web decides which account
 the Relay verifies signed tickets and holds operator secrets, and MKT Browser stores and launches
 profiles on the operator device.
 
+## Where things stand
+
+Everything below this section is an append-only log of dated checkpoints. Each entry is correct for
+its own date and is deliberately not rewritten, so the newest entry is not necessarily the current
+state. This block is the current state, and is the only part of this file that gets updated in
+place.
+
+| | |
+|---|---|
+| Reviewed candidate | `20260913-browser-0.3.21-relay-17-payload-pin-engine-cache-cft` |
+| Browser | `0.3.21`, control contract `4`, profile schema `3` |
+| Pinned Relay | v17 (`d8bf25dc…6359cf`) |
+| Pinned engine | CFT `152.0.7977.64` (`b0db25de…8004`), never yet exercised on any machine |
+| Local gate | PASS — `test:installer` 526/525, 1 adjudicated skip |
+| Two-build equivalence | PASS — 129 files, `76a4a0cd…8217a6` |
+| Clean-VM acceptance | **OPEN — not run for this candidate** |
+| Published | **No.** Nothing in the bucket; no approved operator tuple on the deployment |
+
+Rollout remains NO-GO. The candidate is unsigned by the 12 August 2026 owner decision, so Windows
+shows SmartScreen once, and the installer raises one Administrator prompt on install, upgrade and
+uninstall for the machine-wide WebRTC containment rules.
+
+Current evidence of record lives in the workspace release reports, not in this file:
+`plans/reports/release-260913-0230-browser-0.3.21-gate-and-two-build.md`.
+
 ## Quality review source repairs - 10 September 2026
 
 Current source hardens pending-launch shutdown, archive validation and rollback, concurrent settings
