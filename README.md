@@ -18,21 +18,22 @@ place.
 
 | | |
 |---|---|
-| Reviewed candidate | `20260913-browser-0.3.21-relay-17-payload-pin-engine-cache-cft` |
-| Browser | `0.3.21`, control contract `4`, profile schema `3` |
+| Reviewed candidate | `20260913-browser-0.3.22-relay-17-upgrade-cache-guard-cft` |
+| Browser | `0.3.22`, control contract `4`, profile schema `3` |
 | Pinned Relay | v17 (`d8bf25dc…6359cf`) |
 | Pinned engine | CFT `152.0.7977.64` (`b0db25de…8004`), never yet exercised on any machine |
-| Local gate | PASS — `test:installer` 526/525, 1 adjudicated skip |
-| Two-build equivalence | PASS — 129 files, `76a4a0cd…8217a6` |
-| Clean-VM acceptance | **OPEN — not run for this candidate** |
+| Local gate | PASS — `test:installer` 527/526, 1 adjudicated skip |
+| Two-build equivalence | PASS — 129 files, `068469a9…2c69f3` |
+| Clean-VM acceptance | PASS — install, upgrade, uninstall, cleanup. Engine provisioning still unexercised |
 | Published | **No.** Nothing in the bucket; no approved operator tuple on the deployment |
 
 Rollout remains NO-GO. The candidate is unsigned by the 12 August 2026 owner decision, so Windows
-shows SmartScreen once, and the installer raises one Administrator prompt on install, upgrade and
-uninstall for the machine-wide WebRTC containment rules.
+shows SmartScreen once, and the installer raises an Administrator prompt for the machine-wide WebRTC
+containment rules: one on a fresh install, one on uninstall, and two on an upgrade, because the
+previous version's uninstaller removes its rules before the new one installs them.
 
 Current evidence of record lives in the workspace release reports, not in this file:
-`plans/reports/release-260913-0230-browser-0.3.21-gate-and-two-build.md`.
+`plans/reports/release-260913-0500-browser-0.3.22-gate-two-build-and-clean-vm.md`.
 
 ## Quality review source repairs - 10 September 2026
 
