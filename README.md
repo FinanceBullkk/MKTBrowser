@@ -24,7 +24,8 @@ place.
 | Pinned engine | CFT `152.0.7977.64` (`b0db25de…8004`), exact archive published in sequences 24 and 25 |
 | Local gate | **OPEN** — no frozen-source 0.3.23 quality receipt retained; targeted contract checks pass |
 | Two-build equivalence | PASS — 129 files; `app.asar` byte-identical (51,770,195 bytes) |
-| Clean-VM acceptance | **OPEN** — prior 0.3.22 run used a synthetic cache fixture; exact 0.3.23 CFT activation is not accepted |
+| Clean-VM installer lifecycle | PASS (scope-limited) — exact 0.3.23 installer clean `9/9`, repair `13/13`, uninstall `15/15` on restored Defender snapshot |
+| Clean-VM CFT activation | **OPEN** — signed first-run provisioning and real engine execution are not yet accepted |
 | Compatibility publication | PASS — sequence 23 (from 22), sequence 24 (from 21), and sequence 25 (fresh from 0) immutable objects read back |
 | Live artifact routes | PASS — all sequence-23 artifacts HTTP 200 with exact size/SHA-256; sequence-24 installer route verified |
 | Published / promoted | Published to authenticated compatibility channel; **operator promotion: No** |
