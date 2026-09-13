@@ -18,15 +18,16 @@ place.
 
 | | |
 |---|---|
-| Reviewed candidate | `20260913-browser-0.3.22-relay-17-upgrade-cache-guard-cft` |
-| Browser | `0.3.22`, control contract `4`, profile schema `3` |
+| Reviewed candidate | `20260913-browser-0.3.23-relay-17-relay-payload-hash-fix-cft` |
+| Browser | `0.3.23`, control contract `4`, profile schema `3` |
 | Pinned Relay | v17 (`d8bf25dc…6359cf`) |
-| Pinned engine | CFT `152.0.7977.64` (`b0db25de…8004`), never yet exercised on any machine |
-| Local gate | PASS — `test:installer` 527/526, 1 adjudicated skip |
-| Two-build equivalence | PASS — 129 files, `068469a9…2c69f3` |
-| Clean-VM acceptance | PASS — install, upgrade, uninstall, cleanup. The 0.3.22 run used a synthetic cache fixture |
-| Relay network fetch | PASS — token rotated and v17 fetched over HTTPS with the pinned size/SHA-256 |
-| Published | **No.** Sequence-22 publication is blocked by immutable v17 artifact keys containing 0.3.17 bytes |
+| Pinned engine | CFT `152.0.7977.64` (`b0db25de…8004`), exact archive published in sequence 24 |
+| Local gate | **OPEN** — no frozen-source 0.3.23 quality receipt retained; targeted contract checks pass |
+| Two-build equivalence | PASS — 129 files; `app.asar` byte-identical (51,770,195 bytes) |
+| Clean-VM acceptance | **OPEN** — prior 0.3.22 run used a synthetic cache fixture; exact 0.3.23 CFT activation is not accepted |
+| Compatibility publication | PASS — sequence 23 (from 22) and sequence 24 (direct from operator sequence 21) immutable objects read back |
+| Live artifact routes | PASS — all sequence-23 artifacts HTTP 200 with exact size/SHA-256; sequence-24 installer route verified |
+| Published / promoted | Published to authenticated compatibility channel; **operator promotion: No** |
 
 Rollout remains NO-GO. The candidate is unsigned by the 12 August 2026 owner decision, so Windows
 shows SmartScreen once, and the installer raises an Administrator prompt for the machine-wide WebRTC
@@ -34,7 +35,7 @@ containment rules: one on a fresh install, one on uninstall, and two on an upgra
 previous version's uninstaller removes its rules before the new one installs them.
 
 Current evidence of record lives in the workspace release reports, not in this file:
-`plans/reports/release-260913-0500-browser-0.3.22-gate-two-build-and-clean-vm.md`.
+`plans/reports/release-260913-1030-browser-0.3.23-release-readiness.md`.
 
 ## Quality review source repairs - 10 September 2026
 
