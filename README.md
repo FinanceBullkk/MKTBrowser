@@ -22,7 +22,7 @@ place.
 | Browser | `0.3.23`, control contract `4`, profile schema `3` |
 | Pinned Relay | v17 (`d8bf25dc…6359cf`) |
 | Pinned engine | CFT `152.0.7977.64` (`b0db25de…8004`), exact archive published in sequences 24 and 25 |
-| Local gate | PASS — exact frozen-source 0.3.23 seven-command receipt retained; acceptance remains separate from VM/human gates |
+| Local gate | PASS (scope-limited) — 7/7 commands exit 0; installer suite 82 pass / 1 machine-integration skip; VM/human gates remain separate |
 | Two-build equivalence | PASS — 129 files; `app.asar` byte-identical (51,770,195 bytes) |
 | Clean-VM installer lifecycle | PASS (scope-limited) — exact 0.3.23 installer clean `9/9`, repair `13/13`, uninstall `15/15` on restored Defender snapshot |
 | Clean-VM CFT activation | **OPEN** — signed first-run provisioning and real engine execution are not yet accepted |
