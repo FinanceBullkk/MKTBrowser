@@ -606,10 +606,9 @@ export class ChromiumBootstrap extends EventEmitter {
     await rm(outPath, { force: true });
     throw new Error(
       `Could not download a complete, valid Chromium archive after ${MAX_ATTEMPTS} attempts. ` +
-        `Last error: ${lastError?.message ?? "unknown"}. Your network — or an antivirus / ` +
-        `corporate proxy inspecting HTTPS — is likely corrupting the large download. Try a ` +
-        `different network, add MKT Browser to your antivirus exclusions, or switch the engine to ` +
-        `"Chrome for Testing" in Settings.`,
+        `Last error: ${redactDownloadError(lastError?.message ?? "unknown")}. ` +
+        `The download link may be expired or blocked. Ask an administrator to refresh the ` +
+        `compatibility set, or switch to "Chrome for Testing" in Settings when that option is available.`,
     );
   }
 
@@ -700,7 +699,7 @@ export class ChromiumBootstrap extends EventEmitter {
           if (have > 0) received = 0; // Range ignored → overwrite ("w").
         } else {
           response.on("data", () => {}); // drain so the socket can close
-          fail(new Error(`HTTP ${status} fetching ${manifest.url}`));
+          fail(new Error(`HTTP ${status} fetching ${this.engine} runtime`));
           return;
         }
 
@@ -1021,6 +1020,11 @@ async function sha256File(path: string): Promise<string> {
     hash.update(chunk as Buffer);
   }
   return hash.digest("hex");
+}
+
+/** Never expose signed download URLs or their query-string credentials to the operator. */
+function redactDownloadError(message: string): string {
+  return message.replace(/https?:\/\/[^\s`"')]+/gi, "[redacted download URL]");
 }
 
 /**

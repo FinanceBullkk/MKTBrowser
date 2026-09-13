@@ -102,3 +102,11 @@ test("renders unknown download totals as an indeterminate connecting state", () 
   assert.match(modal, /status\.attempt/);
   assert.match(modal, /status\.resuming/);
 });
+
+test("redacts signed download URLs from operator-facing bootstrap errors", () => {
+  const bootstrap = source("ChromiumBootstrap.ts");
+  assert.match(bootstrap, /redactDownloadError/);
+  assert.match(bootstrap, /HTTP \$\{status\} fetching \$\{this\.engine\} runtime/);
+  assert.match(bootstrap, /redacted download URL/);
+  assert.doesNotMatch(bootstrap, /Last error: \$\{lastError\?\.message/);
+});
