@@ -21,11 +21,11 @@ place.
 | Reviewed candidate | `20260913-browser-0.3.23-relay-17-relay-payload-hash-fix-cft` |
 | Browser | `0.3.23`, control contract `4`, profile schema `3` |
 | Pinned Relay | v17 (`d8bf25dc…6359cf`) |
-| Pinned engine | CFT `152.0.7977.64` (`b0db25de…8004`), exact archive published in sequence 24 |
+| Pinned engine | CFT `152.0.7977.64` (`b0db25de…8004`), exact archive published in sequences 24 and 25 |
 | Local gate | **OPEN** — no frozen-source 0.3.23 quality receipt retained; targeted contract checks pass |
 | Two-build equivalence | PASS — 129 files; `app.asar` byte-identical (51,770,195 bytes) |
 | Clean-VM acceptance | **OPEN** — prior 0.3.22 run used a synthetic cache fixture; exact 0.3.23 CFT activation is not accepted |
-| Compatibility publication | PASS — sequence 23 (from 22) and sequence 24 (direct from operator sequence 21) immutable objects read back |
+| Compatibility publication | PASS — sequence 23 (from 22), sequence 24 (from 21), and sequence 25 (fresh from 0) immutable objects read back |
 | Live artifact routes | PASS — all sequence-23 artifacts HTTP 200 with exact size/SHA-256; sequence-24 installer route verified |
 | Published / promoted | Published to authenticated compatibility channel; **operator promotion: No** |
 
