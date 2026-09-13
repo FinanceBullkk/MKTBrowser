@@ -60,7 +60,17 @@ $actualSize = (Get-Item -LiteralPath $archive).Length
 if ($actualSize -ne $expectedSize) {
   throw "relay-archive-size-mismatch"
 }
-$actualSha256 = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+$hashAlgorithm = [Security.Cryptography.SHA256]::Create()
+try {
+  $stream = [IO.File]::OpenRead($archive)
+  try {
+    $actualSha256 = ([BitConverter]::ToString($hashAlgorithm.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+  } finally {
+    $stream.Dispose()
+  }
+} finally {
+  $hashAlgorithm.Dispose()
+}
 if ($actualSha256 -ne $expectedSha256) {
   throw "relay-archive-checksum-mismatch"
 }
