@@ -24,8 +24,9 @@ place.
 | Pinned engine | CFT `152.0.7977.64` (`b0db25de…8004`), never yet exercised on any machine |
 | Local gate | PASS — `test:installer` 527/526, 1 adjudicated skip |
 | Two-build equivalence | PASS — 129 files, `068469a9…2c69f3` |
-| Clean-VM acceptance | PASS — install, upgrade, uninstall, cleanup. Engine provisioning still unexercised |
-| Published | **No.** Nothing in the bucket; no approved operator tuple on the deployment |
+| Clean-VM acceptance | PASS — install, upgrade, uninstall, cleanup. The 0.3.22 run used a synthetic cache fixture |
+| Relay network fetch | PASS — token rotated and v17 fetched over HTTPS with the pinned size/SHA-256 |
+| Published | **No.** Sequence-22 publication is blocked by immutable v17 artifact keys containing 0.3.17 bytes |
 
 Rollout remains NO-GO. The candidate is unsigned by the 12 August 2026 owner decision, so Windows
 shows SmartScreen once, and the installer raises an Administrator prompt for the machine-wide WebRTC
