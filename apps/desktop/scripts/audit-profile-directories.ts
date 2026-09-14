@@ -13,14 +13,49 @@
  * CHỈ ĐỌC. Không xoá, không sửa gì cả — báo cáo rồi để người quyết.
  *
  *   node <tsx> scripts/audit-profile-directories.ts
+ *   node <tsx> scripts/audit-profile-directories.ts --remove-engine-scaffold
  */
-import { readdirSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { readdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { ProfileManager } from "@mktbrowser/profile-manager";
 
 import {
   auditProfileDirectories,
 } from "../src/main/profile-directory-audit.ts";
+
+/**
+ * Xoa cho lam viec cua engine bi bo lai - va chi dung cai do.
+ *
+ * Doi tuong duy nhat la thu muc da duoc phan loai `engine-scaffold`. Co du lieu duyet web hoac
+ * khong doc duoc thi khong dong toi, va lenh noi ro la no da bo qua cai gi.
+ */
+function removeScaffolding(audit: DirectoryAudit, profilesRoot: string): number {
+  assertProductClosed();
+  const removable = removableOrphans(audit);
+  const skipped = audit.orphans.filter((orphan) => orphan.kind !== "engine-scaffold");
+  if (!removable.length) {
+    process.stdout.write("Khong co cho lam viec engine nao de xoa.\n");
+  }
+  for (const name of removable) {
+    rmSync(path.join(profilesRoot, name), { recursive: true, force: false });
+    process.stdout.write(`Da xoa ${name} (cho lam viec cua engine).\n`);
+  }
+  for (const orphan of skipped) {
+    process.stdout.write(`Bo qua ${orphan.name}: ${orphan.kind} - quyet dinh nay thuoc ve nguoi.\n`);
+  }
+  return 0;
+}
+
+/** Xoa khi san pham dang chay la xoa ngay duoi chan mot tien trinh dang mo file. */
+function assertProductClosed(): void {
+  const running = execFileSync("powershell.exe", [
+    "-NoProfile", "-NonInteractive", "-Command",
+    "@(Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('MKTBrowser.exe','MKTTool-Relay.exe') " +
+      "-or $_.ExecutablePath -like '*chromium*runtime*chrome.exe' }).Count",
+  ], { encoding: "utf8", windowsHide: true, timeout: 20_000 }).trim();
+  if (running !== "0") throw new Error(`Dong han MKT Browser truoc da; dang con ${running} tien trinh.`);
+}
 
 function main(): number {
   const localAppData = process.env.LOCALAPPDATA?.trim();
@@ -69,6 +104,7 @@ function main(): number {
   for (const id of audit.missingDirectories) {
     process.stdout.write(`  THIẾU    ${id}  — sản phẩm có profile này nhưng không có dữ liệu\n`);
   }
+  if (process.argv.includes("--remove-engine-scaffold")) return removeScaffolding(audit, profilesRoot);
   if (!audit.orphanDirectories.length && !audit.missingDirectories.length) {
     process.stdout.write("Khớp hoàn toàn.\n");
     return 0;

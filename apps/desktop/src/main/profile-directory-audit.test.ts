@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { auditProfileDirectories, classifyOrphan } from "./profile-directory-audit.ts";
+import {
+  auditProfileDirectories, classifyOrphan, removableOrphans,
+} from "./profile-directory-audit.ts";
 
 test("reports nothing when the product and the disk agree", () => {
   const audit = auditProfileDirectories(["a", "b"], ["a", "b"]);
@@ -47,4 +49,19 @@ test("carries the classification through the audit", () => {
     { name: "mystery", kind: "unknown" },
   ]);
   assert.deepEqual(audit.orphanDirectories, ["scaffold", "mystery"]);
+});
+
+test("only engine scaffolding is ever offered for removal", () => {
+  const audit = auditProfileDirectories(
+    [],
+    ["scaffold", "hasData", "mystery"],
+    new Map([
+      ["scaffold", ["engines"]],
+      ["hasData", ["Default", "engines"]],
+      ["mystery", ["something-else"]],
+    ]),
+  );
+  // Cookie va phien dang nhap khong bao gio bi mot lenh quyet dinh thay nguoi.
+  // Va "khong doc duoc" khac "khong co gi", nen unknown cung dung ngoai.
+  assert.deepEqual(removableOrphans(audit), ["scaffold"]);
 });

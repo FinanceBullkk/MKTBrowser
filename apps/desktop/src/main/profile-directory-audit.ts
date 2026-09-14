@@ -67,3 +67,14 @@ export function auditProfileDirectories(
     missingDirectories: registered.filter((id) => !present.includes(id)),
   };
 }
+
+/**
+ * Chỉ những thư mục mồ côi xoá được mà không mất gì của người dùng.
+ *
+ * `browser-data` không bao giờ nằm trong danh sách này — bên trong là cookie và phiên đăng nhập, và
+ * quyết định xoá chúng là của người, không phải của một lệnh. `unknown` cũng không: không đọc được
+ * thì không xoá, vì "không biết" khác "không có gì".
+ */
+export function removableOrphans(audit: DirectoryAudit): string[] {
+  return audit.orphans.filter((orphan) => orphan.kind === "engine-scaffold").map((orphan) => orphan.name);
+}
