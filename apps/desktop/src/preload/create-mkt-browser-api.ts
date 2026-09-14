@@ -118,6 +118,10 @@ export function createMktBrowserApi(bridge: MktBrowserIpcBridge) {
     },
     system: {
       info: (): Promise<SystemInfo> => bridge.invoke(IPC.SYSTEM_INFO),
+      /** Opens the vendor's free-key registration page. Takes no URL: the
+       *  destination is a constant in the main process, not the renderer's
+       *  choice. Each operator registers their own key. */
+      openLicenceSignup: (): Promise<void> => bridge.invoke(IPC.SYSTEM_OPEN_LICENCE_SIGNUP),
     },
     chromium: {
       status: (): Promise<ChromiumStatus> => bridge.invoke(IPC.CHROMIUM_STATUS),
@@ -125,8 +129,7 @@ export function createMktBrowserApi(bridge: MktBrowserIpcBridge) {
       switchToCft: (): Promise<ChromiumStatus> => bridge.invoke(IPC.CHROMIUM_SWITCH_TO_CFT),
       /** Pins the newest licensed build and converges on it. Rotates every
        *  profile's hardware identity — see the Settings copy. */
-      activateLatest: (): Promise<ChromiumStatus> =>
-        bridge.invoke(IPC.CHROMIUM_ACTIVATE_LATEST),
+      activateLatest: (): Promise<ChromiumStatus> => bridge.invoke(IPC.CHROMIUM_ACTIVATE_LATEST),
       onStatus: (cb: (status: ChromiumStatus) => void): (() => void) =>
         bridge.subscribe(IPC_EVENTS.CHROMIUM_STATUS, cb),
     },

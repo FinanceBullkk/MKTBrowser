@@ -79,6 +79,8 @@ test("no configured key is a setup problem, not a capacity problem", () => {
 
   assert.match(message, /No CloakBrowser licence key is set up/);
   assert.doesNotMatch(message, /in use/);
+  // Points at the operator's own registration, never at a key to be obtained from someone else.
+  assert.match(message, /register your own free key at https:\/\/cloakbrowser\.dev\/free/);
 });
 
 test("never leaks a licence key", () => {

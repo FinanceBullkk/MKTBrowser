@@ -249,12 +249,20 @@ export function Settings({ onImport }: Props): JSX.Element {
           title="CloakBrowser licence"
           desc={
             <>
-              Without a key, CloakBrowser stays on the last openly published build (146, May 2026).
-              A browser that lags several Chrome majors behind stable may lack current compatibility
-              fixes; review the pinned release before use. A free key is one browser at a time and
-              needs no card — sign in at{" "}
-              <span className="mono text-slate-400">cloakbrowser.dev/free</span>. Applied on next
-              app launch.
+              This install carries no key until you add one, and the key belongs to you: register
+              your own with CloakBrowser rather than reusing someone else&apos;s, because a shared
+              key shares its one-browser-at-a-time limit and the refusal looks like a crash. Without
+              a key, CloakBrowser stays on the last openly published build (146, May 2026). A
+              browser that lags several Chrome majors behind stable may lack current compatibility
+              fixes; review the pinned release before use. A free key needs no card —{" "}
+              <button
+                type="button"
+                onClick={() => void window.mktBrowser.system.openLicenceSignup()}
+                className="mono text-purple-300 hover:text-purple-200 underline underline-offset-2 transition-colors"
+              >
+                register at cloakbrowser.dev/free
+              </button>
+              . Applied on next app launch.
             </>
           }
         >
@@ -313,7 +321,10 @@ export function Settings({ onImport }: Props): JSX.Element {
             ) : (
               <>
                 <Pill kind="idle">no key</Pill>
-                <span className="text-slate-500">Running the older keyless build.</span>
+                <span className="text-slate-500">
+                  Running the older keyless build. Register your own key above to move to a current
+                  Chrome major.
+                </span>
               </>
             )}
           </div>

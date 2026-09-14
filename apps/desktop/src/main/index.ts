@@ -5,6 +5,7 @@ import {
   ipcMain,
   Menu,
   nativeImage,
+  shell,
   Tray,
   type IpcMainInvokeEvent,
 } from "electron";
@@ -91,6 +92,7 @@ import {
   type IpcEventChannel,
   type IpcInvokeChannel,
 } from "../shared/ipc-exposure-policy.ts";
+import { CLOAKBROWSER_FREE_KEY_URL } from "../shared/cloakbrowser-signup-url.ts";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const mcpHttpPort = resolveMktBrowserMcpPort(process.env[MKT_BROWSER_MCP_PORT_ENV]);
@@ -1088,6 +1090,13 @@ app
           }
         : null,
     }));
+    // Sends the operator to their own registration. The URL is a constant here, never a
+    // renderer argument, so no in-page value can steer where the operating system's browser
+    // lands. Each install holds the key its own operator registered.
+    handleIpc(IPC.SYSTEM_OPEN_LICENCE_SIGNUP, async () => {
+      await shell.openExternal(CLOAKBROWSER_FREE_KEY_URL);
+    });
+
     ipcRegistration.assertComplete();
 
     if (normalWindowsSession) {

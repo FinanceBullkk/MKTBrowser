@@ -33,6 +33,9 @@ export const IPC_INVOKE_EXPOSURE = {
   "fingerprint:reconcile": "fingerprint-write",
   "proxy:detectGeo": "network-probe",
   "system:info": "system-read",
+  // Opens one compile-time constant URL in the operating system's browser and takes no
+  // argument, so the renderer cannot choose a destination. See cloakbrowser-signup-url.ts.
+  "system:open-licence-signup": "external-link-fixed",
 } as const;
 
 export const IPC_EVENT_EXPOSURE = {
@@ -81,6 +84,7 @@ export const IPC = {
   FINGERPRINT_RECONCILE: "fingerprint:reconcile",
   PROXY_DETECT_GEO: "proxy:detectGeo",
   SYSTEM_INFO: "system:info",
+  SYSTEM_OPEN_LICENCE_SIGNUP: "system:open-licence-signup",
 } as const satisfies Record<string, IpcInvokeChannel>;
 
 export const IPC_EVENTS = {

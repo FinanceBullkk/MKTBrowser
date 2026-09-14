@@ -106,7 +106,7 @@ jobs:
         if: always() && needs.windows.result == 'success' && github.event_name == 'workflow_dispatch'
         id: one_seat_license
         working-directory: mktbrowser
-        run: node scripts/ci-gate-status.cjs --gate one-seat-license --reason "The Browser one-seat UI and primary-key pool contract passed." --owner browser-release --required -- node --experimental-strip-types --test apps/desktop/src/main/one-seat-license-ui-contract.test.ts
+        run: node scripts/ci-gate-status.cjs --gate one-seat-license --reason "The Browser one-seat UI, primary-key pool and operator-owned-key contracts passed." --owner browser-release --required -- node --experimental-strip-types --test apps/desktop/src/main/one-seat-license-ui-contract.test.ts apps/desktop/src/main/operator-owned-licence-key-contract.test.ts
 
       - name: Version and Relay pin coherence contracts
         if: always() && needs.windows.result == 'success' && github.event_name == 'workflow_dispatch'

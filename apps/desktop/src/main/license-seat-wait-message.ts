@@ -11,6 +11,7 @@
  * and its own tests rather than living as a string inside the driver.
  */
 
+import { CLOAKBROWSER_FREE_KEY_URL } from "../shared/cloakbrowser-signup-url.ts";
 import type { LicenseKeyPoolSnapshot } from "./license-key-pool.ts";
 
 export interface LicenseSeatWaitInput {
@@ -48,7 +49,7 @@ export function licenseSeatWaitMessage(input: LicenseSeatWaitInput): string {
   if (snapshot.total === 0) {
     return (
       "No CloakBrowser licence key is set up. Add one in Settings, " +
-      "or get a free key at https://cloakbrowser.dev/free."
+      `or register your own free key at ${CLOAKBROWSER_FREE_KEY_URL}.`
     );
   }
 
@@ -62,8 +63,7 @@ export function licenseSeatWaitMessage(input: LicenseSeatWaitInput): string {
     );
   }
 
-  const wait =
-    input.nextFreeAtMs === null ? null : describeWait(input.nextFreeAtMs, input.nowMs);
+  const wait = input.nextFreeAtMs === null ? null : describeWait(input.nextFreeAtMs, input.nowMs);
   const resting =
     `A previous browser closed without handing its licence session back, so the licence ` +
     `server still counts it${wait ? `. It frees in ${wait}` : ""}.`;

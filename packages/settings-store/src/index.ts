@@ -23,8 +23,10 @@ export interface AppSettings {
   /**
    * CloakBrowser licence key. Without one the engine is stuck on the last
    * openly published build (146.0.7680.177.5, May 2026); with one it tracks
-   * the current Chrome major. A free key from https://cloakbrowser.dev/free
-   * allows one profile open at a time.
+   * the current Chrome major. Defaults to empty and stays that way until an
+   * operator pastes their own: the product ships no key, each operator
+   * registers at https://cloakbrowser.dev/free, and a free key allows one
+   * profile open at a time — a limit two people sharing a key would share.
    *
    * The Pro binary re-checks this on every launch, so it is a runtime
    * dependency, not just a download credential.
