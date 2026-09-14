@@ -92,3 +92,4 @@ docs/**
 # Python bytecode caches
 __pycache__/
 *.pyc
+scripts/canary-log.jsonl
