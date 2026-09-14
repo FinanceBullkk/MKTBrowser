@@ -136,6 +136,7 @@ async function packageWindows({ builderArgs, label, includeRelay = false }) {
     const args = [
       path.join(desktopRoot, "node_modules", "electron-builder", "out", "cli", "cli.js"),
       ...builderArgs,
+      ...windowsSigningArgs(process.env),
     ];
     if (existsSync(localElectronDist)) {
       args.push(`--config.electronDist=${localElectronDist}`);
@@ -231,6 +232,26 @@ function restoreWorkspaceLinks(backup, label) {
 }
 
 /** Entry-point helper so each caller stays a few lines long. */
+/**
+ * Turn Authenticode signing back on when, and only when, a certificate is actually configured.
+ *
+ * `electron-builder.yml` pins `signAndEditExecutable: false`, for a real reason: the bundled
+ * winCodeSign archive wants Windows symlink privileges even with no certificate, which breaks an
+ * ordinary non-admin build. But pinned to false it also means buying a certificate changes nothing
+ * - the build would keep shipping unsigned and SmartScreen would keep warning. So the flag follows
+ * the credentials instead of being a constant.
+ *
+ * Reads the standard electron-builder variables, Windows-specific first.
+ *
+ * @param {NodeJS.ProcessEnv} env
+ * @returns {string[]} extra electron-builder arguments
+ */
+function windowsSigningArgs(env) {
+  const certificate = (env.WIN_CSC_LINK ?? env.CSC_LINK ?? "").trim();
+  if (!certificate) return [];
+  return ["--config.win.signAndEditExecutable=true"];
+}
+
 function runAsScript(options) {
   packageWindows(options).catch((error) => {
     process.stderr.write(`${error.stack ?? error.message}\n`);
@@ -238,4 +259,4 @@ function runAsScript(options) {
   });
 }
 
-module.exports = { packageWindows, resolveCorepackInvocation, runAsScript };
+module.exports = { packageWindows, resolveCorepackInvocation, runAsScript, windowsSigningArgs };

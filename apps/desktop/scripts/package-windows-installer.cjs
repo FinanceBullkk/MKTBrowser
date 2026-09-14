@@ -4,8 +4,12 @@
  * Per-user Windows installer (NSIS).
  *
  * Produces the artifact MKB-03 hands to an operator: one file, a per-user install directory, its
- * own uninstaller. It is unsigned by the 12 August 2026 decision, so Windows shows SmartScreen
- * once and the setup journey is required to announce that prompt before it appears.
+ * own uninstaller. Unsigned by the 12 August 2026 decision, so Windows shows SmartScreen once and
+ * the setup journey is required to announce that prompt before it appears.
+ *
+ * That decision is about not owning a certificate, not about the build refusing to use one:
+ * set `WIN_CSC_LINK`/`CSC_LINK` (with its password) and `windowsSigningArgs` in
+ * `package-windows.cjs` turns Authenticode signing on for the same command.
  *
  * Per-user is the install *location*, not the privilege level: this installer is not UAC-free.
  * The mandatory WebRTC containment rules are machine-wide Windows Firewall rules, so

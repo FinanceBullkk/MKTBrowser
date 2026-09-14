@@ -61,3 +61,14 @@ test("keeps the native Corepack command on non-Windows platforms", () => {
     argsPrefix: [],
   });
 });
+
+test("enables Authenticode signing only when a certificate is configured", () => {
+  const { windowsSigningArgs } = require("./package-windows.cjs");
+  // Unsigned stays the default: the pinned `signAndEditExecutable: false` protects ordinary
+  // non-admin builds from electron-builder's winCodeSign symlink requirement.
+  assert.deepEqual(windowsSigningArgs({}), []);
+  assert.deepEqual(windowsSigningArgs({ CSC_LINK: "   " }), []);
+  // ...but a certificate must actually reach the build, or buying one would change nothing.
+  assert.deepEqual(windowsSigningArgs({ CSC_LINK: "cert.pfx" }), ["--config.win.signAndEditExecutable=true"]);
+  assert.deepEqual(windowsSigningArgs({ WIN_CSC_LINK: "cert.pfx" }), ["--config.win.signAndEditExecutable=true"]);
+});
