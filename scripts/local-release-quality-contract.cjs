@@ -8,6 +8,11 @@ const QUALITY_STEPS = Object.freeze([
   ["verify:node", 60_000],
   ["audit:production", 300_000],
   ["test:installer", 900_000],
+  // Live-machine inspection stays opt-in inside `test:packaging`, which must remain hermetic.
+  // It is a required release step here instead: skipping it for four consecutive releases is
+  // how a gate becomes decoration. It fails loudly while the product is running, which is the
+  // point - a machine that is not quiet cannot be inspected.
+  ["test:machine-integration", 300_000],
   ["test:critical-coverage", 300_000],
   ["typecheck", 300_000],
   ["lint", 300_000],

@@ -18,7 +18,7 @@ function fixture(t) {
 }
 
 test("command list is fixed, ordered, bounded and immutable", () => {
-  assert.deepEqual(QUALITY_STEPS.map((step) => step.id), ["verify:node", "audit:production", "test:installer", "test:critical-coverage", "typecheck", "lint", "build"]);
+  assert.deepEqual(QUALITY_STEPS.map((step) => step.id), ["verify:node", "audit:production", "test:installer", "test:machine-integration", "test:critical-coverage", "typecheck", "lint", "build"]);
   assert.ok(QUALITY_STEPS.every((step) => Object.isFrozen(step) && step.timeoutMs > 0));
   assert.ok(Object.isFrozen(QUALITY_STEPS));
 });
