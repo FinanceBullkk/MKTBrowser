@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -31,6 +32,29 @@ test("permanently deletes a managed profile only through the dedicated lifecycle
 
   assert.equal(fixture.manager.get(result.profile.id), null);
   assert.equal(existsSync(result.profile.dataDir), false);
+  fixture.cleanup();
+});
+
+test("leaves no quarantine directory behind inside the profile root", () => {
+  const fixture = createFixture();
+  const first = fixture.manager.createIdempotent(
+    { name: "Quarantine cleanup one" },
+    { externalRef: "account-q1", requestId: "request-q1", requestHash: "hash-q1" },
+  );
+  const second = fixture.manager.createIdempotent(
+    { name: "Quarantine cleanup two" },
+    { externalRef: "account-q2", requestId: "request-q2", requestHash: "hash-q2" },
+  );
+
+  fixture.manager.deletePermanently(first.profile.id);
+  // An empty `.deleting` left inside profilesRoot makes every listing of that folder report one
+  // profile more than the product has - which is how a directory count and the app disagree.
+  assert.equal(existsSync(path.join(fixture.profilesRoot, ".deleting")), false);
+
+  // Still reusable: the second deletion recreates and removes it again.
+  fixture.manager.deletePermanently(second.profile.id);
+  assert.equal(existsSync(path.join(fixture.profilesRoot, ".deleting")), false);
+  assert.deepEqual(readdirSync(fixture.profilesRoot), []);
   fixture.cleanup();
 });
 

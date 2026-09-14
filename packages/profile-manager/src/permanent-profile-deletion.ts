@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, realpathSync, renameSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, renameSync, rmdirSync, rmSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 
 export interface PermanentProfileDeletionInput {
@@ -69,6 +69,15 @@ export function permanentlyDeleteOwnedProfile(input: PermanentProfileDeletionInp
 
     if (existsSync(paths.source) || existsSync(paths.quarantine)) {
       throw new Error("The selected profile directory still exists after cleanup.");
+    }
+    // The quarantine root sits inside profilesRoot, so leaving an empty `.deleting` behind makes
+    // every directory listing of that folder report one profile more than the product has. Best
+    // effort only: a concurrent deletion may legitimately be holding it, and that must not fail a
+    // deletion that has already completed.
+    try {
+      rmdirSync(paths.quarantineRoot);
+    } catch {
+      // Not empty or already gone; either way the deletion itself is done.
     }
     input.deleteRecord();
   } catch (cause) {
