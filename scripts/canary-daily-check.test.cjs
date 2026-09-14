@@ -1,9 +1,11 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { mkdtempSync, writeFileSync } = require("node:fs");
+const { existsSync, mkdtempSync, readFileSync, writeFileSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const path = require("node:path");
-const { evaluate, summarize } = require("./canary-daily-check.cjs");
+const {
+  clearFailureMarker, evaluate, summarize, writeFailureMarker,
+} = require("./canary-daily-check.cjs");
 
 function clean(overrides = {}) {
   return {
@@ -57,4 +59,28 @@ test("counts distinct days, not check runs, and never calls a broken run partial
   const withFinding = [...sevenDays];
   withFinding[3] = day("2026-09-17", ["WebRTC containment for cloakbrowser is not intact (count=0)."]);
   assert.equal(summarize(write(withFinding)), 1);
+});
+
+test("a finding leaves a marker nobody can miss, and a clean day removes it", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "canary-marker-"));
+  const logPath = path.join(dir, "canary-log.jsonl");
+  const marker = path.join(dir, "CANARY-FAILED.txt");
+
+  // Chay bang Task Scheduler thi khong ai doc stdout; exit 1 mot minh la mot lan hong bi giau.
+  const written = writeFailureMarker(logPath, clean({
+    at: "2026-09-17T09:00:00.000Z",
+    findings: ["WebRTC containment for cloakbrowser is not intact (count=0)."],
+  }));
+  assert.equal(written, marker);
+  assert.equal(existsSync(marker), true);
+  const body = readFileSync(marker, "utf8");
+  assert.match(body, /2026-09-17T09:00:00.000Z/);
+  assert.match(body, /containment for cloakbrowser/);
+  assert.match(body, /bat dau lai tu ngay mot/);
+
+  // Su ton tai cua file la tin hieu, nen mot ngay sach phai don no di.
+  clearFailureMarker(logPath);
+  assert.equal(existsSync(marker), false);
+  // Va don mot file khong co san khong duoc nem loi.
+  assert.doesNotThrow(() => clearFailureMarker(logPath));
 });

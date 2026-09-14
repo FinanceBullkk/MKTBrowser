@@ -16,7 +16,7 @@
  * vì bảy ngày liên tiếp mới là thứ đang được chứng minh.
  */
 const { execFileSync } = require("node:child_process");
-const { appendFileSync, existsSync, readFileSync, statSync, readdirSync } = require("node:fs");
+const { appendFileSync, existsSync, readFileSync, rmSync, statSync, readdirSync, writeFileSync } = require("node:fs");
 const path = require("node:path");
 
 const ENGINES = { cft: "Chrome for Testing", cloakbrowser: "CloakBrowser" };
@@ -138,6 +138,35 @@ function evaluate(entry) {
   return findings;
 }
 
+/**
+ * Mot canary hong im lang thi khong phai canary.
+ *
+ * Script nay chay bang Task Scheduler, khong ai ngoi xem. Thoat 1 chi hien o cot "Last Run Result"
+ * cua Task Scheduler, va khong ai mo cho do hang ngay. Nen mot lan hong de lai mot file ten to
+ * tuong ngay canh log, va mot lan sach thi don no di - de chinh su ton tai cua file la tin hieu.
+ */
+function writeFailureMarker(logPath, entry) {
+  const marker = path.join(path.dirname(logPath), "CANARY-FAILED.txt");
+  writeFileSync(marker, [
+    `Canary phat hien van de luc ${entry.at}`,
+    "",
+    ...entry.findings.map((finding) => `  - ${finding}`),
+    "",
+    "Cua so 7 ngay nay da hong. Sua nguyen nhan roi bat dau lai tu ngay mot.",
+    `Log: ${logPath}`,
+    "",
+  ].join("\n"), "utf8");
+  return marker;
+}
+
+function clearFailureMarker(logPath) {
+  try {
+    rmSync(path.join(path.dirname(logPath), "CANARY-FAILED.txt"), { force: true });
+  } catch {
+    // Mot canh bao thua khong nguy hiem bang mot lan hong bi giau, nen loi xoa la bo qua duoc.
+  }
+}
+
 function summarize(logPath) {
   if (!existsSync(logPath)) throw new Error(`No canary log at ${logPath}.`);
   const entries = readFileSync(logPath, "utf8").split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
@@ -175,10 +204,13 @@ function main() {
 
   process.stdout.write(`Recorded ${entry.at} -> ${logPath}\n`);
   if (entry.findings.length) {
+    const marker = writeFailureMarker(logPath, entry);
     for (const finding of entry.findings) process.stdout.write(`  FINDING: ${finding}\n`);
+    process.stdout.write(`  Da ghi canh bao: ${marker}\n`);
     process.stdout.write("This canary run is broken; restart the seven days after fixing the cause.\n");
     return 1;
   }
+  clearFailureMarker(logPath);
   process.stdout.write(`Clean. Browser ${browser.version}, engine ${engine.provisioned.map((e) => `${e.engine} ${e.version}`).join(", ")}, ${entry.profileDirectories} profile director(ies).\n`);
   return 0;
 }
@@ -188,4 +220,4 @@ if (require.main === module) {
   catch (error) { process.stderr.write(`${error instanceof Error ? error.message : "Canary check failed."}\n`); process.exitCode = 1; }
 }
 
-module.exports = { evaluate, summarize };
+module.exports = { clearFailureMarker, evaluate, summarize, writeFailureMarker };
