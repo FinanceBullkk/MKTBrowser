@@ -9,6 +9,7 @@ import type { Profile } from "@mktbrowser/types";
 import { ActivityDrawer } from "./components/activity/ActivityDrawer";
 import { McpPanel } from "./components/mcp/McpPanel";
 import { Settings } from "./components/screens/Settings";
+import { MissingLicenceKeyNotice } from "./components/screens/MissingLicenceKeyNotice";
 import { Prompt } from "./components/screens/Confirm";
 import { DeleteProfileDialog } from "./components/profile/DeleteProfileDialog";
 import { CommandPalette, type CommandAction } from "./components/palette/CommandPalette";
@@ -78,12 +79,23 @@ export function App(): JSX.Element {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [modal, setModal] = useState<ModalState>({ kind: "none" });
   const [toast, setToast] = useState<string | null>(null);
+  // Null until the first read, so the notice never flashes on a machine that does have a key.
+  const [licenceKeySet, setLicenceKeySet] = useState<boolean | null>(null);
 
   const refresh = useCallback(async () => {
     if (!window.mktBrowser) return;
     const list = await window.mktBrowser.profiles.list();
     setProfiles(list);
   }, []);
+
+  // Re-read on every section change rather than once: the key is saved on the Settings screen,
+  // and navigating away is the moment the notice should stop appearing.
+  useEffect(() => {
+    if (!window.mktBrowser) return;
+    void window.mktBrowser.settings
+      .get()
+      .then((s) => setLicenceKeySet(s.cloakBrowserLicenseKey.trim().length > 0));
+  }, [section]);
 
   // Initial load + activity stream subscription
   useEffect(() => {
@@ -324,6 +336,10 @@ export function App(): JSX.Element {
         onCmdK={() => setPaletteOpen(true)}
         onSettings={() => setSection("settings")}
       />
+
+      {licenceKeySet === false && (
+        <MissingLicenceKeyNotice onOpenSettings={() => setSection("settings")} />
+      )}
 
       <div className="flex-1 flex min-h-0">
         <LeftRail active={section} onChange={setSection} onCmdK={() => setPaletteOpen(true)} />

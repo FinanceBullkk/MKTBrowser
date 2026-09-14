@@ -57,3 +57,21 @@ test("Settings tells the operator the key is theirs to register", () => {
   assert.match(settings, /shared\s*\n?\s*key shares its one-browser-at-a-time limit/);
   assert.match(settings, /openLicenceSignup\(\)/);
 });
+
+test("an install with no key says so without being asked", () => {
+  const notice = source("../renderer/src/components/screens/MissingLicenceKeyNotice.tsx");
+  const app = source("../renderer/src/App.tsx");
+
+  // Settings only speaks to someone who went looking. This is what an operator who never opens
+  // Settings sees, and it must survive a refactor that treats it as decoration.
+  assert.match(app, /licenceKeySet === false && \(/);
+  assert.match(app, /<MissingLicenceKeyNotice onOpenSettings=/);
+  // Re-read per section, so saving a key in Settings clears it on the way out.
+  assert.match(app, /\}, \[section\]\);/);
+  assert.match(notice, /The key is yours to register/);
+  assert.match(notice, /openLicenceSignup\(\)/);
+  // Not dismissible: it ends when the key exists, not when someone clicks it away. Comments
+  // stripped, since the prose above the component describes exactly what the code must not do.
+  const code = notice.replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.doesNotMatch(code, /dismiss|localStorage|sessionStorage/i);
+});

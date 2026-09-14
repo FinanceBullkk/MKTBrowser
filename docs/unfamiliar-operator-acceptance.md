@@ -54,9 +54,11 @@ Mở MKT Browser.
 - Màn hình đầu tiên bảo bạn làm gì?
 - Có phải chờ engine tải về không? Có thanh tiến trình không, hay chỉ đứng im?
 - Nếu có màn hình đăng nhập hoặc kích hoạt: bạn có tự biết cần gì không?
-- Sản phẩm có nói rõ là cần **khoá CloakBrowser của riêng bạn**, và có chỉ chỗ đăng ký không? Phải
-  tự đoán ra điều đó thì ghi STUCK. Đừng xin khoá của người giao việc — dùng khoá người khác là hỏng
-  bài, vì đúng chỗ đó mới là thứ cần đo.
+- Sau khi qua màn chào, có dải nhắc nào nói bạn chưa có khoá CloakBrowser không? Nó có nói khoá là
+  **của riêng bạn** và chỉ được chỗ đăng ký không? Đọc xong bạn có biết phải làm gì tiếp không, hay
+  vẫn phải đoán? Không thấy dải đó, hoặc đọc xong vẫn không hiểu — ghi STUCK.
+- Đừng xin khoá của người giao việc — dùng khoá người khác là hỏng bài, vì đúng chỗ đó mới là thứ
+  cần đo.
 
 **Không tự sửa file cấu hình nào.** Bí ở đâu thì ghi STUCK ở đó.
 
