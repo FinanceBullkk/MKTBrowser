@@ -36,12 +36,35 @@ function main(): number {
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name);
 
-  const audit = auditProfileDirectories(profileManager.list().map((profile) => profile.id), directories);
+  // Doc ten muc con cua tung thu muc de phan loai - chi ten, khong mo noi dung nao.
+  const entriesByDirectory = new Map<string, string[]>();
+  for (const name of directories) {
+    try {
+      entriesByDirectory.set(name, readdirSync(path.join(profilesRoot, name)));
+    } catch {
+      // Khong doc duoc thi de nguyen: classifyOrphan se bao "unknown" thay vi doan.
+    }
+  }
+  const audit = auditProfileDirectories(
+    profileManager.list().map((profile) => profile.id),
+    directories,
+    entriesByDirectory,
+  );
   process.stdout.write(
     `Sản phẩm biết ${audit.registered.length} profile; trên đĩa có ${audit.directories.length} thư mục.\n`,
   );
-  for (const name of audit.orphanDirectories) {
-    process.stdout.write(`  MỒ CÔI   ${name}  (${path.join(profilesRoot, name)})\n`);
+  const label = {
+    "browser-data": "CO DU LIEU DUYET WEB - can nhac truoc khi xoa",
+    "engine-scaffold": "chi la cho lam viec cua engine, khong co du lieu nguoi dung",
+    unknown: "khong xac dinh duoc - mo ra xem truoc khi quyet",
+  };
+  for (const orphan of audit.orphans) {
+    process.stdout.write(`  MO COI   ${orphan.name}
+`);
+    process.stdout.write(`           ${label[orphan.kind]}
+`);
+    process.stdout.write(`           ${path.join(profilesRoot, orphan.name)}
+`);
   }
   for (const id of audit.missingDirectories) {
     process.stdout.write(`  THIẾU    ${id}  — sản phẩm có profile này nhưng không có dữ liệu\n`);
