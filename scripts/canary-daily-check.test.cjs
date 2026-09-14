@@ -12,7 +12,7 @@ function clean(overrides = {}) {
     engine: { provisioned: [{ engine: "cloakbrowser", version: "151.0.7922.108.6", binaryPresent: true }] },
     containment: [{ engine: "cloakbrowser", ok: true }],
     processes: {},
-    profiles: 3,
+    profileDirectories: 3,
     host: { ramFreeMb: 4000, diskFreeGb: 20 },
     ...overrides,
   };

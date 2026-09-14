@@ -112,7 +112,13 @@ function hostResources() {
   return { ramFreeMb: Number(fields.ramFreeMb), diskFreeGb: Number(fields.diskFreeGb) };
 }
 
-function profileCount() {
+/**
+ * Directories on disk, which is NOT the product's profile count: the app reported 19 profiles on
+ * 14 Sep 2026 while 20 directories existed. Whether the extra one is an orphan or simply a kind the
+ * adapter does not list, calling this "profiles" would put a number in the log that the product
+ * would contradict. It is context for reading drift, never a pass criterion.
+ */
+function profileDirectoryCount() {
   const root = path.join(process.env.LOCALAPPDATA ?? "", "MKTTool", "MKTBrowser", "data", "profiles");
   if (!existsSync(root)) return 0;
   return readdirSync(root, { withFileTypes: true }).filter((entry) => entry.isDirectory()).length;
@@ -161,7 +167,7 @@ function main() {
     engine,
     containment: containmentRules(engine.provisioned.map(({ engine: name, binary }) => ({ engine: name, binary }))),
     processes: liveProcesses(),
-    profiles: profileCount(),
+    profileDirectories: profileDirectoryCount(),
     host: hostResources(),
   };
   entry.findings = evaluate(entry);
@@ -173,7 +179,7 @@ function main() {
     process.stdout.write("This canary run is broken; restart the seven days after fixing the cause.\n");
     return 1;
   }
-  process.stdout.write(`Clean. Browser ${browser.version}, engine ${engine.provisioned.map((e) => `${e.engine} ${e.version}`).join(", ")}, ${entry.profiles} profile(s).\n`);
+  process.stdout.write(`Clean. Browser ${browser.version}, engine ${engine.provisioned.map((e) => `${e.engine} ${e.version}`).join(", ")}, ${entry.profileDirectories} profile director(ies).\n`);
   return 0;
 }
 
