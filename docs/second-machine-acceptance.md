@@ -22,7 +22,7 @@ Máy ảo trên chính host build **không** thay thế được — đã ghi tr
 | File cài đúng bản đã giữ | `local-test-artifacts/local-release-20260913/vm-gate/installer.exe` |
 | SHA-256 của nó | `a0adfcc0727bd2241d32cad426e06931f64836d1e1f44786f0eb9a46504ba549` |
 | Cache engine CloakBrowser | `%LOCALAPPDATA%\MKTTool\MKTBrowser\chromium\cloakbrowser` trên máy build (~516 MB) |
-| Khoá licence engine | Biến `CLOAKBROWSER_LICENSE_KEY` — **một ghế**, máy build phải đóng hẳn app trong lúc máy kia chạy |
+| Khoá licence engine | Biến `CLOAKBROWSER_LICENSE_KEY` — hai máy gate dùng chung **một khoá dev**, nên máy build phải đóng hẳn app trong lúc máy kia chạy |
 | 1 dòng proxy sống | `host:port:user:pass` |
 | Node 22 | Máy đích cần có để chạy gate |
 
@@ -110,6 +110,10 @@ Mỗi bước một kết quả PASS/FAIL, kèm log của bước 4, 5, 6 và d�
 
 ## Ghi chú về ghế licence
 
-CloakBrowser chỉ có **một ghế**. Máy build và máy thứ hai không chạy engine cùng lúc được. Bước 4
-trên máy mới đòi máy build đóng app hẳn — không thì nó bị từ chối ghế, và lỗi đó **trông y hệt một
-lần crash** (`exit 76`). Xác nhận ghế trống trước khi kết luận bất cứ điều gì.
+Đây là ràng buộc của **môi trường gate**, không phải của sản phẩm. Bản cài không kèm khoá nào; mỗi
+operator tự đăng ký khoá CloakBrowser riêng và dán vào Settings, lưu riêng trên từng máy. Giới hạn
+một-trình-duyệt-một-lúc là của gói free trên chính khoá đó.
+
+Bài này thì khác: hai máy gate dùng chung một khoá dev, nên chỉ có một ghế. Bước 4 trên máy mới đòi
+máy build đóng app hẳn — không thì nó bị từ chối ghế, và lỗi đó **trông y hệt một lần crash**
+(`exit 76`). Xác nhận ghế trống trước khi kết luận bất cứ điều gì.

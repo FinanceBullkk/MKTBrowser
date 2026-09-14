@@ -13,7 +13,7 @@ rồi mới hỏi.
 | File cài đặt | Đúng file đã giữ lại, không phải bản build mới |
 | SHA-256 của file cài | Để người làm tự đối chiếu ở Bước 0 |
 | 1 dòng proxy | Dạng `host:port:user:pass` |
-| Khoá licence engine | Nếu bản cài cần nhập |
+| **Không** đưa khoá CloakBrowser | Người làm tự đăng ký khoá riêng — xem *Ghi cho người giao việc* |
 | Máy Windows | Không phải máy đã từng cài sản phẩm |
 
 ## Cách ghi kết quả
@@ -54,6 +54,9 @@ Mở MKT Browser.
 - Màn hình đầu tiên bảo bạn làm gì?
 - Có phải chờ engine tải về không? Có thanh tiến trình không, hay chỉ đứng im?
 - Nếu có màn hình đăng nhập hoặc kích hoạt: bạn có tự biết cần gì không?
+- Sản phẩm có nói rõ là cần **khoá CloakBrowser của riêng bạn**, và có chỉ chỗ đăng ký không? Phải
+  tự đoán ra điều đó thì ghi STUCK. Đừng xin khoá của người giao việc — dùng khoá người khác là hỏng
+  bài, vì đúng chỗ đó mới là thứ cần đo.
 
 **Không tự sửa file cấu hình nào.** Bí ở đâu thì ghi STUCK ở đó.
 
@@ -133,4 +136,8 @@ Một bước FAIL hoặc STUCK là đủ để gate này **chưa đạt**. Bài
   Đó là các gate riêng.
 - Cảnh báo SmartScreen ở Bước 1 là dự kiến cho tới khi installer được ký. Ghi nhận phản ứng, đừng
   dạy người làm cách bỏ qua nó — chính phản ứng chưa được dạy mới là dữ liệu.
+- Sản phẩm là **mỗi operator một khoá riêng**: bản cài không kèm khoá nào, khoá do người dùng tự dán
+  vào Settings và lưu riêng trên từng máy. Đưa khoá của mình cho người làm vừa che mất bước cần đo,
+  vừa đụng giới hạn một-trình-duyệt-một-lúc của gói free trên khoá đó — và lần từ chối đó hiện ra
+  trông y như một cú crash.
 - Lưu kết quả vào `plans/reports/` theo mẫu `acceptance-{ngày}-unfamiliar-operator.md`.
