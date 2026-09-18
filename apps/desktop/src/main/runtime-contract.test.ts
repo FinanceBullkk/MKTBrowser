@@ -479,21 +479,29 @@ test("keeps browser ownership until failed launches and shutdown sweeps finish",
   assert.match(driver, /record\.windowWatcher\.stop\(\)/);
   assert.match(driver, /await terminateBrowserProcess\(profileId, record\)/);
   assert.match(driver, /this\.running\.delete\(profileId\)/);
-  assert.match(driver, /shutdownSource: "data-dir-sweep"/);
-  assert.match(driver, /"SHUTDOWN-COMPLETE" : "SHUTDOWN-FAILED"/);
-  assert.match(driver, /effectiveShutdownMethod = forcedBrowserTermination \? "SIGKILL"/);
   assert.match(driver, /const traceTarget = tracingInitialBootstrap/);
+
+  // Bậc thang tắt tiến trình rời sang module riêng ngày 18/09/2026. Cùng những điều kiện đó, đọc
+  // ở chỗ chúng đang nằm - chứ không phải bỏ đi vì file cũ không còn chứa chúng.
+  const shutdown = source("apps/desktop/src/main/browser-shutdown-sequence.ts");
+  assert.match(shutdown, /shutdownSource: "data-dir-sweep"/);
+  assert.match(shutdown, /"SHUTDOWN-COMPLETE" : "SHUTDOWN-FAILED"/);
+  assert.match(shutdown, /effectiveShutdownMethod = forcedBrowserTermination \? "SIGKILL"/);
 });
 
 test("serializes window watcher polls and requires process death for CDP-unreachable close", () => {
   const driver = source("apps/desktop/src/main/ChromiumBrowserDriver.ts");
 
   assert.doesNotMatch(driver, /setInterval\(async/);
-  assert.match(driver, /timer = setTimeout\(\(\) => void poll\(\), 1000\)/);
-  assert.match(driver, /const fetchTimeout = setTimeout\(\(\) => controller\.abort\(\), 1000\)/);
-  assert.match(driver, /A failed poll cannot prove the page count stayed at zero/);
+  // Chỗ dựng bộ theo dõi vẫn ở driver; thân vòng lặp rời sang module riêng ngày 18/09/2026.
   assert.match(driver, /\(\) => isPidAlive\(record\.pid\)/);
-  assert.match(driver, /Date\.now\(\) - unreachableSinceMs > 1500 && !isProcessAlive\(\)/);
+
+  const watcher = source("apps/desktop/src/main/browser-window-watcher.ts");
+  assert.doesNotMatch(watcher, /setInterval\(async/);
+  assert.match(watcher, /timer = setTimeout\(\(\) => void poll\(\), 1000\)/);
+  assert.match(watcher, /const fetchTimeout = setTimeout\(\(\) => controller\.abort\(\), 1000\)/);
+  assert.match(watcher, /A failed poll cannot prove the page count stayed at zero/);
+  assert.match(watcher, /Date\.now\(\) - unreachableSinceMs > 1500 && !isProcessAlive\(\)/);
 });
 
 test("reports a licence refusal as a refusal, not as a crash", () => {
