@@ -53,6 +53,11 @@ function readJson(relativePath) {
   return JSON.parse(readFileSync(path.join(repoRoot, relativePath), "utf8"));
 }
 
+/** Dựng regex từ một hằng viết tay: dấu chấm trong "0.3.23" phải là dấu chấm, không phải ký tự bất kỳ. */
+function escapeForRegExp(literal) {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function assertCandidateEngine(candidate, engine) {
   for (const [field, expected] of Object.entries({
     engineKind: engine.engineKind, engineChannel: engine.source, engineVersion: engine.version,
@@ -68,7 +73,18 @@ test("keeps the Windows candidate version and pinned Relay coherent", () => {
   const root = readJson("package.json");
   const desktop = readJson("apps/desktop/package.json");
   const relay = readJson("apps/desktop/relay-release.json");
+  // Hai mỏ neo của bộ tuple, và chúng CỐ Ý viết tay. Đọc phiên bản ra từ `package.json` sẽ biến
+  // phép kiểm này thành phép tự soi gương: nâng `package.json` một mình là đủ để nó xanh, trong
+  // khi thứ nó canh chính là "không ai được nâng phiên bản ở đúng một chỗ". Nâng bộ tuple nghĩa
+  // là sửa hai dòng ngay dưới đây, chạy lại, rồi để từng assert chỉ ra chỗ nào chưa theo kịp.
   const expectedVersion = "0.3.23";
+  const expectedCandidateId = "20260913-browser-0.3.23-relay-17-relay-payload-hash-fix-cft";
+
+  // Mỏ neo phải tự nhất quán trước khi có tư cách phán xử chỗ khác.
+  assert.ok(
+    expectedCandidateId.includes(expectedVersion),
+    `Candidate ID ${expectedCandidateId} does not carry version ${expectedVersion}: the tuple was bumped in one place only.`,
+  );
 
   assert.equal(root.version, expectedVersion, "root package version drifted");
   assert.equal(desktop.version, expectedVersion, "desktop package version drifted");
@@ -78,18 +94,38 @@ test("keeps the Windows candidate version and pinned Relay coherent", () => {
   assert.match(relay.url, /\/api\/relay\/download\/v17$/);
 
   const proxyGeo = readFileSync(path.join(repoRoot, "apps/desktop/src/main/proxyGeo.ts"), "utf8");
-  assert.match(proxyGeo, /MKTBrowser\/0\.3\.23/);
+  assert.match(
+    proxyGeo,
+    new RegExp(`MKTBrowser/${escapeForRegExp(expectedVersion)}`),
+    `apps/desktop/src/main/proxyGeo.ts does not announce MKTBrowser/${expectedVersion}.`,
+  );
 
   const mktToolRoot = resolveMktToolRoot();
   const mktToolReader = readFileSync(path.join(mktToolRoot, MKTTOOL_FILES[0]), "utf8");
-  assert.match(mktToolReader, /EXPECTED_WINDOWS_INSTALLER_VERSION = WINDOWS_INSTALLER_CANDIDATE\.browserVersion/);
+  const staleSibling =
+    `Checked MKTTool at ${mktToolRoot}. Either MKTTool changed shape, or this checkout is not ` +
+    `the one Browser ${expectedVersion} was frozen against - a stale side, not a typo.`;
+  assert.match(
+    mktToolReader,
+    /EXPECTED_WINDOWS_INSTALLER_VERSION = WINDOWS_INSTALLER_CANDIDATE\.browserVersion/,
+    `${MKTTOOL_FILES[0]} no longer derives the installer version from the candidate. ${staleSibling}`,
+  );
   assert.match(
     mktToolReader,
     /EXPECTED_WINDOWS_INSTALLER_CANDIDATE_ID = WINDOWS_INSTALLER_CANDIDATE\.id/,
+    `${MKTTOOL_FILES[0]} no longer derives the candidate ID from the candidate. ${staleSibling}`,
   );
   const candidate = readFileSync(path.join(mktToolRoot, MKTTOOL_FILES[2]), "utf8");
-  assert.match(candidate, /id: "20260913-browser-0\.3\.23-relay-17-relay-payload-hash-fix-cft"/);
-  assert.match(candidate, /browserVersion: "0\.3\.23"/);
+  assert.match(
+    candidate,
+    new RegExp(`id: "${escapeForRegExp(expectedCandidateId)}"`),
+    `MKTTool does not name candidate ${expectedCandidateId}. ${staleSibling}`,
+  );
+  assert.match(
+    candidate,
+    new RegExp(`browserVersion: "${escapeForRegExp(expectedVersion)}"`),
+    `MKTTool does not name browser version ${expectedVersion}. ${staleSibling}`,
+  );
   const engine = readJson("apps/desktop/windows-engine-release.json");
   assertCandidateEngine(candidate, engine);
   const mktToolMetadata = readFileSync(path.join(mktToolRoot, MKTTOOL_FILES[1]), "utf8");
