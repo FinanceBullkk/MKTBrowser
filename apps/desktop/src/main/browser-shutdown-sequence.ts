@@ -3,7 +3,8 @@
  *
  * Extracted from `ChromiumBrowserDriver.ts` on 18 September 2026 without changing behaviour. The
  * escalation - `Browser.close` over CDP, then SIGTERM, then SIGKILL - is the part of shutdown worth
- * reading on its own, and `browser-driver-shutdown.test.ts` already exercises it as a unit.
+ * reading on its own. `browser-driver-shutdown.test.ts` covers it, though it drives the whole
+ * driver to get here rather than calling this module directly.
  */
 import type { ProfileId } from "@mktbrowser/types";
 import { enumerateBrowserProcessesUsingDataDir } from "./browser-process-discovery";
