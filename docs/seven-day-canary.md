@@ -49,7 +49,31 @@ node scripts/canary-daily-check.cjs --summary
 
 ## Tiêu chí đạt
 
-**Bảy ngày lịch khác nhau, mỗi ngày sạch.** Không có điểm thành phần.
+**Bảy ngày lịch khác nhau, mỗi ngày sạch, và mỗi ngày máy thật sự được dùng.** Không có điểm
+thành phần.
+
+Vế thứ ba được **đo** từ 18/09/2026, trước đó chỉ được giả định. Mỗi dòng canary nay mang thêm
+`profileActivity`: số lần mở xong (`BOOTSTRAP-DONE`) và đóng xong (`SHUTDOWN-COMPLETE` /
+`CHILD-EXIT`) một profile trong **24 giờ trước lúc đo**, đọc từ `profile-shutdown.log` mà chính
+Browser ghi ra. Một ngày chỉ tính khi có **cả mở lẫn đóng**.
+
+Lượt quét mồ côi lúc khởi động (`ORPHAN-SWEEP-NONE`) **không** tính là dùng máy: nó chạy mỗi lần
+bật app, kể cả khi không ai mở profile nào. Đây chính là chỗ phép đo cũ nói dối được.
+
+Những dòng ghi trước 18/09 không có trường này; `--summary` đo lại chúng theo ngày lịch từ cùng
+nhật ký vòng đời và đánh dấu `*`. Đo lại, không phải cho qua.
+
+### Số đo thật lúc thêm phép đo — 18/09/2026
+
+```
+Canary log: 5 checks across 4 distinct day(s).
+Days the machine was actually used (opened and closed a profile): 1/7 - 2026-09-14*
+  Idle, does not count: 2026-09-15*, 2026-09-16*, 2026-09-17*
+```
+
+Bốn ngày có dòng ghi sạch, nhưng **chỉ 14/09 có một vòng mở-đóng profile thật**; ba ngày còn lại
+máy chỉ được bật lên. Theo tiêu chí ở trên, cửa sổ hiện tại đang là **1/7**, không phải 4/7.
+Muốn đủ bảy ngày thì phải dùng máy thật — mỗi ngày ít nhất một lần mở và đóng một profile.
 
 Một phát hiện ở bất kỳ ngày nào là canary **hỏng**, không phải "6/7". Sửa nguyên nhân, rồi bắt đầu
 lại từ ngày một. Lý do: thứ đang được chứng minh là **tính liên tục**. Một chuỗi bị đứt rồi nối lại
@@ -76,6 +100,8 @@ Lưu vào `plans/reports/` theo mẫu `acceptance-{ngày}-seven-day-canary.md`, 
 ## Ghi chú
 
 - Đặt Task Scheduler chạy hằng ngày cũng được, nhưng **vẫn phải thật sự dùng máy** — một cái task
-  chạy trên máy bỏ không tạo ra 7 dòng log và không chứng minh gì cả.
+  chạy trên máy bỏ không tạo ra 7 dòng log và không chứng minh gì cả. Từ 18/09/2026 điều này
+  không còn trông cậy vào trí nhớ: `--summary` đếm ngày được dùng, và một ngày ngồi không hiện
+  ra dưới dạng `Idle, does not count`.
 - Ngưỡng đĩa đang là 5 GB. Thấp hơn thì ghi phát hiện, vì cache engine và dữ liệu profile là thứ lớn
   dần theo ngày.
