@@ -7,10 +7,10 @@ const path = require("node:path");
 const APPROVED_ENGINE = Object.freeze(require("../apps/desktop/windows-engine-release.json"));
 
 const EXPECTED_RELAY = Object.freeze({
-  version: 17,
-  sizeBytes: 34289393,
-  sha256: "d8bf25dcb446d779bd5461419ea7562044e280ac1d16592a71a52f156f6359cf",
-  urlSuffix: "/api/relay/download/v17",
+  version: 18,
+  sizeBytes: 35113380,
+  sha256: "fabb6ebbe4ec166662689487cd60114be5baefd88d93f65b4e7faf802fac44f4",
+  urlSuffix: "/api/relay/download/v18",
 });
 const FORBIDDEN_RELAY_HASHES = Object.freeze([
   "cfeefc7f1284492a64f5cf8b29603b3e9a36e5d488ac676d2d109b2c4364b261",

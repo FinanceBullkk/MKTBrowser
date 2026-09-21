@@ -53,7 +53,7 @@ function readJson(relativePath) {
   return JSON.parse(readFileSync(path.join(repoRoot, relativePath), "utf8"));
 }
 
-/** Dựng regex từ một hằng viết tay: dấu chấm trong "0.3.23" phải là dấu chấm, không phải ký tự bất kỳ. */
+/** Dựng regex từ một hằng viết tay: dấu chấm trong "0.3.24" phải là dấu chấm, không phải ký tự bất kỳ. */
 function escapeForRegExp(literal) {
   return literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -77,8 +77,8 @@ test("keeps the Windows candidate version and pinned Relay coherent", () => {
   // phép kiểm này thành phép tự soi gương: nâng `package.json` một mình là đủ để nó xanh, trong
   // khi thứ nó canh chính là "không ai được nâng phiên bản ở đúng một chỗ". Nâng bộ tuple nghĩa
   // là sửa hai dòng ngay dưới đây, chạy lại, rồi để từng assert chỉ ra chỗ nào chưa theo kịp.
-  const expectedVersion = "0.3.23";
-  const expectedCandidateId = "20260913-browser-0.3.23-relay-17-relay-payload-hash-fix-cft";
+  const expectedVersion = "0.3.24";
+  const expectedCandidateId = "20260922-browser-0.3.24-relay-18-fast-profile-reuse-cft";
 
   // Mỏ neo phải tự nhất quán trước khi có tư cách phán xử chỗ khác.
   assert.ok(
@@ -88,10 +88,10 @@ test("keeps the Windows candidate version and pinned Relay coherent", () => {
 
   assert.equal(root.version, expectedVersion, "root package version drifted");
   assert.equal(desktop.version, expectedVersion, "desktop package version drifted");
-  assert.equal(relay.version, 17, "the candidate must carry immutable Relay v17");
-  assert.equal(relay.sizeBytes, 34289393);
-  assert.equal(relay.sha256, "d8bf25dcb446d779bd5461419ea7562044e280ac1d16592a71a52f156f6359cf");
-  assert.match(relay.url, /\/api\/relay\/download\/v17$/);
+  assert.equal(relay.version, 18, "the candidate must carry immutable Relay v18");
+  assert.equal(relay.sizeBytes, 35113380);
+  assert.equal(relay.sha256, "fabb6ebbe4ec166662689487cd60114be5baefd88d93f65b4e7faf802fac44f4");
+  assert.match(relay.url, /\/api\/relay\/download\/v18$/);
 
   const proxyGeo = readFileSync(path.join(repoRoot, "apps/desktop/src/main/proxyGeo.ts"), "utf8");
   assert.match(
@@ -149,7 +149,7 @@ test("keeps the Windows candidate version and pinned Relay coherent", () => {
       "apps/desktop/release/installer/windows-compatibility-artifacts.json",
     );
     assert.equal(evidence.browserVersion, expectedVersion, "generated installer evidence is stale");
-    assert.equal(evidence.artifacts.relay.version, "17", "generated Relay evidence is stale");
+    assert.equal(evidence.artifacts.relay.version, "18", "generated Relay evidence is stale");
   }
 });
 

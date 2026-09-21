@@ -15,7 +15,7 @@ const {
 
 const repoRoot = path.resolve(__dirname, "..");
 
-test("accepts the immutable Relay v17 tuple and guarded engine source", () => {
+test("accepts the immutable Relay v18 tuple and guarded engine source", () => {
   const result = verifyReleaseCandidate({ repoRoot });
   assert.equal(result.relay.version, EXPECTED_RELAY.version);
   assert.deepEqual(result.engine, { checked: false });
@@ -26,10 +26,10 @@ test("rejects stale, future and altered Relay candidate fields", () => {
   mkdirSync(path.join(root, "apps", "desktop"), { recursive: true });
   const file = path.join(root, "apps", "desktop", "relay-release.json");
   const pin = JSON.parse(readFileSync(path.join(repoRoot, "apps", "desktop", "relay-release.json"), "utf8"));
-  for (const mutation of [{ version: 16 }, { version: 18 }, { sizeBytes: 1 },
-    { sha256: "0".repeat(64) }, { url: "https://example.test/api/relay/download/v16" }]) {
+  for (const mutation of [{ version: 17 }, { version: 19 }, { sizeBytes: 1 },
+    { sha256: "0".repeat(64) }, { url: "https://example.test/api/relay/download/v17" }]) {
     writeFileSync(file, JSON.stringify({ ...pin, ...mutation }));
-    assert.throws(() => assertRelayPin(root), /v17|immutable/);
+    assert.throws(() => assertRelayPin(root), /v18|immutable/);
   }
 });
 
@@ -58,7 +58,7 @@ test("rejects a known-bad Relay hash and quarantined installer version", () => {
       url: "https://example.test/api/relay/download/v15",
     }),
   );
-  assert.throws(() => assertRelayPin(root), /v17|immutable|bad Relay/i);
+  assert.throws(() => assertRelayPin(root), /v18|immutable|bad Relay/i);
 
   const candidate = path.join(root, "package.json");
   writeFileSync(candidate, JSON.stringify({ version: "0.3.12" }));

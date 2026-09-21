@@ -18,29 +18,27 @@ place.
 
 | | |
 |---|---|
-| Reviewed candidate | `20260913-browser-0.3.23-relay-17-relay-payload-hash-fix-cft` |
-| Browser | `0.3.23`, control contract `4`, profile schema `3` |
-| Unreleased source | control contract `5`; verified sequential admission, SDK shutdown and explicit capacity refresh |
-| Pinned Relay | reviewed candidate v17 (`d8bf25dc…6359cf`); coordinated source is v18 and has no accepted artifact yet |
+| Prepared candidate | `20260922-browser-0.3.24-relay-18-fast-profile-reuse-cft` |
+| Browser | `0.3.24`, control contract `5`, profile schema `3` |
+| Source behavior | verified sequential admission, SDK shutdown and explicit capacity refresh |
+| Pinned Relay | locally built and smoke-verified v18 (`fabb6ebb…ac44f4`) from MKTTool `49b6292`; immutable publication remains OPEN |
 | Pinned engine | CFT `152.0.7977.64` (`b0db25de…8004`), exact archive published in sequences 24 and 25 |
 | Packaged Cloak lifecycle | **PASS** — R27 completed `P1 -> P2 -> P1 -> P2`, 4/4 usable launches in 3.647-3.929 s with clean seat return |
 | Native fingerprint gate | **FAIL** — R28 completed 10/10 launches; criteria A/B/C all failed, so identity and real-account-safety claims remain prohibited |
-| Next candidate | **OPEN** — final review, coordinated Relay 18, two clean builds and exact clean-VM acceptance are not complete |
-| Local gate | PASS (scope-limited) — 7/7 commands exit 0; installer suite 82 pass / 1 machine-integration skip; VM/human gates remain separate |
-| Two-build equivalence | PASS — 129 files; `app.asar` byte-identical (51,770,195 bytes) |
-| Clean-VM installer lifecycle | PASS (scope-limited) — exact 0.3.23 installer clean `9/9`, repair `13/13`, uninstall `15/15` on restored Defender snapshot |
+| Candidate status | **OPEN** — two isolated builds and exact clean-VM acceptance are not complete |
+| Local gate | PASS before the version freeze; the 0.3.24 tuple tests pass and the full frozen-source gate must be rerun |
+| Prior two-build equivalence | PASS for 0.3.23 — 129 files; `app.asar` byte-identical (51,770,195 bytes) |
+| Prior clean-VM lifecycle | PASS (scope-limited) for exact 0.3.23 — clean `9/9`, repair `13/13`, uninstall `15/15` |
 | Clean-VM CFT activation | **OPEN** — signed first-run provisioning and real engine execution are not yet accepted |
-| Compatibility publication | PASS — sequence 23 (from 22), sequence 24 (from 21), and sequence 25 (fresh from 0) immutable objects read back |
-| Live artifact routes | PASS — all sequence-23 artifacts HTTP 200 with exact size/SHA-256; sequence-24 installer route verified |
-| Published / promoted | Published to authenticated compatibility channel; **operator promotion: No** |
+| Prior compatibility publication | PASS for 0.3.23 — sequences 23/24/25 immutable objects read back |
+| 0.3.24 published / promoted | **No / No** |
 
-Rollout remains NO-GO. The candidate is unsigned by the 12 August 2026 owner decision, so Windows
-shows SmartScreen once, and the installer raises an Administrator prompt for the machine-wide WebRTC
-containment rules: one on a fresh install, one on uninstall, and two on an upgrade, because the
-previous version's uninstaller removes its rules before the new one installs them.
+Rollout remains NO-GO. No 0.3.24 installer has been accepted or published. The Windows package is
+still expected to be unsigned under the 12 August 2026 owner decision, so exact SmartScreen/UAC
+behavior must be re-observed on the retained candidate rather than inherited from 0.3.23.
 
-Current evidence of record lives in the workspace release reports, not in this file:
-`plans/reports/release-260913-1030-browser-0.3.23-release-readiness.md`.
+Current evidence of record lives in the workspace fast-switch and local-VM release plans, not in
+this file. The 0.3.23 report remains historical evidence only.
 
 ## Fast sequential profile reuse live checkpoint - 22 September 2026
 
@@ -69,9 +67,10 @@ Browser is a profile manager with proxy binding, not an antidetect or identity-i
 The redacted measurement receipt is retained and the raw host-identifying file was deleted.
 
 Final review also closed two cancellation races so a close or app shutdown arriving during capacity
-state persistence cannot start a later engine attempt. Coordinated Relay 18, packaged two-process
-contention, real proxy/DNS/WebRTC, exact clean-VM installer evidence, second-PC, human acceptance and
-canary remain OPEN. No new installer, publication or promotion is recorded. See the
+state persistence cannot start a later engine attempt. Relay 18 is now locally built and
+smoke-verified, but packaged two-process contention, real proxy/DNS/WebRTC, two isolated Browser
+builds, exact clean-VM installer evidence, second-PC, human acceptance and canary remain OPEN. No
+new installer, publication or promotion is recorded. See the
 [active plan](../plans/260921-1331-cloak-fast-profile-switch/plan.md).
 
 ## Quality review source repairs - 10 September 2026
