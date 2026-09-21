@@ -110,7 +110,7 @@ test("a vendor refusal cannot automatically spawn another engine", () => {
 });
 
 test("defers a close with no tracked process and closes immediately after launch publication", () => {
-  const publicLaunch = method("async launch(profileId", "/**\n   * One operator request");
+  const publicLaunch = method("async launch(profileId", "private async launchWithLicenseSeat");
   const close = method("async close(profileId", "isRunning(profileId");
 
   assert.match(close, /launchPromises\.has\(profileId\)[\s\S]*?closeRequestedDuringLaunch\.add/);
