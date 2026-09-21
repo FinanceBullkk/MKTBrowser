@@ -65,13 +65,13 @@ async function gracefulShutdown(
   //    websocket disconnects mid-call; timeout-bounded so a stuck send can
   //    never block the signal escalation below. Attempt it even when the tracked PID already
   //    exited because Windows launchers can hand CDP to an untracked browser process.
-  if (r.session) {
+  if (r.gracefulClose || r.session) {
     writeProfileLifecycleLog(profileId, r, "Browser.close", {
       shutdownSource: "graceful-shutdown",
     });
-    await withTimeout(r.session.closeBrowser(), 3000);
+    await withTimeout(r.gracefulClose ? r.gracefulClose() : r.session!.closeBrowser(), 3000);
     if (!trackedPidWasAlive) {
-      await withTimeout(r.session.close(), 1000);
+      if (r.session) await withTimeout(r.session.close(), 1000);
       // The tracked PID was a Windows launcher that already handed off, so the browser doing the
       // actual closing is one we are not watching. Returning here used to hand straight to the
       // data-dir sweep, whose first act is SIGKILL — landing on a browser three milliseconds into
@@ -84,11 +84,11 @@ async function gracefulShutdown(
     }
     // Chromium needs ~500ms–2s to flush session-restore on macOS; 4s is margin.
     if (await waitForPidDeath(pid, 4000)) {
-      await withTimeout(r.session.close(), 1000);
+      if (r.session) await withTimeout(r.session.close(), 1000);
       return "Browser.close";
     }
 
-    await withTimeout(r.session.close(), 1000);
+    if (r.session) await withTimeout(r.session.close(), 1000);
   } else if (!trackedPidWasAlive) {
     return "already-exited";
   }

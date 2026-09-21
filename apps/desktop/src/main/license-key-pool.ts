@@ -101,6 +101,12 @@ export interface LicenseKeyPoolOptions {
   leaseRecords?: readonly LicenseSeatLeaseRecord[];
 }
 
+export interface LicenseAdmissionCandidate {
+  key: string;
+  keyFingerprint: string;
+  state: LicenseKeyState;
+}
+
 /**
  * Conservative local waits after close/refusal. Neither duration proves vendor availability.
  */
@@ -223,6 +229,57 @@ export class LicenseKeyPool {
     if (!free) return null;
     free.profileId = profileId;
     return free.key;
+  }
+
+  /** Select one locally reconciled key without reserving it or exposing it in public snapshots. */
+  admissionCandidate(profileId: string): LicenseAdmissionCandidate | null {
+    this.refresh();
+    const held = this.slots.find((slot) => slot.profileId === profileId);
+    if (held) {
+      return {
+        key: held.key,
+        keyFingerprint: fingerprintLicenseKey(held.key),
+        state: this.stateOf(held),
+      };
+    }
+    if (this.slots.some((slot) => slot.profileId !== null)) return null;
+    const eligible = this.slots.filter((slot) => !slot.blockedByUnreconciledLease);
+    const candidate =
+      eligible.find((slot) => this.stateOf(slot) === "idle") ??
+      eligible.find((slot) => this.stateOf(slot) === "cooling");
+    return candidate
+      ? {
+          key: candidate.key,
+          keyFingerprint: fingerprintLicenseKey(candidate.key),
+          state: this.stateOf(candidate),
+        }
+      : null;
+  }
+
+  /** Reserve the exact key whose vendor capacity was observed; never substitute another key. */
+  acquireCandidate(profileId: string, key: string): string | null {
+    this.refresh();
+    const held = this.slots.find((slot) => slot.profileId === profileId);
+    if (held) return held.key === key ? held.key : null;
+    const slot = this.slots.find((candidate) => candidate.key === key);
+    if (!slot || this.stateOf(slot) !== "idle") return null;
+    slot.profileId = profileId;
+    return slot.key;
+  }
+
+  /**
+   * Remove only a reconciled local cooling hold after its journal record was durably retired.
+   * This does not claim that a particular vendor lease was confirmed released.
+   */
+  retireObservedAvailableHold(keyFingerprint: string): boolean {
+    this.refresh();
+    const slot = this.slots.find(
+      (candidate) => fingerprintLicenseKey(candidate.key) === keyFingerprint,
+    );
+    if (!slot || slot.profileId !== null || slot.blockedByUnreconciledLease) return false;
+    slot.coolingUntilMs = null;
+    this.leaseDeadlines.delete(keyFingerprint);
+    return true;
   }
 
   /** The key reserved for a profile, without reserving one. */

@@ -105,3 +105,34 @@ test("close invalidates and disposes a connection that completes late", async ()
   await assert.rejects(connecting, /closed while connecting/);
   assert.equal(clientClosed, true);
 });
+
+test("closeBrowser uses a browser-level transport instead of the page target", async () => {
+  const pageCalls: string[] = [];
+  const browserCalls: string[] = [];
+  let browserClientClosed = false;
+  const session = new CdpSession({
+    port: 9222,
+    clientFactory: async () => ({
+      Page: { enable: async () => {} },
+      send: async (method: string) => {
+        pageCalls.push(method);
+      },
+      close: async () => {},
+    }) as never,
+    browserClientFactory: async () => ({
+      send: async (method: string) => {
+        browserCalls.push(method);
+      },
+      close: async () => {
+        browserClientClosed = true;
+      },
+    }) as never,
+  });
+
+  await session.connect();
+  await session.closeBrowser();
+
+  assert.deepEqual(browserCalls, ["Browser.close"]);
+  assert.deepEqual(pageCalls, []);
+  assert.equal(browserClientClosed, true);
+});

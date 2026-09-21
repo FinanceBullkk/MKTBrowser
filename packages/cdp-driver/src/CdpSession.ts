@@ -50,6 +50,16 @@ export interface CdpSessionOptions {
   engine?: string;
   /** Override the transport factory for deterministic connection tests. */
   clientFactory?: (options: { host: string; port: number }) => Promise<CDP.Client>;
+  /** Override the browser-level transport used for reliable `Browser.close`. */
+  browserClientFactory?: (options: { host: string; port: number }) => Promise<CDP.Client>;
+}
+
+async function connectBrowserClient(options: { host: string; port: number }): Promise<CDP.Client> {
+  const version = await CDP.Version(options);
+  if (!version.webSocketDebuggerUrl) {
+    throw new Error("CDP browser endpoint is unavailable");
+  }
+  return CDP({ ...options, target: version.webSocketDebuggerUrl });
 }
 
 /**
@@ -175,14 +185,26 @@ export class CdpSession {
    */
   async closeBrowser(): Promise<void> {
     if (!this.client) throw new Error("CDP session not connected");
+    const host = this.opts.host ?? "localhost";
+    let browserClient: CDP.Client;
+    try {
+      const factory = this.opts.browserClientFactory ?? connectBrowserClient;
+      browserClient = await factory({ host, port: this.opts.port });
+    } catch {
+      browserClient = this.client;
+    }
     const send = (
-      this.client as unknown as {
+      browserClient as unknown as {
         send: (m: string, p?: Record<string, unknown>) => Promise<unknown>;
       }
     ).send;
-    await send.call(this.client, "Browser.close").catch(() => {
-      // Connection drops as Chromium shuts down — expected.
-    });
+    try {
+      await send.call(browserClient, "Browser.close").catch(() => {
+        // Connection drops as Chromium shuts down — expected.
+      });
+    } finally {
+      if (browserClient !== this.client) await browserClient.close().catch(() => {});
+    }
   }
 
   /**

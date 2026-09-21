@@ -52,7 +52,7 @@ const GLOW_BY_STATE: Record<TileState, string> = {
 interface Props {
   profile: TileData;
   /** Chromium is winding down (window closed / Stop pressed) but not yet
-   *  exited — show a "Terminating…" transitional state instead of "Stop". */
+   *  exited — show a "Closing profile" transitional state instead of "Stop". */
   terminating?: boolean;
   onOpen: () => void;
   onLaunch: () => Promise<void> | void;
@@ -217,7 +217,7 @@ export function ProfileTile({
             disabled
             leftIcon={<Loader2 size={11} className="animate-spin" />}
           >
-            Terminating…
+            Closing profile
           </Button>
         ) : !isRunning && !profile.managed ? (
           <Button
@@ -228,7 +228,7 @@ export function ProfileTile({
             onClick={handleLaunch}
             leftIcon={<Play size={11} fill="currentColor" strokeWidth={0} />}
           >
-            {pending ? "Launching…" : "Launch"}
+            {pending ? "Checking availability" : "Launch"}
           </Button>
         ) : isRunning ? (
           <Button
@@ -239,7 +239,7 @@ export function ProfileTile({
             onClick={handleStop}
             leftIcon={<Square size={10} fill="currentColor" strokeWidth={0} />}
           >
-            {pending ? "Stopping…" : "Stop"}
+            {pending ? "Closing profile" : "Stop"}
           </Button>
         ) : (
           <Button variant="secondary" size="md" fullWidth disabled>

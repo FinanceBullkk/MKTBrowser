@@ -45,6 +45,22 @@ test("the telemetry switches travel with the DNS ones", () => {
   }
 });
 
+test("the SDK lifecycle leaves background networking available for prompt vendor release", () => {
+  const switches = networkPrivacySwitches(false, { allowBackgroundNetworking: true });
+
+  assert.equal(switches.includes("--disable-background-networking"), false);
+  for (const flag of [
+    "--dns-over-https-mode=off",
+    "--dns-prefetch-disable",
+    "--disable-async-dns",
+    "--disable-component-update",
+    "--disable-domain-reliability",
+    "--disable-client-side-phishing-detection",
+  ]) {
+    assert.ok(switches.includes(flag), `${flag} must remain on the SDK lifecycle.`);
+  }
+});
+
 test("the feature list carries every DNS bypass Chromium exposes as a feature", () => {
   const arg = disableFeaturesArg();
 
@@ -90,5 +106,10 @@ test("the switches are applied on one unconditional path", () => {
     (driverSource.match(/networkPrivacySwitches\(/g) ?? []).length,
     1,
     "One call site only; a branch-specific second one is the leak coming back.",
+  );
+  assert.match(
+    driverSource,
+    /allowBackgroundNetworking:\s*useSdkLifecycle/,
+    "Only the measured SDK lifecycle may keep background networking available for vendor release.",
   );
 });

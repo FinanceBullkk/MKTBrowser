@@ -209,6 +209,38 @@ export class LicenseLeaseJournal {
     });
   }
 
+  /**
+   * Retire a locally reconciled cooling/refusal record after fresh aggregate capacity is available.
+   * The state is `expired`, never `confirmed-released`, because count zero cannot identify a lease.
+   */
+  async expireBlockingKeyLease(
+    keyFingerprint: string,
+    lastErrorCode: string,
+  ): Promise<LicenseLeaseRecord | null> {
+    if (!/^[a-f0-9]{64}$/.test(keyFingerprint)) {
+      throw new Error("A blocking license lease requires a valid key fingerprint.");
+    }
+    assertStableErrorCode(lastErrorCode);
+    return this.enqueueMutation(async () => {
+      const current = [...this.records.values()].find(
+        (record) =>
+          record.keyFingerprint === keyFingerprint &&
+          (record.state === "cooling" || record.state === "terminal-refused"),
+      );
+      if (!current) return null;
+      const next: LicenseLeaseRecord = {
+        ...current,
+        state: "expired",
+        childPid: null,
+        lastErrorCode,
+        updatedAt: new Date(this.now()).toISOString(),
+      };
+      await this.persistRecord(current.id, next);
+      this.records.set(current.id, next);
+      return { ...next };
+    });
+  }
+
   private enqueueMutation<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.mutationQueue.then(operation);
     this.mutationQueue = result.then(

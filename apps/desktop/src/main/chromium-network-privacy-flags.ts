@@ -48,14 +48,19 @@ export function disableFeaturesArg(): string {
  * at the connection's own resolver; in both cases DoH and the prefetcher would
  * bypass that path, so both get the same treatment.
  */
-export function networkPrivacySwitches(_hasProxy: boolean): string[] {
+export function networkPrivacySwitches(
+  _hasProxy: boolean,
+  options: { allowBackgroundNetworking?: boolean } = {},
+): string[] {
   return [
     "--dns-over-https-mode=off",
     "--dns-prefetch-disable",
     "--disable-async-dns",
     "--no-prerender",
     "--no-pings",
-    "--disable-background-networking",
+    // CloakBrowser sends its vendor session-release request during SDK shutdown. R13 isolated this
+    // switch as the cause of delayed seat release, so only that measured lifecycle omits it.
+    ...(options.allowBackgroundNetworking ? [] : ["--disable-background-networking"]),
     "--disable-component-update",
     "--disable-domain-reliability",
     "--disable-client-side-phishing-detection",

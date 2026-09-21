@@ -247,6 +247,8 @@ export interface MktBrowserMcpServerOptions {
   runtimeCapabilities?: RuntimeCapabilityProvider;
   /** Aggregate local key/lease state. Never includes key identifiers or profile details. */
   licenseCapacity?: RuntimeLicenseCapacityProvider;
+  /** Explicit bounded refresh. It observes capacity only and never launches an engine. */
+  refreshLicenseCapacity?: RuntimeLicenseCapacityProvider;
   /** Capability filter resolved from the authenticated transport token. */
   accessPolicy?: McpToolAccessPolicy;
   /**
@@ -462,6 +464,7 @@ export function createMktBrowserMcpServer(opts: MktBrowserMcpServerOptions): Mkt
     engineInfo,
     runtimeCapabilities,
     licenseCapacity,
+    refreshLicenseCapacity,
     appVersion,
   } = opts;
   const activityLog = opts.activityLog ?? new ActivityLog();
@@ -505,6 +508,7 @@ export function createMktBrowserMcpServer(opts: MktBrowserMcpServerOptions): Mkt
         engineInfo,
         runtimeCapabilities,
         licenseCapacity,
+        refreshLicenseCapacity,
         appVersion,
       });
       activityLog.finish(event, "ok", summarize(result), startedAt);
@@ -531,6 +535,7 @@ interface DispatchDeps {
   engineInfo?: () => MktBrowserEngineInfo;
   runtimeCapabilities?: MktBrowserMcpServerOptions["runtimeCapabilities"];
   licenseCapacity?: MktBrowserMcpServerOptions["licenseCapacity"];
+  refreshLicenseCapacity?: MktBrowserMcpServerOptions["refreshLicenseCapacity"];
   appVersion?: string;
 }
 
@@ -585,6 +590,11 @@ async function dispatch(
   switch (name) {
     case "get_runtime_info": {
       return await buildRuntimeInfo(deps);
+    }
+    case "refresh_license_capacity": {
+      return {
+        licenseCapacity: await resolveRuntimeLicenseCapacity(deps.refreshLicenseCapacity),
+      };
     }
     case "list_profiles": {
       const profiles = profileManager.list().map((p) => ({
@@ -883,6 +893,12 @@ const TOOL_DEFINITIONS = [
     name: "get_runtime_info",
     description:
       "Report this build's provider, app version, contract version, profile schema version, browser-engine state, and implemented capabilities. Call it before deciding which other tools to use; do not infer capabilities from the version number.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "refresh_license_capacity",
+    description:
+      "Run one bounded licence-capacity observation and return sanitized aggregate state. This never launches or queues a browser profile.",
     inputSchema: { type: "object", properties: {} },
   },
   {

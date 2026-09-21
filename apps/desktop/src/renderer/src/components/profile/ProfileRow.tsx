@@ -186,10 +186,10 @@ export function ProfileRow({
             variant="secondary"
             size="sm"
             disabled
-            title="Terminating…"
+            title="Closing profile"
             leftIcon={<Loader2 size={9} className="animate-spin" />}
           >
-            Ending
+            Closing profile
           </Button>
         ) : !isRunning && !profile.managed ? (
           <Button
@@ -199,7 +199,7 @@ export function ProfileRow({
             onClick={handleLaunch}
             leftIcon={<Play size={10} fill="currentColor" strokeWidth={0} />}
           >
-            {pending ? "…" : "Launch"}
+            {pending ? "Checking availability" : "Launch"}
           </Button>
         ) : isRunning ? (
           <Button
@@ -209,7 +209,7 @@ export function ProfileRow({
             onClick={handleStop}
             leftIcon={<Square size={9} fill="currentColor" strokeWidth={0} />}
           >
-            {pending ? "…" : "Stop"}
+            {pending ? "Closing profile" : "Stop"}
           </Button>
         ) : (
           <Button variant="secondary" size="sm" disabled>

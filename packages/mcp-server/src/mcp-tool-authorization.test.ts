@@ -141,9 +141,9 @@ async function refused(client: Client, name: string, profileId = "p1"): Promise<
   }
 }
 
-test("the inventory under test is the full 24 tools, split into both groups", async () => {
+test("the inventory under test is the full 25 tools, split into both groups", async () => {
   // Guards every assertion below against a vacuous pass if the policy or table is emptied.
-  assert.equal(Object.keys(MCP_TOOL_EXPOSURE).length, 24);
+  assert.equal(Object.keys(MCP_TOOL_EXPOSURE).length, 25);
   assert.ok(
     DENIED_TO_RELAY.length >= 15,
     `expected many denied tools, got ${DENIED_TO_RELAY.length}`,

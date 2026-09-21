@@ -11,7 +11,10 @@ import type { ProfileId, ProxyConfig } from "@mktbrowser/types";
 import { appendProfileLifecycleLine } from "./profile-lifecycle-log.ts";
 
 export interface BrowserProcessContext {
-  child: ChildProcess;
+  /** Present for the legacy direct-spawn path. The vendor SDK owns its child process privately. */
+  child?: ChildProcess;
+  /** Vendor SDK context close when Playwright owns the process pipe. */
+  gracefulClose?: () => Promise<void>;
   cdpEndpoint: string;
   port: number;
   pid: number;
@@ -36,7 +39,8 @@ export interface RunningProcess extends BrowserProcessContext {
 }
 
 export interface LaunchingProcess {
-  child: ChildProcess;
+  child?: ChildProcess;
+  gracefulClose?: () => Promise<void>;
   cdpEndpoint: string | null;
   port: number | null;
   pid: number;

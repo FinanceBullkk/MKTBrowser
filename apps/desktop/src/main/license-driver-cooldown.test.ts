@@ -5,9 +5,11 @@ import { registerHooks } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { LicenseCapacityObserver } from "./license-capacity-observer.ts";
 import { LicenseKeyPool } from "./license-key-pool.ts";
 import { LicenseLeaseJournal } from "./license-lease-journal.ts";
 import { LicenseLeaseRecorder } from "./license-lease-recorder.ts";
+import { LicenseSeatCoordinator } from "./license-seat-coordinator.ts";
 import { reconcileStartupOrphanLeases } from "./startup-license-lease-reconciliation.ts";
 
 // Load the production driver; only Electron and process launch are replaced in this test.
@@ -26,24 +28,157 @@ const hooks = registerHooks({
 const { ChromiumBrowserDriver } = await import("./ChromiumBrowserDriver.ts");
 hooks.deregister();
 
-async function fixture(keys = ["cb_fixture_primary"]) {
+async function fixture(
+  keys = ["cb_fixture_primary"],
+  coordinatorOptions?: {
+    fetch: (input: string, init: RequestInit) => Promise<Response>;
+    fastReuseEnabled?: boolean;
+  },
+) {
   const root = await mkdtemp(join(tmpdir(), "mkt-licence-cooldown-"));
   const clock = { now: Date.now() };
   const journal = await LicenseLeaseJournal.open(join(root, "leases.json"), { now: () => clock.now });
   const pool = new LicenseKeyPool({ keys, cooldownMs: 1000, refusalCooldownMs: 2000, now: () => clock.now });
   const recorder = new LicenseLeaseRecorder(journal);
+  const observer = coordinatorOptions
+    ? new LicenseCapacityObserver({ fetch: coordinatorOptions.fetch })
+    : undefined;
+  const coordinator = observer
+    ? new LicenseSeatCoordinator({
+        pool,
+        journal,
+        observer,
+        fastReuseEnabled: coordinatorOptions?.fastReuseEnabled ?? true,
+      })
+    : undefined;
   const driver = new ChromiumBrowserDriver({
     chromiumBootstrap: { getEngine: () => "cloakbrowser" } as never,
     profileManager: { get: () => ({ name: "Disposable fixture" }) } as never,
     licenseKeyPool: pool,
     licenseLeaseRecorder: recorder,
+    licenseSeatCoordinator: coordinator,
+    fastLicenseReuseEnabled: coordinatorOptions?.fastReuseEnabled,
     extensionStoreRoot: root,
   });
   const internals = driver as unknown as {
     releaseLicenseKey: (id: string, method: string, released?: boolean) => Promise<void>;
   };
-  return { root, clock, journal, pool, recorder, driver, internals };
+  return { root, clock, journal, pool, recorder, observer, coordinator, driver, internals };
 }
+
+test("driver admission observes capacity, reserves durably, and makes one engine attempt", async () => {
+  let observations = 0;
+  const f = await fixture(["cb_fixture_primary"], {
+    fetch: async () => {
+      observations += 1;
+      return new Response(JSON.stringify({ active: 0, limit: 1 }), { status: 200 });
+    },
+  });
+  try {
+    let attempts = 0;
+    Object.defineProperty(f.driver, "launchTracked", { value: async (id: string) => {
+      attempts += 1;
+      return { id };
+    } });
+
+    assert.equal((await f.driver.launch("coordinated")).id, "coordinated");
+    assert.equal(observations, 1);
+    assert.equal(attempts, 1);
+    assert.equal(f.journal.get("coordinated")?.state, "reserved");
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+test("reservation persistence failure prevents the engine attempt and releases memory capacity", async () => {
+  const f = await fixture(["cb_fixture_primary"], {
+    fetch: async () => new Response(JSON.stringify({ active: 0, limit: 1 }), { status: 200 }),
+  });
+  try {
+    Object.defineProperty(f.recorder, "reserved", {
+      value: async () => { throw new Error("synthetic storage failure"); },
+    });
+    let attempts = 0;
+    Object.defineProperty(f.driver, "launchTracked", { value: async () => {
+      attempts += 1;
+      return { id: "must-not-launch" };
+    } });
+
+    await assert.rejects(f.driver.launch("storage-failed"), /synthetic storage failure/);
+    assert.equal(attempts, 0);
+    assert.equal(f.pool.availableCount(), 1);
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+test("vendor refusal invalidates the observation and never retries the engine", async () => {
+  const f = await fixture(["cb_fixture_primary"], {
+    fetch: async () => new Response(JSON.stringify({ active: 0, limit: 1 }), { status: 200 }),
+  });
+  try {
+    let attempts = 0;
+    Object.defineProperty(f.driver, "launchTracked", { value: async (id: string) => {
+      attempts += 1;
+      await f.recorder.started(id, 123);
+      throw Object.assign(new Error("synthetic vendor refusal"), { licenseExitCode: 76 });
+    } });
+
+    await assert.rejects(f.driver.launch("refused"), /Do not retry before/);
+    assert.equal(attempts, 1);
+    assert.equal(f.observer?.freshObservation(), null);
+    assert.equal(f.journal.get("refused")?.state, "terminal-refused");
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+test("close invalidates admission while capacity observation is pending", async () => {
+  let resolveCapacity!: (response: Response) => void;
+  const f = await fixture(["cb_fixture_primary"], {
+    fetch: async () => await new Promise<Response>((resolve) => { resolveCapacity = resolve; }),
+  });
+  try {
+    let attempts = 0;
+    Object.defineProperty(f.driver, "launchTracked", { value: async () => {
+      attempts += 1;
+      return { id: "must-not-launch" };
+    } });
+    const launch = f.driver.launch("closing");
+    await new Promise((resolve) => setImmediate(resolve));
+    await f.driver.close("closing");
+    resolveCapacity(new Response(JSON.stringify({ active: 0, limit: 1 }), { status: 200 }));
+
+    await assert.rejects(launch, /state changed while availability was checked/);
+    assert.equal(attempts, 0);
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+test("closeAll cancels capacity admission before any engine attempt", async () => {
+  let resolveCapacity!: (response: Response) => void;
+  const f = await fixture(["cb_fixture_primary"], {
+    fetch: async () => await new Promise<Response>((resolve) => { resolveCapacity = resolve; }),
+  });
+  try {
+    let attempts = 0;
+    Object.defineProperty(f.driver, "launchTracked", { value: async () => {
+      attempts += 1;
+      return { id: "must-not-launch" };
+    } });
+    const launch = f.driver.launch("closing-all");
+    await new Promise((resolve) => setImmediate(resolve));
+    const closing = f.driver.closeAll({ shutdown: true });
+    resolveCapacity(new Response(JSON.stringify({ active: 0, limit: 1 }), { status: 200 }));
+
+    await assert.rejects(launch, /state changed while availability was checked/);
+    await closing;
+    assert.equal(attempts, 0);
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
 
 test("Browser.close persists cooling and prevents any engine attempt before the deadline", async () => {
   const f = await fixture();

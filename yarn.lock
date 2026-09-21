@@ -1184,6 +1184,7 @@ __metadata:
     "@vitejs/plugin-react": "npm:^4.3.4"
     better-sqlite3: "npm:^12.11.1"
     chrome-remote-interface: "npm:^0.33.3"
+    cloakbrowser: "npm:0.5.10"
     electron: "npm:42.8.1"
     electron-builder: "npm:^26.15.3"
     electron-vite: "npm:^5.0.0"
@@ -1191,6 +1192,7 @@ __metadata:
     framer-motion: "npm:^12.0.0"
     https-proxy-agent: "npm:^9.0.0"
     lucide-react: "npm:^0.469.0"
+    playwright-core: "npm:1.62.0"
     proxy-chain: "npm:^2.7.1"
     rcedit: "npm:5.0.2"
     react: "npm:^19.0.0"
@@ -2642,6 +2644,31 @@ __metadata:
     strip-ansi: "npm:^6.0.1"
     wrap-ansi: "npm:^7.0.0"
   checksum: 10c0/4bda0f09c340cbb6dfdc1ed508b3ca080f12992c18d68c6be4d9cf51756033d5266e61ec57529e610dacbf4da1c634423b0c1b11037709cc6b09045cbd815df5
+  languageName: node
+  linkType: hard
+
+"cloakbrowser@npm:0.5.10":
+  version: 0.5.10
+  resolution: "cloakbrowser@npm:0.5.10"
+  dependencies:
+    tar: "npm:^7.0.0"
+  peerDependencies:
+    mmdb-lib: ">=2.0.0"
+    playwright-core: ">=1.53.0"
+    puppeteer-core: ">=21.0.0"
+    socks-proxy-agent: ">=10.0.0"
+  peerDependenciesMeta:
+    mmdb-lib:
+      optional: true
+    playwright-core:
+      optional: true
+    puppeteer-core:
+      optional: true
+    socks-proxy-agent:
+      optional: true
+  bin:
+    cloakbrowser: dist/cli.js
+  checksum: 10c0/42bfdc8ff0365c3a5263d2c061f94ac34a25102d9ca6c968e172067d9365d92f4fb2f310987071f33ea7fd77b948251ec248d70460e82880a7bc06664feb3738
   languageName: node
   linkType: hard
 
@@ -5108,6 +5135,15 @@ __metadata:
   languageName: node
   linkType: hard
 
+"playwright-core@npm:1.62.0":
+  version: 1.62.0
+  resolution: "playwright-core@npm:1.62.0"
+  bin:
+    playwright-core: cli.js
+  checksum: 10c0/bc7c770cc4118a7ea65d2c357fc271aaef49af6b5b8964aa19d765d4ea3473e56af926f693123fd63ed6e580830059905722ac68fbf22a31a5b1533e11600228
+  languageName: node
+  linkType: hard
+
 "plist@npm:3.1.0":
   version: 3.1.0
   resolution: "plist@npm:3.1.0"
@@ -5983,7 +6019,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"tar@npm:^7.5.4, tar@npm:^7.5.7":
+"tar@npm:^7.0.0, tar@npm:^7.5.4, tar@npm:^7.5.7":
   version: 7.5.22
   resolution: "tar@npm:7.5.22"
   dependencies:

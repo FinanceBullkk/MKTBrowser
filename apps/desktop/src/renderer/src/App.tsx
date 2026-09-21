@@ -40,7 +40,7 @@ export function App(): JSX.Element {
   // Ephemeral UI state.
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
   // Profiles whose Chromium is winding down (window closed / Stop pressed) but
-  // hasn't fully exited — surfaced as a "Terminating…" state on the card.
+  // hasn't fully exited — surfaced as a "Closing profile" state on the card.
   const [closingIds, setClosingIds] = useState<Set<string>>(new Set());
   // One live safety-net timer per terminating profile. Keyed by id so a
   // re-terminate (or a relaunch) cancels the *previous* episode's timer
@@ -129,7 +129,7 @@ export function App(): JSX.Element {
     // Refetch on ANY running-state change, including the "user closed
     // Chromium window directly" case which doesn't go through MCP at all.
     // Track the transient "closing" phase separately so the card can show
-    // "Terminating…" while the process winds down (still in the running map).
+    // "Closing profile" while the process winds down (still in the running map).
     const offRunning = window.mktBrowser.profiles.onRunningChanged((change) => {
       const id = change.profileId;
       // Any state transition ends the previous episode's safety timer, so a
@@ -147,7 +147,7 @@ export function App(): JSX.Element {
       });
       if (change.kind === "closing") {
         // Safety net: if a terminal (closed/launched) event is ever missed,
-        // don't strand the card on "Terminating…" — self-clear after 10s.
+        // don't strand the card on "Closing profile" — self-clear after 10s.
         const timer = window.setTimeout(() => {
           // Guard against a superseding episode: if a newer "closing" replaced
           // this timer between it elapsing and its callback running, do nothing.

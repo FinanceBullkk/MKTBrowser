@@ -10,6 +10,7 @@ import { buildMcpInstructions } from "./server.js";
 
 test("profile-management token hides and rejects every page, cookie, and raw-CDP tool", () => {
   assert.equal(Object.hasOwn(MCP_TOOL_EXPOSURE, "delete_profile"), false);
+  assert.equal(MCP_TOOL_EXPOSURE.refresh_license_capacity, "profile-lifecycle");
   for (const [name, capability] of Object.entries(MCP_TOOL_EXPOSURE)) {
     const expected = ![
       "page-control",

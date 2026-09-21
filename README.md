@@ -20,8 +20,12 @@ place.
 |---|---|
 | Reviewed candidate | `20260913-browser-0.3.23-relay-17-relay-payload-hash-fix-cft` |
 | Browser | `0.3.23`, control contract `4`, profile schema `3` |
-| Pinned Relay | v17 (`d8bf25dc…6359cf`) |
+| Unreleased source | control contract `5`; verified sequential admission, SDK shutdown and explicit capacity refresh |
+| Pinned Relay | reviewed candidate v17 (`d8bf25dc…6359cf`); coordinated source is v18 and has no accepted artifact yet |
 | Pinned engine | CFT `152.0.7977.64` (`b0db25de…8004`), exact archive published in sequences 24 and 25 |
+| Packaged Cloak lifecycle | **PASS** — R27 completed `P1 -> P2 -> P1 -> P2`, 4/4 usable launches in 3.647-3.929 s with clean seat return |
+| Native fingerprint gate | **FAIL** — R28 completed 10/10 launches; criteria A/B/C all failed, so identity and real-account-safety claims remain prohibited |
+| Next candidate | **OPEN** — final review, coordinated Relay 18, two clean builds and exact clean-VM acceptance are not complete |
 | Local gate | PASS (scope-limited) — 7/7 commands exit 0; installer suite 82 pass / 1 machine-integration skip; VM/human gates remain separate |
 | Two-build equivalence | PASS — 129 files; `app.asar` byte-identical (51,770,195 bytes) |
 | Clean-VM installer lifecycle | PASS (scope-limited) — exact 0.3.23 installer clean `9/9`, repair `13/13`, uninstall `15/15` on restored Defender snapshot |
@@ -37,6 +41,38 @@ previous version's uninstaller removes its rules before the new one installs the
 
 Current evidence of record lives in the workspace release reports, not in this file:
 `plans/reports/release-260913-1030-browser-0.3.23-release-readiness.md`.
+
+## Fast sequential profile reuse live checkpoint - 22 September 2026
+
+Current source keeps one local profile at a time and adds a five-second, count-only capacity
+observation before each Windows CloakBrowser admission. The desktop coordinator serializes refresh
+and launch admission, rejects duplicate work instead of queueing it, invalidates stale results on
+state/key changes, and makes at most one engine attempt per operator request. Fresh aggregate
+availability can retire a reconciled local cooling/refusal hold as `expired`; it never proves or
+records that a specific vendor lease was confirmed released.
+
+Contract 5 adds sanitized availability/reason/freshness fields and the authenticated
+`refresh_license_capacity` profile-lifecycle tool. The capability `license-capacity-v1` remains
+unadvertised pending live integration acceptance. `MKT_BROWSER_FAST_LICENSE_REUSE=0` restores the
+conservative 25/30-minute path. Native fingerprint arguments, profile storage, proxy checks, and
+managed authorization remain unchanged.
+
+R26 proved that executing the licensed binary with `--version` consumed the only provider session;
+production now reads the already verified bootstrap version instead. R27 then passed the full
+packaged `P1 -> P2 -> P1 -> P2` sequence: all four profiles became usable within 3.647-3.929 seconds
+of the previous close, retained all 13 required native flags, closed through `Browser.close`, left
+no engine process and returned provider capacity to `0/1`.
+
+R28 completed five disposable profiles twice. Lifecycle remained clean for all 10 launches, but
+fingerprint criteria A, B and C independently failed. This preserves the product boundary: MKT
+Browser is a profile manager with proxy binding, not an antidetect or identity-isolation product.
+The redacted measurement receipt is retained and the raw host-identifying file was deleted.
+
+Final review also closed two cancellation races so a close or app shutdown arriving during capacity
+state persistence cannot start a later engine attempt. Coordinated Relay 18, packaged two-process
+contention, real proxy/DNS/WebRTC, exact clean-VM installer evidence, second-PC, human acceptance and
+canary remain OPEN. No new installer, publication or promotion is recorded. See the
+[active plan](../plans/260921-1331-cloak-fast-profile-switch/plan.md).
 
 ## Quality review source repairs - 10 September 2026
 

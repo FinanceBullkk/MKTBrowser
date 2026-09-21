@@ -53,3 +53,46 @@ test("preserves only a valid aggregate manual retry deadline", async () => {
   }
   assert.equal(await resolveRuntimeLicenseCapacity(() => ({ ...measured, free: 1, cooling: 0 })), null);
 });
+
+test("preserves only complete sanitized availability and vendor observation pairs", async () => {
+  const measured = {
+    total: 1,
+    free: 1,
+    active: 0,
+    pendingRecovery: 0,
+    cooling: 0,
+    availability: "ready",
+    reason: "CAPACITY_AVAILABLE",
+    observedAt: "2026-09-21T05:00:00.000Z",
+    freshUntil: "2026-09-21T05:00:05.000Z",
+    vendorActive: 0,
+    vendorLimit: 1,
+    keyFingerprint: "must-not-cross-the-runtime-boundary",
+  };
+  assert.deepEqual(await resolveRuntimeLicenseCapacity(() => measured), {
+    total: 1,
+    free: 1,
+    active: 0,
+    pendingRecovery: 0,
+    cooling: 0,
+    availability: "ready",
+    reason: "CAPACITY_AVAILABLE",
+    observedAt: "2026-09-21T05:00:00.000Z",
+    freshUntil: "2026-09-21T05:00:05.000Z",
+    vendorActive: 0,
+    vendorLimit: 1,
+  });
+
+  for (const invalid of [
+    { ...measured, reason: undefined },
+    { ...measured, availability: "free" },
+    { ...measured, reason: "provider said yes" },
+    { ...measured, freshUntil: undefined },
+    { ...measured, freshUntil: "2026-09-21T04:59:59.000Z" },
+    { ...measured, vendorLimit: undefined },
+    { ...measured, vendorActive: 2 },
+    { ...measured, observedAt: undefined, freshUntil: undefined },
+  ]) {
+    assert.equal(await resolveRuntimeLicenseCapacity(() => invalid), null);
+  }
+});

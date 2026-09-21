@@ -40,7 +40,7 @@ export function mktBrowserMcpBaseUrl(port: number = MKT_BROWSER_DEFAULT_MCP_PORT
  * written against the previous number would now behave incorrectly. Adding an optional response
  * field is not a bump.
  */
-export const MKT_BROWSER_CONTRACT_VERSION = 4;
+export const MKT_BROWSER_CONTRACT_VERSION = 5;
 
 /** Bump when the on-disk profile record changes shape and needs a migration. */
 export const MKT_BROWSER_PROFILE_SCHEMA_VERSION = 3;
@@ -118,6 +118,14 @@ export interface MktBrowserEngineInfo {
   status: ChromiumStatus["kind"] | "unknown";
 }
 
+export type MktBrowserLicenseAvailability =
+  | "ready"
+  | "checking"
+  | "in-use"
+  | "cooling"
+  | "recovering"
+  | "unable-to-verify";
+
 export interface MktBrowserLicenseCapacity {
   total: number;
   free: number;
@@ -126,6 +134,17 @@ export interface MktBrowserLicenseCapacity {
   cooling: number;
   /** Earliest local retry, not proof of vendor release. Omitted when unknown or a slot is free. */
   retryAt?: string;
+  /** Aggregate admission state. It never identifies a key, lease, or profile. */
+  availability?: MktBrowserLicenseAvailability;
+  /** Stable machine-readable explanation paired with availability. */
+  reason?: string;
+  /** Response-completion time for the latest vendor observation. */
+  observedAt?: string;
+  /** Display projection only; desktop admission still requires its own fresh observation. */
+  freshUntil?: string;
+  /** Aggregate vendor usage, never proof that a particular local lease was released. */
+  vendorActive?: number;
+  vendorLimit?: number;
 }
 
 export interface MktBrowserRuntimeInfo {

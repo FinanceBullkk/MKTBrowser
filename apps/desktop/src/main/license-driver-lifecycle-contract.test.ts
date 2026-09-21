@@ -47,12 +47,27 @@ test("makes active state durable before publishing a running Browser", () => {
   assert.ok(activeAt >= 0 && activeAt < publishAt, "active write must precede publication");
 });
 
-test("makes starting state durable before spawning a licensed Browser", () => {
+test("makes starting state durable before either licensed Browser launcher", () => {
   const launch = method("private async launchTracked", "private async handleRunningChildExit");
   const startingAt = launch.indexOf("licenseLeaseRecorder?.started");
-  const spawnAt = launch.indexOf("const child = spawn");
+  const sdkAt = launch.indexOf("await launchCloakBrowserSdkLifecycle");
+  const spawnAt = launch.indexOf("child = spawn");
 
-  assert.ok(startingAt >= 0 && startingAt < spawnAt, "starting write must precede spawn");
+  assert.ok(startingAt >= 0 && startingAt < sdkAt, "starting write must precede SDK launch");
+  assert.ok(startingAt < spawnAt, "starting write must precede direct spawn");
+});
+
+test("keeps page control on a port and routes fast Windows Cloak through the official SDK", () => {
+  const launch = method("private async launchTracked", "private async handleRunningChildExit");
+
+  assert.match(launch, /shouldUseCloakBrowserSdkLifecycle\(engine, this\.fastLicenseReuse\)/);
+  assert.match(launch, /"--remote-debugging-port=0"/);
+  assert.match(launch, /useSdkLifecycle \? \[\] : \[`--user-data-dir=\$\{browserDataDir\}`\]/);
+  assert.match(launch, /initialUrl && !useSdkLifecycle/);
+  assert.match(launch, /await launchCloakBrowserSdkLifecycle\(\{/);
+  assert.match(launch, /await discoverCloakBrowserSdkProcess\(browserDataDir\)/);
+  assert.match(launch, /gracefulClose: sdkLifecycle\.close/);
+  assert.match(launch, /new CdpSession\(\{ port, engine \}\)/);
 });
 
 test("persists release before changing in-memory capacity", () => {
@@ -71,9 +86,9 @@ test("classifies an observed child exit before releasing its seat", () => {
 
   assert.match(
     exit,
-    /didBrowserExitReleaseSeat\(exitCode, signal, record\.pid === record\.child\.pid\)/,
+    /didBrowserExitReleaseSeat\(exitCode, signal, record\.pid === childPid\)/,
   );
-  assert.match(cleanup, /pending\.pid === pending\.child\.pid/);
+  assert.match(cleanup, /childPid !== undefined && pending\.pid === childPid/);
 });
 
 test("keeps an unreachable or ambiguously exited Browser seat resting", () => {
@@ -92,4 +107,13 @@ test("a vendor refusal cannot automatically spawn another engine", () => {
   assert.equal(launch.match(/this\.launchTracked\(/g)?.length, 1);
   assert.match(launch, /markRefused/);
   assert.match(launch, /throw engineUnavailable/);
+});
+
+test("defers a close with no tracked process and closes immediately after launch publication", () => {
+  const publicLaunch = method("async launch(profileId", "/**\n   * One operator request");
+  const close = method("async close(profileId", "isRunning(profileId");
+
+  assert.match(close, /launchPromises\.has\(profileId\)[\s\S]*?closeRequestedDuringLaunch\.add/);
+  assert.match(publicLaunch, /closeRequestedDuringLaunch\.delete\(profileId\)[\s\S]*?await this\.close\(profileId\)/);
+  assert.match(publicLaunch, /closed while starting/);
 });

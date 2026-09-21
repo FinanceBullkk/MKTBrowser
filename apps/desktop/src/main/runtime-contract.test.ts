@@ -15,7 +15,7 @@ import { resolveRuntimeCapabilities } from "../../../../packages/mcp-server/src/
 const REPO_ROOT = new URL("../../../../", import.meta.url);
 
 test("publishes a versioned runtime contract", () => {
-  assert.equal(MKT_BROWSER_CONTRACT_VERSION, 4);
+  assert.equal(MKT_BROWSER_CONTRACT_VERSION, 5);
   assert.equal(MKT_BROWSER_PROFILE_SCHEMA_VERSION, 3);
   assert.deepEqual(
     [...MKT_BROWSER_BASE_CAPABILITIES],
@@ -73,8 +73,11 @@ test("publishes measured license capacity without exposing lease or key identiti
   const capacityModule = source("packages/mcp-server/src/runtime-license-capacity.ts");
 
   assert.match(main, /LicenseLeaseJournal\.open/);
-  assert.match(main, /capacitySnapshot\(licenseLeaseJournal\.snapshot\(\)\)/);
+  assert.match(main, /licenseSeatCoordinator\?\.snapshot\(\)/);
   assert.match(main, /licenseCapacity,/);
+  assert.match(main, /refreshLicenseCapacity,/);
+  assert.match(server, /name: "refresh_license_capacity"/);
+  assert.match(server, /case "refresh_license_capacity"/);
   assert.doesNotMatch(
     main,
     /MktBrowserCapability\[\] = \["license-capacity-v1"\]/,
@@ -82,6 +85,30 @@ test("publishes measured license capacity without exposing lease or key identiti
   );
   assert.match(server, /resolveRuntimeLicenseCapacity/);
   assert.doesNotMatch(capacityModule, /keyTail|keyFingerprint|profileId/);
+});
+
+test("waits for startup recovery before the first explicit capacity refresh", () => {
+  const main = source("apps/desktop/src/main/index.ts");
+  const refreshStart = main.indexOf("const refreshLicenseCapacity = async () =>");
+  const refreshEnd = main.indexOf("browserDriver = new ChromiumBrowserDriver", refreshStart);
+  const refresh = main.slice(refreshStart, refreshEnd);
+
+  assert.ok(refreshStart >= 0 && refreshEnd > refreshStart, "capacity refresh wiring is missing");
+  assert.ok(
+    refresh.indexOf("await startupOrphanSweep") <
+      refresh.indexOf("licenseSeatCoordinator?.refresh()"),
+    "vendor capacity refresh must not race startup lease reconciliation",
+  );
+});
+
+test("locks the canonical Windows app before opening shared licence state", () => {
+  const main = source("apps/desktop/src/main/index.ts");
+  const lock = main.indexOf("app.requestSingleInstanceLock()");
+  const journal = main.indexOf("LicenseLeaseJournal.open");
+
+  assert.ok(lock >= 0, "normal Windows sessions must acquire Electron's process lock");
+  assert.ok(journal > lock, "shared licence state must open only after the process lock is held");
+  assert.match(main, /if \(normalWindowsSession && !app\.requestSingleInstanceLock\(\)\) app\.exit\(0\)/);
 });
 
 test("keeps every failing layer separately addressable", () => {
@@ -156,14 +183,16 @@ test("exposes get_runtime_info and classifies failures by code, not by message",
   assert.match(driver, /throw proxyRejected\(/);
 });
 
-test("verifies proxy egress before starting the bridge or spawning the engine", () => {
+test("verifies proxy egress before starting the bridge or either engine launcher", () => {
   const driver = source("apps/desktop/src/main/ChromiumBrowserDriver.ts");
   const verifyIndex = driver.indexOf("await verifyProxyGeoLaunch");
   const bridgeIndex = driver.indexOf("await startBridgeForProfile");
-  const spawnIndex = driver.indexOf("const child = spawn(chromiumPath");
+  const sdkIndex = driver.indexOf("await launchCloakBrowserSdkLifecycle");
+  const spawnIndex = driver.indexOf("child = spawn(chromiumPath");
 
   assert.ok(verifyIndex >= 0, "proxy egress preflight is missing");
   assert.ok(bridgeIndex > verifyIndex, "the proxy bridge starts before egress verification");
+  assert.ok(sdkIndex > bridgeIndex, "the SDK engine starts before the proxy bridge is ready");
   assert.ok(spawnIndex > bridgeIndex, "the engine spawns before the proxy bridge is ready");
   assert.match(driver.slice(verifyIndex, bridgeIndex), /reject: proxyRejected/);
 });
@@ -523,6 +552,7 @@ test("reports a licence refusal as a refusal, not as a crash", () => {
   // how a refused key came back as a running profile with a pid and an endpoint.
   assert.doesNotMatch(driver, /throw new Error\(\s*`Chromium exited during/);
   assert.match(driver, /await settleLicenceVerdict\(launchProcess, child, spawnedAtMs\)/);
+  assert.match(driver, /await sdkLifecycle\.settleLicenceVerdict\(spawnedAtMs\)/);
 
   // The mapping is only useful if it still covers the codes the engine actually exits with.
   const channel = source("apps/desktop/src/main/cloakbrowser-pro-channel.ts");
@@ -531,20 +561,24 @@ test("reports a licence refusal as a refusal, not as a crash", () => {
   }
 });
 
-test("spawns the engine detached so a crashed app leaves a reclaimable browser", () => {
-  // detached:false puts the browser in the app's Windows job object, so force-killing the app
-  // kills the browser the one way that keeps its licence seat, and leaves nothing behind that
-  // could be asked to release it. Detached, the startup sweep can still close it politely - or
-  // the operator can close the window, which does the same thing.
+test("uses the SDK only for enabled Windows Cloak and retains fallback orphan recovery", () => {
   const driver = source("apps/desktop/src/main/ChromiumBrowserDriver.ts");
-  assert.match(driver, /detached: true,/);
-  assert.equal(driver.includes("detached: false"), false);
+  const policy = source("apps/desktop/src/main/license-lifecycle-policy.ts");
+  assert.match(driver, /shouldUseCloakBrowserSdkLifecycle\(engine, this\.fastLicenseReuse\)/);
+  assert.match(driver, /detached: shouldDetachBrowserProcess\(engine, this\.fastLicenseReuse\)/);
+  assert.match(policy, /engine === "cloakbrowser" && fastReuseEnabled && platform === "win32"/);
 
-  // The sweep is the other half: without it a detached browser is just a stray window.
+  // Detached fallback modes still depend on the orphan sweep for conservative recovery.
   const index = source("apps/desktop/src/main/index.ts");
   assert.match(index, /sweepOrphanedProfileBrowsers\(/);
   assert.match(index, /reconcileStartupOrphanLeases\(/);
   assert.match(index, /startupBarrier: startupOrphanSweep/);
+});
+
+test("ships the exact SDK runtime dependencies in packaged builds", () => {
+  const builder = source("apps/desktop/electron-builder.yml");
+  assert.match(builder, /cloakbrowser: "0\.5\.10"/);
+  assert.match(builder, /playwright-core: "1\.62\.0"/);
 });
 
 test("routes every GitHub Actions job through a GitHub-hosted runner", () => {

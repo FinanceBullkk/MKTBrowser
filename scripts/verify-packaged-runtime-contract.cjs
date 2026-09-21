@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const { execFile, spawn } = require("node:child_process");
 const { createHash } = require("node:crypto");
 const { once } = require("node:events");
-const { createReadStream, existsSync } = require("node:fs");
+const { createReadStream, existsSync, readFileSync } = require("node:fs");
 const { mkdir, mkdtemp, readFile, rm, writeFile } = require("node:fs/promises");
 const net = require("node:net");
 const os = require("node:os");
@@ -16,7 +16,9 @@ const {
 } = require("./system-chrome-engine-fixture.cjs");
 
 const EXPECTED_PROVIDER = "mkt-browser";
-const EXPECTED_CONTRACT_VERSION = 4;
+const EXPECTED_CONTRACT_VERSION = readContractVersion(
+  readFileSync(path.resolve(__dirname, "..", "packages", "types", "src", "index.ts"), "utf8"),
+);
 const HEALTH_REQUEST_TIMEOUT_MS = 2_000;
 const MCP_REQUEST_TIMEOUT_MS = 90_000;
 const execFileAsync = promisify(execFile);
@@ -175,6 +177,7 @@ async function runIteration(executable, iteration, options, iterationEvidence) {
     const toolNames = tools.map((tool) => tool.name);
     for (const required of [
       "get_runtime_info",
+      "refresh_license_capacity",
       "list_profiles",
       "create_profile",
       "update_profile",
@@ -426,6 +429,12 @@ function assertExpectedEngine(expectedVersion, observed) {
       `"${observed.version}" (sha256 ${observed.sha256}). A stability streak measured across two ` +
       `engines is not a streak; re-declare the expectation and start the count again.`,
   );
+}
+
+function readContractVersion(source) {
+  const match = /export const MKT_BROWSER_CONTRACT_VERSION = (\d+);/.exec(source);
+  if (!match) throw new Error("Cannot read MKT_BROWSER_CONTRACT_VERSION from the runtime contract.");
+  return Number(match[1]);
 }
 
 function parseOptions(args) {
@@ -715,4 +724,10 @@ if (require.main === module) {
   });
 }
 
-module.exports = { assertExpectedEngine, parseOptions, sanitizeDiagnostics, withHttpDeadline };
+module.exports = {
+  assertExpectedEngine,
+  parseOptions,
+  readContractVersion,
+  sanitizeDiagnostics,
+  withHttpDeadline,
+};

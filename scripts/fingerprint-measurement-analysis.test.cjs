@@ -14,7 +14,11 @@ const {
 } = require("./fingerprint-measurement-analysis.cjs");
 const { seedVerifiedStableEngineCache } = require("./fingerprint-engine-cache-fixture.cjs");
 const { assertTemporaryPath } = require("./fingerprint-measurement-evidence.cjs");
-const { recoverProfilesAndSeat } = require("./fingerprint-measurement-mcp.cjs");
+const {
+  assertSeatFree,
+  capacityCheckFromError,
+  recoverProfilesAndSeat,
+} = require("./fingerprint-measurement-mcp.cjs");
 const { buildProbeAssets } = require("./fingerprint-probe-source.cjs");
 const { selectProfileFingerprint } = require("./fingerprint-profile-cohort-config.cjs");
 
@@ -297,6 +301,70 @@ test("keeps raw fingerprint evidence inside the temporary directory", () => {
     () => assertTemporaryPath(os.tmpdir()),
     /must stay inside the temporary directory/,
   );
+});
+
+test("accepts only a fresh completed provider observation as a free seat", async () => {
+  const calls = [];
+  const capacity = {
+    total: 1,
+    free: 1,
+    active: 0,
+    pendingRecovery: 0,
+    cooling: 0,
+    availability: "ready",
+    reason: "CAPACITY_AVAILABLE",
+    observedAt: "2026-09-21T10:00:00.000Z",
+    freshUntil: "2026-09-21T10:00:05.000Z",
+    vendorActive: 0,
+    vendorLimit: 1,
+  };
+  const result = await assertSeatFree(
+    {
+      callTool: async (name, args) => {
+        calls.push([name, args]);
+        return { licenseCapacity: capacity };
+      },
+    },
+    "synthetic preflight",
+  );
+  assert.deepEqual(calls, [["refresh_license_capacity", {}]]);
+  assert.deepEqual(result.capacity, capacity);
+  assert.ok(Date.parse(result.completedAt) >= Date.parse(result.requestedAt));
+});
+
+test("rejects a local free count without fresh provider availability", async () => {
+  let failure;
+  await assert.rejects(
+    assertSeatFree(
+      {
+        callTool: async () => ({
+          licenseCapacity: {
+            total: 1,
+            free: 1,
+            active: 0,
+            pendingRecovery: 0,
+            cooling: 0,
+            availability: "unable-to-verify",
+            reason: "CAPACITY_NOT_CHECKED",
+          },
+        }),
+      },
+      "synthetic unknown state",
+    ),
+    (error) => {
+      failure = error;
+      return /not ready/.test(error.message);
+    },
+  );
+  assert.deepEqual(capacityCheckFromError(failure)?.capacity, {
+    total: 1,
+    free: 1,
+    active: 0,
+    pendingRecovery: 0,
+    cooling: 0,
+    availability: "unable-to-verify",
+    reason: "CAPACITY_NOT_CHECKED",
+  });
 });
 
 test("cleans a refused disposable app when no local seat recovery remains", async () => {

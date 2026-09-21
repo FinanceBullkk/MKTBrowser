@@ -57,5 +57,19 @@ test("cooling guidance names a manual retry deadline and does not promise instan
   assert.match(message, /no automatic retry/);
   assert.doesNotMatch(message, /It frees in|free one sooner|Close a running profile to free/);
   assert.match(driver, /seatReleasedOverride \?\? false/);
-  assert.match(main, /capacitySnapshot\(licenseLeaseJournal\.snapshot\(\)\)/);
+  assert.match(main, /licenseSeatCoordinator\?\.snapshot\(\)/);
+  assert.match(main, /licenseSeatCoordinator\?\.refresh\(\)/);
+});
+
+test("uses truthful profile transition labels", () => {
+  const tile = source("../renderer/src/components/profile/ProfileTile.tsx");
+  const row = source("../renderer/src/components/profile/ProfileRow.tsx");
+  const app = source("../renderer/src/App.tsx");
+  const combined = `${tile}\n${row}\n${app}`;
+
+  assert.match(tile, /Checking availability/);
+  assert.match(tile, /Closing profile/);
+  assert.match(row, /Checking availability/);
+  assert.match(row, /Closing profile/);
+  assert.doesNotMatch(combined, /Terminating|Ending|Launching…|Stopping…/);
 });

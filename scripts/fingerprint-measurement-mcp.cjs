@@ -7,12 +7,10 @@ const net = require("node:net");
 const path = require("node:path");
 const { measureCdpEndpoint } = require("./fingerprint-measurement-cdp.cjs");
 
-// Default propagation window between profiles. It is deliberately short, and on 21 September
-// 2026 it proved too short on a one-seat key: the vendor answered a launch with
-// session_limit_exceeded (active_sessions 1, limit 1) minutes after a clean close that the
-// local pool had already reported as a free seat. A longer explicit quiet interval does not
-// itself prove that the vendor has released the seat.
-const REMOTE_SEAT_SETTLE_MS = 5_000;
+// The integrated product now performs a bounded provider-capacity check. A fixed delay is not
+// release evidence, so the measurement path defaults to no artificial wait and records the
+// provider response-completion timestamp instead.
+const REMOTE_SEAT_SETTLE_MS = 0;
 
 async function launchMktBrowser({ executable, appPath, userData, licenseKey }) {
   await writeFile(
@@ -105,12 +103,57 @@ async function waitForReadyRuntime(app, timeoutMs) {
 }
 
 async function assertSeatFree(app, stage) {
-  const runtime = await app.callTool("get_runtime_info", {});
-  assert.deepEqual(
-    runtime.licenseCapacity,
-    { total: 1, free: 1, active: 0, pendingRecovery: 0, cooling: 0 },
-    `CloakBrowser seat is not free at ${stage}.`,
-  );
+  const requestedAt = new Date().toISOString();
+  const refreshed = await app.callTool("refresh_license_capacity", {});
+  const completedAt = new Date().toISOString();
+  const capacity = refreshed?.licenseCapacity;
+  const check = { requestedAt, completedAt, capacity };
+  try {
+    assert.equal(capacity?.total, 1, `CloakBrowser has an unexpected seat total at ${stage}.`);
+    assert.equal(capacity?.free, 1, `CloakBrowser seat is not free at ${stage}.`);
+    assert.equal(capacity?.active, 0, `CloakBrowser still has an active local seat at ${stage}.`);
+    assert.equal(
+      capacity?.pendingRecovery,
+      0,
+      `CloakBrowser still has pending recovery at ${stage}.`,
+    );
+    assert.equal(capacity?.cooling, 0, `CloakBrowser seat is still cooling at ${stage}.`);
+    assert.equal(capacity?.availability, "ready", `CloakBrowser capacity is not ready at ${stage}.`);
+    assert.equal(
+      capacity?.reason,
+      "CAPACITY_AVAILABLE",
+      `CloakBrowser capacity was not verified available at ${stage}.`,
+    );
+    assert.equal(capacity?.vendorActive, 0, `Vendor capacity is occupied at ${stage}.`);
+    assert.ok(
+      Number.isSafeInteger(capacity?.vendorLimit) && capacity.vendorLimit >= 1,
+      `Vendor capacity limit is invalid at ${stage}.`,
+    );
+    assert.ok(
+      Number.isFinite(Date.parse(capacity?.observedAt)),
+      `Vendor response-completion time is missing at ${stage}.`,
+    );
+    assert.ok(
+      Number.isFinite(Date.parse(capacity?.freshUntil)),
+      `Vendor freshness deadline is missing at ${stage}.`,
+    );
+    return check;
+  } catch (error) {
+    if (error && typeof error === "object") error.capacityCheck = check;
+    throw error;
+  }
+}
+
+function capacityCheckFromError(error) {
+  if (!error || typeof error !== "object") return null;
+  if (error.capacityCheck) return error.capacityCheck;
+  if (error instanceof AggregateError) {
+    for (const nested of error.errors) {
+      const check = capacityCheckFromError(nested);
+      if (check) return check;
+    }
+  }
+  return null;
 }
 
 /**
@@ -165,9 +208,10 @@ async function measureCloakProfile(app, profileId, probeUrl, options = {}) {
   } finally {
     if (launched) {
       await app.callTool("close_profile", { profile_id: profileId });
-      // Honour an explicit quiet interval before checking the now-conservative local capacity.
-      await delay(settleMs);
-      await waitForSeatFree(app, 15_000);
+      // An optional diagnostic wait is recorded by the caller. Availability still comes from one
+      // explicit provider refresh, never from the timer itself.
+      if (settleMs > 0) await delay(settleMs);
+      await assertSeatFree(app, `after closing ${profileId}`);
     }
   }
 }
@@ -284,6 +328,7 @@ function isPidAlive(pid) {
 module.exports = {
   assertMeasurement,
   assertSeatFree,
+  capacityCheckFromError,
   launchMktBrowser,
   measureCloakProfile,
   recoverProfilesAndSeat,

@@ -38,10 +38,10 @@ const RUN_COUNT = 2;
 const args = parseArgs(process.argv.slice(2));
 // Historical .2 defaults live in fingerprint-engine-pin.cjs. An override must provide both
 // version and digest, agree with local authority/cache, and be recorded with the measurement.
-// Explicit time to wait after close; it is not proof that the vendor has released its seat.
-const seatSettleMs = Number(args["seat-settle-seconds"] ?? 0) > 0
-  ? Number(args["seat-settle-seconds"]) * 1000
-  : undefined;
+// Optional diagnostic wait after close. Zero is intentional: the bounded capacity refresh, not a
+// timer, determines whether the next launch may proceed.
+const seatSettleSeconds = Number(args["seat-settle-seconds"] ?? 0);
+const seatSettleMs = seatSettleSeconds * 1000;
 
 // Retained diagnostic experiment only: retries can prolong the vendor hold. Zero is the
 // default and stops at the first refusal; an explicit retry window is not a seat-recovery fix.
@@ -55,8 +55,7 @@ async function main() {
   if (!args.output) throw new Error("Pass --output <raw-json-path>.");
   const enginePin = await inspectFingerprintEnginePin(args);
   if (!Number.isFinite(seatRetryMinutes) || seatRetryMinutes < 0 ||
-      (args["seat-settle-seconds"] !== undefined &&
-       (!Number.isFinite(Number(args["seat-settle-seconds"])) || Number(args["seat-settle-seconds"]) < 0))) {
+      !Number.isFinite(seatSettleSeconds) || seatSettleSeconds < 0) {
     throw new Error("Seat timing arguments must be finite, non-negative numbers.");
   }
   const licenseKey = process.env.CLOAKBROWSER_LICENSE_KEY?.trim();
@@ -81,7 +80,7 @@ async function main() {
   recording.enginePinVerification = enginePin.verification;
   await persist(rawOutput, recording);
 
-  step(`run start — pool ${PROFILE_COUNT} x ${RUN_COUNT} runs, seat settle ${(seatSettleMs ?? 5000) / 1000}s`);
+  step(`run start — pool ${PROFILE_COUNT} x ${RUN_COUNT} runs, seat settle ${seatSettleMs / 1000}s`);
   let app;
   let failure = null;
   const cleanupErrors = [];
@@ -129,7 +128,6 @@ async function main() {
 
     for (let runIndex = 0; runIndex < RUN_COUNT; runIndex += 1) {
       for (const row of recording.profiles) {
-        await assertSeatFree(app, `${row.label} run ${runIndex + 1} preflight`);
         step(`${row.label} run ${runIndex + 1} — launching`);
         row.runs[runIndex] = await measureCloakProfile(app, row.id, probeUrl, {
           settleMs: seatSettleMs,

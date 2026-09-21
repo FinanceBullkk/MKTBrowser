@@ -79,6 +79,9 @@ import { appendProfileLifecycleLine } from "./profile-lifecycle-log.ts";
 import { LICENSE_SEAT_COOLDOWN_MS, LicenseKeyPool } from "./license-key-pool.ts";
 import { LicenseLeaseJournal } from "./license-lease-journal.ts";
 import { LicenseLeaseRecorder } from "./license-lease-recorder.ts";
+import { LicenseCapacityObserver } from "./license-capacity-observer.ts";
+import { LicenseSeatCoordinator } from "./license-seat-coordinator.ts";
+import { fastLicenseReuseEnabled } from "./license-lifecycle-policy.ts";
 import { sweepOrphanedProfileBrowsers, type OrphanSweepOutcome } from "./startup-orphan-sweep.ts";
 import { reconcileStartupOrphanLeases } from "./startup-license-lease-reconciliation.ts";
 import {
@@ -130,6 +133,7 @@ let httpTransport: HttpTransport | null = null;
 let mcpAuthToken: string | null = null;
 let cachedSettings: AppSettings | null = null;
 let licenseKeyPool: LicenseKeyPool | null = null;
+let licenseSeatCoordinator: LicenseSeatCoordinator | null = null;
 let licenseLeaseJournal: LicenseLeaseJournal;
 let browserDriverReady = false;
 let switchToCftInFlight: Promise<ChromiumStatus> | null = null;
@@ -575,6 +579,13 @@ app
     const licenseLeaseRecorder = new LicenseLeaseRecorder(licenseLeaseJournal, (message) => {
       console.warn(message);
     });
+    const fastReuse = fastLicenseReuseEnabled();
+    licenseSeatCoordinator = new LicenseSeatCoordinator({
+      pool: licenseKeyPool,
+      journal: licenseLeaseJournal,
+      observer: new LicenseCapacityObserver(),
+      fastReuseEnabled: fastReuse,
+    });
     const startupOrphanSweep = startupOrphanSweepOutcome.then(
       async (outcome) => {
         await reconcileStartupOrphanLeases(outcome, {
@@ -584,6 +595,7 @@ app
           log: (message) => console.warn(message),
           bootedAtMs,
         });
+        licenseSeatCoordinator?.invalidate("startup-recovery");
       },
       () => {
         // Reclaiming a seat is best-effort; failing to must never stop the app from starting.
@@ -591,8 +603,15 @@ app
     );
     const licenseCapacity = () =>
       chromiumBootstrap.getEngine() === "cloakbrowser"
-        ? (licenseKeyPool?.capacitySnapshot(licenseLeaseJournal.snapshot()) ?? null)
+        ? (licenseSeatCoordinator?.snapshot() ?? null)
         : null;
+    const refreshLicenseCapacity = async () => {
+      if (chromiumBootstrap.getEngine() !== "cloakbrowser") return null;
+      // Startup reconciliation may invalidate an observation after it has begun. Wait for that
+      // one-time state transition so the first operator refresh reflects a stable local snapshot.
+      await startupOrphanSweep;
+      return (await licenseSeatCoordinator?.refresh()) ?? null;
+    };
 
     browserDriver = new ChromiumBrowserDriver({
       profileManager,
@@ -600,6 +619,8 @@ app
       extensionStoreRoot,
       licenseKeyPool,
       licenseLeaseRecorder,
+      licenseSeatCoordinator,
+      fastLicenseReuseEnabled: fastReuse,
       startupBarrier: startupOrphanSweep,
       // The companion's "Add to MKT Browser" button routes here (profile-scoped).
       // Confirm natively first: any script on the store page could trigger the
@@ -665,6 +686,7 @@ app
         describeEngineStatus(chromiumBootstrap.getEngine(), chromiumBootstrap.getStatus()),
       runtimeCapabilities,
       licenseCapacity,
+      refreshLicenseCapacity,
       // The release the operator installed — not the MCP contract constant. These drifted apart
       // and `get_runtime_info` spent an evening answering 0.3.1 on a 0.3.6 install, which is the
       // one question the call exists to answer.
@@ -717,6 +739,7 @@ app
                 describeEngineStatus(chromiumBootstrap.getEngine(), chromiumBootstrap.getStatus()),
               runtimeCapabilities,
               licenseCapacity,
+              refreshLicenseCapacity,
               appVersion: app.getVersion(),
             }).server,
         );

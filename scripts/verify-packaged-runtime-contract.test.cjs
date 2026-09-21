@@ -3,9 +3,15 @@ const test = require("node:test");
 const {
   assertExpectedEngine,
   parseOptions,
+  readContractVersion,
   sanitizeDiagnostics,
   withHttpDeadline,
 } = require("./verify-packaged-runtime-contract.cjs");
+
+test("reads the packaged verifier contract from the runtime source", () => {
+  assert.equal(readContractVersion("export const MKT_BROWSER_CONTRACT_VERSION = 5;"), 5);
+  assert.throws(() => readContractVersion("export const OTHER_VERSION = 5;"), /Cannot read/);
+});
 
 test("parses bounded repeat and evidence output options", () => {
   const options = parseOptions([

@@ -1,5 +1,6 @@
 export const MCP_TOOL_EXPOSURE = {
   get_runtime_info: "runtime-read",
+  refresh_license_capacity: "profile-lifecycle",
   list_profiles: "profile-read",
   create_profile: "profile-write",
   update_profile: "profile-write",
