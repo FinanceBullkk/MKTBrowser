@@ -124,6 +124,8 @@ export interface MktBrowserLicenseCapacity {
   active: number;
   pendingRecovery: number;
   cooling: number;
+  /** Earliest local retry, not proof of vendor release. Omitted when unknown or a slot is free. */
+  retryAt?: string;
 }
 
 export interface MktBrowserRuntimeInfo {

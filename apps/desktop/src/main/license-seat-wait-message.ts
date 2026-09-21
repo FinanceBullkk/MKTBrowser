@@ -26,8 +26,8 @@ export interface LicenseSeatWaitInput {
 /** "about 4 minutes" / "under a minute" — a countdown nobody can act on to the second. */
 function describeWait(untilMs: number, nowMs: number): string {
   const remainingMs = Math.max(0, untilMs - nowMs);
-  const minutes = Math.round(remainingMs / 60_000);
-  return minutes < 1 ? "under a minute" : `about ${minutes} minute${minutes === 1 ? "" : "s"}`;
+  const minutes = Math.ceil(remainingMs / 60_000);
+  return remainingMs < 60_000 ? "under a minute" : `about ${minutes} minute${minutes === 1 ? "" : "s"}`;
 }
 
 function listProfiles(input: LicenseSeatWaitInput): string {
@@ -59,21 +59,24 @@ export function licenseSeatWaitMessage(input: LicenseSeatWaitInput): string {
     const open = listProfiles(input);
     return (
       `All ${seats} are in use${open ? ` by ${open}` : ""}. ` +
-      "Close a running profile to free one, or add another licence key in Settings."
+      "Close a running profile, then wait for its licence cooldown before another manual launch."
     );
   }
 
   const wait = input.nextFreeAtMs === null ? null : describeWait(input.nextFreeAtMs, input.nowMs);
+  const retry = input.nextFreeAtMs === null
+    ? "The next retry time is not known. Wait for MKT Browser to finish session recovery."
+    : `Do not retry before ${new Date(input.nextFreeAtMs).toLocaleString(undefined, { hour12: false })} ` +
+      `(local time; ${wait}). This is the earliest local retry time, not a guarantee of vendor availability.`;
   const resting =
-    `A previous browser closed without handing its licence session back, so the licence ` +
-    `server still counts it${wait ? `. It frees in ${wait}` : ""}.`;
+    "The licence session may still be held after a browser closes or a launch is refused. " +
+    `${retry} Retrying early may extend the wait. Launch again manually after the wait; there is no automatic retry.`;
 
   if (snapshot.inUse === 0) return resting;
 
   const open = listProfiles(input);
   return (
     `All ${seats} are unavailable: ${open ? `${open} still open, and a` : "a"}nother ` +
-    `session is resting${wait ? ` for ${wait}` : ""}. ` +
-    "Close a running profile to free one sooner."
+    `session is cooling. ${resting}`
   );
 }

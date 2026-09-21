@@ -230,7 +230,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       if (this.shuttingDown || this.closeAllPromise) {
         throw new Error("Profile launch cancelled because Browser is closing profiles.");
       }
-      return this.launchWithKeyRotation(profileId);
+      return this.launchWithLicenseSeat(profileId);
     })();
     this.launchPromises.set(profileId, launch);
     try {
@@ -242,87 +242,60 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
   }
 
   /**
-   * Launch, and if the engine refuses the licence key, try the next one.
-   *
-   * The pool's picture of which keys are free is a good guess, not an authority: a seat can be held
-   * by a browser an earlier crash left behind, or by the same key in use somewhere else entirely.
-   * Exit 76 is the engine correcting that guess, so the answer is to note the key as busy and try
-   * another rather than to fail — the operator holds several keys precisely so that one being taken
-   * is not the end of it.
-   *
-   * Only a seat refusal rotates. Every other failure — a missing engine, a proxy that would not
-   * start, a profile that does not exist — would fail identically on every key, so retrying would
-   * just multiply the wait before reporting the same thing.
+   * One operator request makes at most one engine attempt. A refusal starts a longer local wait;
+   * retrying automatically can prolong the vendor hold and must never happen here.
    */
-  private async launchWithKeyRotation(profileId: ProfileId): Promise<LaunchedProfile> {
+  private async launchWithLicenseSeat(profileId: ProfileId): Promise<LaunchedProfile> {
     // CFT has no licensed session channel. An empty CloakBrowser pool must not block its launches.
     const pool = this.bootstrap.getEngine() === "cloakbrowser" ? this.licenseKeyPool : undefined;
-    // One attempt per key, plus the no-pool case. A profile keeps its reservation across attempts,
-    // so this cannot spend more than one seat at a time.
-    const attempts = pool ? Math.max(pool.snapshot().total, 1) : 1;
-    let lastRefusal: unknown = null;
-
-    for (let attempt = 0; attempt < attempts; attempt++) {
-      if (pool && pool.acquire(profileId) === null) {
-        // Nothing left to try. Report the refusal the engine gave us if there was one, so the
-        // message names the real reason rather than an empty pool.
-        if (lastRefusal) throw lastRefusal;
-        // The engine's own exit-76 wording tells the operator to close a running profile, which is
-        // wrong — and unactionable — when the seat is resting after a browser that never flushed
-        // its shutdown. Say which of the two it is.
-        throw engineUnavailable(
-          licenseSeatWaitMessage({
-            snapshot: pool.snapshot(),
-            nextFreeAtMs: pool.nextFreeAtMs(),
-            nowMs: Date.now(),
-            describeProfile: (id) => this.profileManager.get(id as ProfileId)?.name ?? null,
-          }),
-        );
+    const waitMessage = () => licenseSeatWaitMessage({
+      snapshot: pool!.snapshot(),
+      nextFreeAtMs: pool!.nextFreeAtMs(),
+      nowMs: Date.now(),
+      describeProfile: (id) => this.profileManager.get(id as ProfileId)?.name ?? null,
+    });
+    if (pool && pool.acquire(profileId) === null) throw engineUnavailable(waitMessage());
+    const key = pool?.keyFor(profileId) ?? null;
+    let leaseReserved = false;
+    try {
+      if (key) {
+        await this.licenseLeaseRecorder?.reserved(profileId, key);
+        leaseReserved = true;
       }
-      const key = pool?.keyFor(profileId) ?? null;
-      let leaseReserved = false;
+      return await this.launchTracked(profileId, key !== null);
+    } catch (error) {
+      const seatRefused = pool !== undefined && isSeatRefusal(error);
+      let refusalWriteError: unknown = null;
+      if (seatRefused && leaseReserved) {
+        try {
+          // Persist refusal before cleanup observes the exited child.
+          await this.licenseLeaseRecorder?.refused(profileId);
+        } catch (journalError) {
+          refusalWriteError = journalError;
+        }
+      }
       try {
-        if (key) {
-          await this.licenseLeaseRecorder?.reserved(profileId, key);
-          leaseReserved = true;
-        }
-        return await this.launchTracked(profileId, key !== null);
-      } catch (error) {
-        const seatRefused = pool !== undefined && isSeatRefusal(error);
-        let refusalWriteError: unknown = null;
-        if (seatRefused && leaseReserved) {
-          try {
-            // Persist the vendor verdict before cleanup sees an already-exited child and mistakes
-            // that for a seat this launch released.
-            await this.licenseLeaseRecorder?.refused(profileId);
-          } catch (journalError) {
-            refusalWriteError = journalError;
-          }
-        }
-
         await this.cleanupFailedLaunch(
           profileId,
           error,
           seatRefused ? false : undefined,
           leaseReserved,
         );
-        if (!seatRefused) throw error;
-
-        // This key is spoken for. Rest it and let the loop reach for the next.
-        lastRefusal = error;
-        if (key) {
-          pool.markRefused(key);
-          appendProfileLifecycleLine({
-            profileId,
-            reason: "LICENCE-KEY-REFUSED",
-            keyTail: keyTail(key),
-            keysLeft: pool.availableCount(),
-          });
-        }
-        if (refusalWriteError) throw refusalWriteError;
+      } finally {
+        if (seatRefused && key) pool!.markRefused(key);
       }
+      if (!seatRefused) throw error;
+      appendProfileLifecycleLine({
+        profileId,
+        reason: "LICENCE-KEY-REFUSED",
+        keyTail: key ? keyTail(key) : "",
+        keysLeft: pool!.availableCount(),
+      });
+      if (refusalWriteError) throw refusalWriteError;
+      throw engineUnavailable(pool!.availableCount() === 0
+        ? waitMessage()
+        : "The licence server refused this session. No automatic retry was made. Check licence capacity before another manual launch.");
     }
-    throw lastRefusal ?? engineUnavailable("No licence key could start a browser.");
   }
 
   private async launchTracked(
@@ -1278,7 +1251,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       // profile. Release only the new in-memory allocation in that case; mutating the journal would
       // falsely mark the older vendor session as released.
       if (leaseReserved) {
-        await this.releaseLicenseKey(profileId, "already-exited", seatReleasedOverride ?? true);
+        await this.releaseLicenseKey(profileId, "already-exited", seatReleasedOverride);
       } else {
         this.licenseKeyPool?.release(profileId, true);
       }
@@ -1323,20 +1296,18 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
   /**
    * Give the profile's licence key back to the pool.
    *
-   * Whether the seat actually came back depends on how the browser died: CloakBrowser releases it
-   * during its own shutdown flush, which Browser.close reaches and a signal does not. Reporting a
-   * signalled kill as a clean release would send the very next launch at a seat the server still
-   * counts as taken — so a killed browser rests its key for the lease instead.
+   * Browser.close and a clean process exit are not vendor release acknowledgements.
+   * Only independent proof (including an unstarted reservation) permits immediate reuse.
    */
   private async releaseLicenseKey(
     profileId: ProfileId,
-    method: ShutdownMethod,
+    _method: ShutdownMethod,
     seatReleasedOverride?: boolean,
   ): Promise<void> {
     // CFT has no vendor seat lifecycle. The recorder is process-global, so key ownership is the
     // guard that prevents a CFT failure from mutating an older CloakBrowser lease for this profile.
     if (this.licenseKeyPool?.keyFor(profileId) === null || !this.licenseKeyPool) return;
-    const seatReleased = seatReleasedOverride ?? method === "Browser.close";
+    const seatReleased = seatReleasedOverride ?? false;
     // The pool forgets this the moment the app exits. The journal is what carries a resting seat
     // into the next run, so durable state changes before in-memory capacity becomes available.
     try {

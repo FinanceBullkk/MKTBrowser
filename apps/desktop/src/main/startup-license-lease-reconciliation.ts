@@ -1,4 +1,4 @@
-import { LICENSE_SEAT_COOLDOWN_MS, type LicenseKeyPool } from "./license-key-pool.ts";
+import { LICENSE_SEAT_COOLDOWN_MS, LICENSE_SEAT_REFUSAL_COOLDOWN_MS, type LicenseKeyPool } from "./license-key-pool.ts";
 import type { LicenseLeaseJournal } from "./license-lease-journal.ts";
 import type { LicenseLeaseRecorder } from "./license-lease-recorder.ts";
 import type { OrphanSweepOutcome } from "./startup-orphan-sweep.ts";
@@ -22,12 +22,13 @@ export interface StartupLeaseReconciliationDeps {
    *
    * The proof that settles a lease no sweep can reach. Nothing crosses a restart, so a boot later
    * than the record means that browser stopped heartbeating at the boot at the latest and the
-   * vendor's TTL has been running since — a wait with an end, rather than a hold with none.
+   * local retry cooldown can be counted from that boot instead of from every app restart.
    */
   bootedAtMs?: number;
   now?: () => number;
   /** How long a seat rests once it is known to be resting. Defaults to the pool's own cooldown. */
   cooldownMs?: number;
+  refusalCooldownMs?: number;
 }
 
 /** States in which the vendor may still be counting a seat, so a verdict is owed. */
@@ -80,7 +81,7 @@ export async function reconcileStartupOrphanLeases(
       deps.bootedAtMs !== undefined && !Number.isNaN(movedAtMs) && deps.bootedAtMs > movedAtMs;
     if (!killedByReboot && !outcome.enumerated) continue;
 
-    // It never flushed a shutdown, so the seat rests out the vendor's TTL — from the boot that
+    // Vendor release is unconfirmed, so the seat rests locally from the boot that
     // killed it, or from now, because within one boot session the death could have been a moment
     // ago and nothing here can date it.
     await settle(record.profileId, false, killedByReboot ? deps.bootedAtMs : now, deps, summary);
@@ -104,13 +105,15 @@ async function settle(
   }
 
   try {
-    const released = await deps.recorder.released(profileId, seatReleased);
-    deps.pool.reconcilePersistedLease(record.keyFingerprint, released, restingSinceMs);
+    // An interrupted start may have lost both refusal writes. Preserve the longer wait durably.
+    const uncertainRelease = record.state === "starting" || record.lastErrorCode === "LICENCE_RELEASE_UNCONFIRMED";
+    const released = await deps.recorder.released(profileId, seatReleased, uncertainRelease);
+    deps.pool.reconcilePersistedLease(record.keyFingerprint, released, restingSinceMs, uncertainRelease);
     if (released) {
       summary.confirmed += 1;
       return;
     }
-    if (await retireIfRestOver(profileId, restingSinceMs, deps)) summary.expired += 1;
+    if (await retireIfRestOver(profileId, restingSinceMs, deps, uncertainRelease)) summary.expired += 1;
     else summary.cooling += 1;
   } catch (error) {
     summary.pending += 1;
@@ -126,15 +129,18 @@ async function settle(
  * A rest counted from a boot hours ago ran out long ago, but the record carrying it is stamped with
  * the moment it was written — so the next start would read that stamp as the start of the rest and
  * hold the key back all over again. An operator who merely reopened the app would be locked out for
- * another cooldown, once per restart. `expired` records what is actually true: the vendor stopped
- * counting this seat before this run ever looked.
+ * another cooldown, once per restart. `expired` records that the local retry wait has elapsed;
+ * it does not confirm vendor release.
  */
 async function retireIfRestOver(
   profileId: string,
   restingSinceMs: number | undefined,
   deps: StartupLeaseReconciliationDeps,
+  uncertainRelease: boolean,
 ): Promise<boolean> {
-  const cooldownMs = deps.cooldownMs ?? LICENSE_SEAT_COOLDOWN_MS;
+  const cooldownMs = uncertainRelease
+    ? Math.max(deps.cooldownMs ?? LICENSE_SEAT_COOLDOWN_MS, deps.refusalCooldownMs ?? LICENSE_SEAT_REFUSAL_COOLDOWN_MS)
+    : deps.cooldownMs ?? LICENSE_SEAT_COOLDOWN_MS;
   const now = deps.now?.() ?? Date.now();
   if (restingSinceMs === undefined || restingSinceMs + cooldownMs > now) return false;
   await deps.journal.transition(profileId, "expired", { childPid: null });

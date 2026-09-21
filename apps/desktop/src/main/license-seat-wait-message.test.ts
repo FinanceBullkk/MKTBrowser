@@ -42,7 +42,11 @@ test("a resting seat is never reported as something the operator can close", () 
     nowMs: 0,
   });
 
-  assert.match(message, /closed without handing its licence session back/);
+  assert.match(message, /may still be held after a browser closes/);
+  assert.match(message, /Do not retry before/);
+  assert.match(message, /Retrying early may extend the wait/);
+  assert.match(message, /no automatic retry/);
+  assert.doesNotMatch(message, /It frees|will be free/);
   assert.match(message, /about 4 minutes/);
   assert.doesNotMatch(message, /Close a running profile/);
 });
@@ -57,7 +61,7 @@ test("rounds a sub-minute wait rather than showing a dead countdown", () => {
   assert.match(message, /under a minute/);
 });
 
-test("a mixed pool offers the action that actually shortens the wait", () => {
+test("a mixed pool names active profiles without promising closing them shortens the wait", () => {
   const message = licenseSeatWaitMessage({
     snapshot: snapshotOf([{ state: "in-use", profileId: "p1" }, { state: "cooling" }]),
     nextFreeAtMs: 10 * 60_000,
@@ -66,8 +70,9 @@ test("a mixed pool offers the action that actually shortens the wait", () => {
   });
 
   assert.match(message, /Shop account/);
-  assert.match(message, /resting/);
-  assert.match(message, /Close a running profile to free one sooner/);
+  assert.match(message, /cooling/);
+  assert.match(message, /Do not retry before/);
+  assert.doesNotMatch(message, /free one sooner/);
 });
 
 test("no configured key is a setup problem, not a capacity problem", () => {

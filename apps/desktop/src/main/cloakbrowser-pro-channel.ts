@@ -55,6 +55,8 @@
  * starting at all.
  */
 
+import { fetchEngineArchiveSha256 } from "./engine-archive-checksum.ts";
+
 /** Base origin for the licensed channel. Overridable for tests / self-hosting. */
 export const CLOAKBROWSER_DOWNLOAD_BASE =
   process.env.CLOAKBROWSER_DOWNLOAD_URL || "https://cloakbrowser.dev";
@@ -88,7 +90,7 @@ export interface CloakBrowserProManifest {
    * redirect/auth note above.
    */
   url: string;
-  sha256?: string;
+  sha256: string;
   /** Empty once the redirect has been resolved; populated only if the endpoint
    *  served the archive directly, without redirecting. */
   headers: Record<string, string>;
@@ -111,13 +113,14 @@ export async function resolveCloakBrowserProManifest(
   }
   const tag = cloakBrowserPlatformTag();
   const version = await fetchLatestProVersion(tag);
+  const sha256 = await fetchProSha256(version, cloakBrowserArchiveName(tag));
   const gatedUrl = `${CLOAKBROWSER_DOWNLOAD_BASE}/api/download/${version}`;
   const authHeaders = { Authorization: `Bearer ${key}`, "X-Platform": tag };
   const resolved = await resolveArchiveRedirect(gatedUrl, authHeaders);
   return {
     version,
     url: resolved.url,
-    sha256: await fetchProSha256(version, cloakBrowserArchiveName(tag)),
+    sha256,
     headers: resolved.headers,
   };
 }
@@ -194,30 +197,12 @@ async function fetchLatestProVersion(tag: CloakBrowserPlatformTag): Promise<stri
 /**
  * Pull the archive's SHA-256 from the release's public manifest.
  *
- * Returns undefined when the manifest can't be fetched or doesn't list our
- * archive — the caller treats a missing checksum the same way it already does
- * for the GitHub path (download proceeds, integrity unverified) rather than
- * blocking a launch on a checksum-server hiccup.
+ * A failed request or invalid/missing digest blocks the download. This checks
+ * archive integrity; it does not establish signed release authority.
  */
-async function fetchProSha256(version: string, archiveName: string): Promise<string | undefined> {
+async function fetchProSha256(version: string, archiveName: string): Promise<string> {
   const url = `${CLOAKBROWSER_DOWNLOAD_BASE}/releases/pro/chromium-v${version}/SHA256SUMS`;
-  try {
-    const res = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(10_000) });
-    if (!res.ok) return undefined;
-    const text = await res.text();
-    for (const line of text.split(/\r?\n/)) {
-      // Lines look like "<64-hex>  cloakbrowser-windows-x64.zip"; a leading "*"
-      // marks binary mode in some sha256sum dialects. The file also opens with
-      // a "version=..." line, which simply won't match.
-      const [hash, name] = line.trim().split(/\s+/, 2);
-      if (hash && name?.replace(/^\*/, "") === archiveName && /^[a-f0-9]{64}$/i.test(hash)) {
-        return hash.toLowerCase();
-      }
-    }
-    return undefined;
-  } catch {
-    return undefined;
-  }
+  return fetchEngineArchiveSha256(url, archiveName, version);
 }
 
 /**

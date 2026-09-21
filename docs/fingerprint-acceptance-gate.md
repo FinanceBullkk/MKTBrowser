@@ -209,6 +209,39 @@ A/B/C verdict. The Brave result therefore does not prove a better/equal/worse ra
 independently fails the gate. Full evidence:
 [Phase 04 report](../../plans/260902-0544-fingerprint-gate-and-brave-spike/reports/brave-identity.md).
 
+## Licence-capacity checkpoint - 21 September 2026
+
+CloakBrowser remains **BLOCKED** for this gate. The historical Stable `.2` result above remains
+`0/10`; the [21 September `.6` audit](../../plans/reports/audit-260921-0932-identity-isolation.md)
+records a partial P1 observation, not a completed five-profile, two-run dataset. It supplies no new
+A/B/C pass and does not retire `G2-IDENTITY=FAIL`.
+
+The one-session key could not complete consecutive launches: a clean `Browser.close` did not make
+the vendor session immediately available, waits around 16-20 minutes did not establish a reliable
+release deadline, and repeated refused launches extended the observed interruption. A refusal
+resetting the vendor timer is a hypothesis from those observations, not a verified protocol rule.
+
+The [local retry policy](../../docs/licence-seat-retry-policy.md) uses 25 minutes after an
+unconfirmed close and 30 minutes after refusal, with one engine attempt per operator request.
+These are conservative local waits, not a vendor TTL or evidence that a subsequent launch will
+succeed. The [one-shot quiet-period smoke](../../plans/260921-1109-licence-seat-fixes/live-seat-once.json)
+failed to acquire a seat after at least 31.25 locally quiet minutes: the sole launch exited `76` at
+`2026-09-21T04:43:23.714Z`. The repaired runtime reported `free: 0`, `cooling: 1`, and a 30-minute
+retry deadline. No second launch was attempted. A fixed 25-minute schedule is therefore unproven,
+and the vendor-side cause remains unresolved.
+
+A future authorized measurement needs all five profiles and ten complete readings, a same-machine
+stock control, and the exact declared engine version/hash. Possible scheduling approaches are a
+measured multi-session entitlement or manually paced starts over a long session, only after real
+availability is established; any refusal must stop the sequence and respect the longer wait. Neither approach is
+approved or proven here. No licence purchase, unattended retry loop, research reopening, reduced
+pool, or identity-isolation claim follows from this checkpoint. An incomplete pool is `NOT-RUN`.
+
+The source repair also adds an early harness pin-drift check and a sanitized `.6` provenance record.
+A local pin record establishes which bytes were selected; it does not establish redistribution
+rights, vendor release timing, or identity acceptance. Fresh harness validation and complete
+measurement evidence remain separate from the source change.
+
 ## Relationship to `G2-IDENTITY`
 
 This gate is **experimental** and runs alongside the existing one. `G2-IDENTITY` keeps its current

@@ -20,6 +20,7 @@ const {
   summarizeLifecycle,
 } = require("./fingerprint-measurement-evidence.cjs");
 const { seedVerifiedStableEngineCache } = require("./fingerprint-engine-cache-fixture.cjs");
+const { inspectFingerprintEnginePin } = require("./fingerprint-engine-pin.cjs");
 const {
   assertMeasurement,
   assertSeatFree,
@@ -34,14 +35,30 @@ const { locateSystemChrome } = require("./system-chrome-engine-fixture.cjs");
 
 const PROFILE_COUNT = 5;
 const RUN_COUNT = 2;
-const EXPECTED_ENGINE_VERSION = "151.0.7922.108.2";
-const EXPECTED_ENGINE_ARCHIVE_SHA256 =
-  "7b16ae3070bfcbed9cd381d03d1a8d57a8baf8f4540650397d620eb8dbe89561";
 const args = parseArgs(process.argv.slice(2));
+// Historical .2 defaults live in fingerprint-engine-pin.cjs. An override must provide both
+// version and digest, agree with local authority/cache, and be recorded with the measurement.
+// Explicit time to wait after close; it is not proof that the vendor has released its seat.
+const seatSettleMs = Number(args["seat-settle-seconds"] ?? 0) > 0
+  ? Number(args["seat-settle-seconds"]) * 1000
+  : undefined;
+
+// Retained diagnostic experiment only: retries can prolong the vendor hold. Zero is the
+// default and stops at the first refusal; an explicit retry window is not a seat-recovery fix.
+const seatRetryMinutes = Number(args["seat-retry-minutes"] ?? 0);
+
+/** Timestamped progress, so a long run can be read while it is still running. */
+const step = (message) => process.stdout.write(`${new Date().toISOString()}  ${message}\n`);
 
 async function main() {
   if (process.platform !== "win32") throw new Error("Fingerprint measurement requires Windows.");
   if (!args.output) throw new Error("Pass --output <raw-json-path>.");
+  const enginePin = await inspectFingerprintEnginePin(args);
+  if (!Number.isFinite(seatRetryMinutes) || seatRetryMinutes < 0 ||
+      (args["seat-settle-seconds"] !== undefined &&
+       (!Number.isFinite(Number(args["seat-settle-seconds"])) || Number(args["seat-settle-seconds"]) < 0))) {
+    throw new Error("Seat timing arguments must be finite, non-negative numbers.");
+  }
   const licenseKey = process.env.CLOAKBROWSER_LICENSE_KEY?.trim();
   if (!licenseKey) {
     throw new Error("CLOAKBROWSER_LICENSE_KEY is required and is never written to output.");
@@ -60,39 +77,47 @@ async function main() {
     runCount: RUN_COUNT,
     surfaceNames: SURFACE_NAMES,
   });
+  recording.enginePin = enginePin.authority;
+  recording.enginePinVerification = enginePin.verification;
   await persist(rawOutput, recording);
 
+  step(`run start — pool ${PROFILE_COUNT} x ${RUN_COUNT} runs, seat settle ${(seatSettleMs ?? 5000) / 1000}s`);
   let app;
   let failure = null;
   const cleanupErrors = [];
   let preserveAppForSeatRecovery = false;
   try {
+    const engineCache = await seedVerifiedStableEngineCache({
+      userData,
+      expectedVersion: enginePin.version,
+      expectedArchiveSha256: enginePin.archiveSha256,
+      sourceRoot: enginePin.sourceRoot,
+    });
+    step(`engine cache seeded - ${engineCache.version}`);
     const stock = await measureStockChrome({
       chromeExecutable: args.chrome ? path.resolve(args.chrome) : locateSystemChrome(),
       probeUrl,
     });
     assertMeasurement(stock.measurement, "stock Chrome");
+    step(`stock control measured — ${stock.executable.version}`);
     recording.stock = stock;
     await persist(rawOutput, recording);
 
-    const engineCache = await seedVerifiedStableEngineCache({
-      userData,
-      expectedVersion: EXPECTED_ENGINE_VERSION,
-      expectedArchiveSha256: EXPECTED_ENGINE_ARCHIVE_SHA256,
-    });
     app = await launchMktBrowser({ executable, userData, licenseKey });
     const runtime = await waitForReadyRuntime(app, 20 * 60_000);
     assert.equal(runtime.engine.kind, "cloakbrowser", "The app did not select CloakBrowser.");
     assert.equal(
       runtime.engine.version,
-      EXPECTED_ENGINE_VERSION,
-      "The Stable .2 pin is not active.",
+      enginePin.version,
+      "The requested engine pin is not active.",
     );
+    step(`app ready — engine ${runtime.engine.kind} ${runtime.engine.version}`);
     await assertSeatFree(app, "initial preflight");
 
     const options = await app.callTool("list_fingerprint_options", {});
     const fingerprint = selectProfileFingerprint(stock.measurement, options);
     await createProfiles(app, recording, fingerprint);
+    step(`${recording.profiles.length} profiles created`);
     recording.preflight = {
       preparedBeforeFirstProfileLaunch: true,
       runtime,
@@ -105,7 +130,13 @@ async function main() {
     for (let runIndex = 0; runIndex < RUN_COUNT; runIndex += 1) {
       for (const row of recording.profiles) {
         await assertSeatFree(app, `${row.label} run ${runIndex + 1} preflight`);
-        row.runs[runIndex] = await measureCloakProfile(app, row.id, probeUrl);
+        step(`${row.label} run ${runIndex + 1} — launching`);
+        row.runs[runIndex] = await measureCloakProfile(app, row.id, probeUrl, {
+          settleMs: seatSettleMs,
+          seatRetryMinutes,
+          log: step,
+        });
+        step(`${row.label} run ${runIndex + 1} — measured, closed, seat settled`);
         await persist(rawOutput, recording);
       }
     }
@@ -139,6 +170,7 @@ async function main() {
         archiveSha256: engineCache.archiveSha256,
         runtimeSha256: engineCache.runtimeSha256,
         executableSha256: recording.preflight.packagedExecutable.sha256,
+        localPinSequence: enginePin.authority.sequence,
       },
       stock: { version: stock.executable.version, sha256: stock.executable.sha256 },
       pool: { profiles: PROFILE_COUNT, runsPerProfile: RUN_COUNT, oneAtATime: true },

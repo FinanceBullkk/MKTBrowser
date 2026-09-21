@@ -13,7 +13,7 @@ function method(start: string, end: string): string {
 }
 
 test("records exit-76 refusal before cleanup can classify an exited child as released", () => {
-  const rotation = method("private async launchWithKeyRotation", "private async launchTracked");
+  const rotation = method("private async launchWithLicenseSeat", "private async launchTracked");
   const refusedAt = rotation.indexOf("licenseLeaseRecorder?.refused");
   const cleanupAt = rotation.indexOf("cleanupFailedLaunch");
 
@@ -21,7 +21,7 @@ test("records exit-76 refusal before cleanup can classify an exited child as rel
 });
 
 test("protects the durable reservation with failed-launch cleanup", () => {
-  const rotation = method("private async launchWithKeyRotation", "private async launchTracked");
+  const rotation = method("private async launchWithLicenseSeat", "private async launchTracked");
   const protectedAt = rotation.indexOf("try {");
   const reservedAt = rotation.indexOf("licenseLeaseRecorder?.reserved");
 
@@ -29,7 +29,7 @@ test("protects the durable reservation with failed-launch cleanup", () => {
 });
 
 test("releases a durable reservation when launch fails before a process is tracked", () => {
-  const rotation = method("private async launchWithKeyRotation", "private async launchTracked");
+  const rotation = method("private async launchWithLicenseSeat", "private async launchTracked");
   const cleanup = method("private async cleanupFailedLaunch", "private async releaseLicenseKey");
   const noPending = cleanup.match(/if \(!pending\) \{([\s\S]*?)\n {4}\}/)?.[1] ?? "";
 
@@ -81,6 +81,15 @@ test("keeps an unreachable or ambiguously exited Browser seat resting", () => {
   const release = method("private async releaseLicenseKey", "private shutdownRunningProfile");
 
   assert.match(launch, /CDP-UNREACHABLE[\s\S]*?\? false : undefined/);
-  assert.match(release, /seatReleasedOverride \?\? method === "Browser\.close"/);
+  assert.match(release, /seatReleasedOverride \?\? false/);
+  assert.doesNotMatch(release, /method === "Browser\.close"/);
   assert.doesNotMatch(release, /method === "already-exited"/);
+});
+
+test("a vendor refusal cannot automatically spawn another engine", () => {
+  const launch = method("private async launchWithLicenseSeat", "private async launchTracked");
+  assert.doesNotMatch(launch, /for\s*\(|while\s*\(|setTimeout|setInterval/);
+  assert.equal(launch.match(/this\.launchTracked\(/g)?.length, 1);
+  assert.match(launch, /markRefused/);
+  assert.match(launch, /throw engineUnavailable/);
 });

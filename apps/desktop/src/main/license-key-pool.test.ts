@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { LicenseKeyPool, keyTail } from "./license-key-pool.ts";
+import { LicenseKeyPool, keyTail, LICENSE_SEAT_COOLDOWN_MS, LICENSE_SEAT_REFUSAL_COOLDOWN_MS } from "./license-key-pool.ts";
 import { fingerprintLicenseKey } from "./license-lease-journal.ts";
 
 const KEYS = ["cb_aaaaaa111111", "cb_bbbbbb222222", "cb_cccccc333333"];
 
 function poolAt(clock: { t: number }, keys = KEYS, cooldownMs = 1000) {
-  return new LicenseKeyPool({ keys, cooldownMs, now: () => clock.t });
+  return new LicenseKeyPool({ keys, cooldownMs, refusalCooldownMs: cooldownMs * 2, now: () => clock.t });
 }
 
 test("hands each profile its own key and reports what is left", () => {
@@ -40,25 +40,24 @@ test("returns null rather than overbooking when every key is taken", () => {
   assert.equal(pool.availableCount(), 0);
 });
 
-test("a clean close frees the key at once, an unclean one rests it", () => {
+test("only independently proven release permits immediate reuse; ordinary close rests", () => {
   const clock = { t: 0 };
   const pool = poolAt(clock);
 
   const clean = pool.acquire("p1");
   pool.release("p1", true);
-  assert.equal(pool.availableCount(), KEYS.length, "Browser.close returns the seat immediately");
+  assert.equal(pool.availableCount(), KEYS.length, "explicit release proof permits reuse");
   assert.equal(pool.acquire("p2"), clean, "and the same key can go straight back out");
   pool.release("p2", true);
 
-  // A close that reached SIGKILL leaves the seat held on the server. Handing the key out again
-  // would send the next launch at a seat that is not actually free.
+  // Browser.close is local shutdown only; callers without release proof use the default.
   pool.acquire("p3");
-  pool.release("p3", false);
+  pool.release("p3");
   assert.equal(pool.availableCount(), KEYS.length - 1);
   assert.equal(pool.snapshot().cooling, 1);
 
   clock.t += 1000;
-  assert.equal(pool.availableCount(), KEYS.length, "and it comes back when the lease expires");
+  assert.equal(pool.availableCount(), KEYS.length, "local retry eligibility resumes after the wait");
 });
 
 test("a refused key rests, so the next launch tries a different one", () => {
@@ -76,6 +75,8 @@ test("a refused key rests, so the next launch tries a different one", () => {
   assert.notEqual(second, first, "a refused key must not be handed straight back");
   assert.equal(pool.snapshot().cooling, 1);
 
+  clock.t += 1000;
+  assert.equal(pool.snapshot().cooling, 1, "refusal waits longer than an ordinary close");
   clock.t += 1000;
   assert.equal(pool.snapshot().cooling, 0);
 });
@@ -144,8 +145,62 @@ test("capacity never counts pending recovery or cooling keys as free", () => {
     active: 1,
     pendingRecovery: 1,
     cooling: 1,
+    retryAt: new Date(1000).toISOString(),
   });
   assert.equal(JSON.stringify(capacity).includes(KEYS[0]!), false);
+});
+
+test("close and refusal waits block acquisition until their exact manual retry deadlines", () => {
+  const clock = { t: Date.parse("2026-09-21T04:00:00.000Z") };
+  const pool = new LicenseKeyPool({ keys: [KEYS[0]!], now: () => clock.t });
+  pool.acquire("p1");
+  pool.release("p1");
+  const closedAt = clock.t;
+  assert.deepEqual(pool.capacitySnapshot(), {
+    total: 1, free: 0, active: 0, pendingRecovery: 0, cooling: 1,
+    retryAt: new Date(closedAt + LICENSE_SEAT_COOLDOWN_MS).toISOString(),
+  });
+  clock.t += LICENSE_SEAT_COOLDOWN_MS - 1;
+  assert.equal(pool.acquire("p2"), null);
+  clock.t += 1;
+  assert.equal(pool.acquire("p2"), KEYS[0]);
+  pool.markRefused(KEYS[0]!);
+  const refusedAt = clock.t;
+  const records = [{ keyFingerprint: fingerprintLicenseKey(KEYS[0]!), state: "terminal-refused" as const,
+    updatedAt: new Date(refusedAt).toISOString() }];
+  clock.t += LICENSE_SEAT_COOLDOWN_MS;
+  const restarted = new LicenseKeyPool({ keys: [KEYS[0]!], now: () => clock.t, leaseRecords: records });
+  assert.equal(restarted.acquire("p3"), null, "restart preserves the longer refusal wait");
+  assert.equal(restarted.capacitySnapshot(records).retryAt,
+    new Date(refusedAt + LICENSE_SEAT_REFUSAL_COOLDOWN_MS).toISOString());
+  clock.t = refusedAt + LICENSE_SEAT_REFUSAL_COOLDOWN_MS - 1;
+  assert.equal(restarted.acquire("p3"), null);
+  clock.t += 1;
+  assert.equal(restarted.capacitySnapshot(records).free, 1);
+  assert.equal(restarted.capacitySnapshot(records).retryAt, undefined);
+  assert.equal(restarted.acquire("p3"), KEYS[0]);
+});
+
+test("unreconciled startup leases never advertise free capacity even without a journal argument", () => {
+  const pool = new LicenseKeyPool({ keys: [KEYS[0]!], now: () => 0, leaseRecords: [{
+    keyFingerprint: fingerprintLicenseKey(KEYS[0]!), state: "active", updatedAt: new Date(0).toISOString(),
+  }] });
+  assert.deepEqual(pool.capacitySnapshot(), { total: 1, free: 0, active: 0, cooling: 0, pendingRecovery: 1 });
+});
+
+test("a future journal timestamp is normalized once for both acquisition and capacity", () => {
+  const clock = { t: 0 };
+  const records = [{ keyFingerprint: fingerprintLicenseKey(KEYS[0]!), state: "cooling" as const,
+    updatedAt: new Date(60_000).toISOString() }];
+  const pool = new LicenseKeyPool({ keys: [KEYS[0]!], cooldownMs: 1000, now: () => clock.t, leaseRecords: records });
+  assert.equal(pool.capacitySnapshot(records).retryAt, new Date(1000).toISOString());
+  clock.t = 999;
+  assert.equal(pool.capacitySnapshot(records).retryAt, new Date(1000).toISOString());
+  assert.equal(pool.acquire("next"), null);
+  clock.t = 1000;
+  assert.equal(pool.capacitySnapshot(records).free, 1);
+  assert.equal(pool.capacitySnapshot(records).retryAt, undefined);
+  assert.equal(pool.acquire("next"), KEYS[0]);
 });
 
 test("capacity treats an unreconciled reservation as pending instead of free", () => {

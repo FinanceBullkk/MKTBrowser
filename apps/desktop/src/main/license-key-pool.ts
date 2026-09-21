@@ -9,22 +9,17 @@
  *
  * Two facts about the engine shape everything here.
  *
- * A key is not free the moment its profile closes. The seat is released during the browser's own
- * shutdown flush, so a close that reached SIGKILL leaves the seat held on the server until the
- * lease expires, while this process has no way to release it — session/end wants a lease_id and an
- * instance_id that died with the browser. Such a key goes to `cooling`, not `idle`, or the next
- * launch would pick it and be refused.
+ * A key is not free the moment its profile closes. Even Browser.close and exit code 0 can leave
+ * the vendor session alive. session/end requires lease_id and instance_id that are not available
+ * to this app, so every unconfirmed release rests locally before another manual attempt.
  *
- * That expiry was measured on 24 August 2026 by abandoning a lease and asking for it back every
- * 30s: reclaimed after 15.1 minutes, against the `lease_ttl_seconds: 900` the server declares — so
- * the vendor enforces its stated TTL to within seconds, and an independent 15m19s observation in
- * the acceptance matrix agrees. The 17-minute cooldown below is that 900s plus two minutes of
- * margin for clock skew. Do not shorten it below 15 minutes.
+ * September measurements include refusals after 18.9 minutes. The waits below are conservative
+ * local retry policies, not a promise that the vendor has released a seat at their deadlines.
  *
  * And the pool's view can be wrong. A seat can be held by something outside this app entirely — a
  * browser left by an earlier crash, another machine on the same key. So `markRefused` exists: when
- * a launch comes back with exit 76 the caller reports it, that key goes cooling, and the caller can
- * try the next one. The pool is a good guess that corrects itself, never an authority.
+ * a launch comes back with exit 76 the caller reports it and stops. Only a later operator request
+ * may try again. The pool is local bookkeeping, never vendor authority.
  *
  * Every hold here therefore has to end on some clock, bar one. A lease rebuilt from the journal
  * that was still mid-flight when it was written describes a browser that may have outlived the app
@@ -60,12 +55,15 @@ export interface LicenseCapacitySnapshot {
   active: number;
   pendingRecovery: number;
   cooling: number;
+  /** Earliest local retry, not a vendor release guarantee. Absent when unknown or a key is free. */
+  retryAt?: string;
 }
 
 export interface LicenseCapacityLeaseRecord {
   keyFingerprint: string;
   state: LicenseLeaseState;
   updatedAt?: string;
+  lastErrorCode?: string | null;
 }
 
 /**
@@ -90,6 +88,7 @@ export interface LicenseKeyPoolOptions {
   keys: readonly string[];
   /** How long a key rests after a close that did not release its seat. */
   cooldownMs?: number;
+  refusalCooldownMs?: number;
   now?: () => number;
   /**
    * Leases persisted by an earlier run.
@@ -103,12 +102,10 @@ export interface LicenseKeyPoolOptions {
 }
 
 /**
- * How long a key rests after a close that did not hand its seat back.
- *
- * The vendor's measured lease TTL is 900s; this is that plus two minutes for clock skew. Do not
- * shorten it below 15 minutes.
+ * Conservative local waits after close/refusal. Neither duration proves vendor availability.
  */
-export const LICENSE_SEAT_COOLDOWN_MS = 17 * 60_000;
+export const LICENSE_SEAT_COOLDOWN_MS = 25 * 60_000;
+export const LICENSE_SEAT_REFUSAL_COOLDOWN_MS = 30 * 60_000;
 
 /** Enough to identify a key in a log without being able to reuse it. */
 export function keyTail(key: string): string {
@@ -129,7 +126,9 @@ function holdsSeat(state: LicenseLeaseState): boolean {
 export class LicenseKeyPool {
   private readonly slots: Slot[];
   private readonly cooldownMs: number;
+  private readonly refusalCooldownMs: number;
   private readonly now: () => number;
+  private readonly leaseDeadlines = new Map<string, { revision: string; deadline: number }>();
 
   constructor(opts: LicenseKeyPoolOptions) {
     // Duplicates would advertise capacity the engine will not honour: the same key twice is still
@@ -142,6 +141,10 @@ export class LicenseKeyPool {
       blockedByUnreconciledLease: false,
     }));
     this.cooldownMs = opts.cooldownMs ?? LICENSE_SEAT_COOLDOWN_MS;
+    this.refusalCooldownMs = Math.max(
+      this.cooldownMs,
+      opts.refusalCooldownMs ?? LICENSE_SEAT_REFUSAL_COOLDOWN_MS,
+    );
     this.now = opts.now ?? Date.now;
     if (opts.leaseRecords?.length) this.seedFromLeases(opts.leaseRecords);
   }
@@ -170,14 +173,26 @@ export class LicenseKeyPool {
         slot.blockedByUnreconciledLease = true;
         continue;
       }
-      const movedAtMs = Date.parse(record.updatedAt);
-      this.rest(slot, Number.isNaN(movedAtMs) ? t : Math.min(movedAtMs, t), t);
+      const deadline = this.leaseRetryAt(record, t);
+      if (deadline > t) slot.coolingUntilMs = Math.max(slot.coolingUntilMs ?? 0, deadline);
     }
   }
 
+  private leaseRetryAt(record: LicenseCapacityLeaseRecord, now: number): number {
+    const revision = `${record.state}:${record.updatedAt}:${record.lastErrorCode}`;
+    const cached = this.leaseDeadlines.get(record.keyFingerprint);
+    if (cached?.revision === revision) return cached.deadline;
+    const movedAt = Date.parse(record.updatedAt ?? "");
+    const duration = record.state === "terminal-refused" || record.lastErrorCode === "LICENCE_RELEASE_UNCONFIRMED"
+      ? this.refusalCooldownMs : this.cooldownMs;
+    const deadline = (Number.isFinite(movedAt) ? Math.min(movedAt, now) : now) + duration;
+    this.leaseDeadlines.set(record.keyFingerprint, { revision, deadline });
+    return deadline;
+  }
+
   /** Hold a key back until `restingSinceMs` plus a cooldown, unless that moment has already passed. */
-  private rest(slot: Slot, restingSinceMs: number, nowMs: number): void {
-    const until = restingSinceMs + this.cooldownMs;
+  private rest(slot: Slot, restingSinceMs: number, nowMs: number, durationMs = this.cooldownMs): void {
+    const until = restingSinceMs + durationMs;
     if (until <= nowMs) return;
     slot.coolingUntilMs = Math.max(slot.coolingUntilMs ?? 0, until);
   }
@@ -218,15 +233,15 @@ export class LicenseKeyPool {
   /**
    * Hand a key back.
    *
-   * `seatReleased` is the caller's honest answer to "did the browser get to flush its own
-   * shutdown". Only Browser.close does; a SIGTERM or SIGKILL does not, and claiming otherwise
-   * would send the next launch at a seat the server still considers taken.
+   * `seatReleased` requires independent release proof, or proof no engine was started.
+   * A clean browser shutdown alone never supplies that proof.
    */
-  release(profileId: string, seatReleased: boolean): void {
+  release(profileId: string, seatReleased = false): void {
     const slot = this.slots.find((s) => s.profileId === profileId);
     if (!slot) return;
     slot.profileId = null;
-    slot.coolingUntilMs = seatReleased ? null : this.now() + this.cooldownMs;
+    if (seatReleased) slot.coolingUntilMs = null;
+    else this.rest(slot, this.now(), this.now());
   }
 
   /** The engine refused this key: something holds its seat that this pool cannot see. */
@@ -234,7 +249,7 @@ export class LicenseKeyPool {
     const slot = this.slots.find((s) => s.key === key);
     if (!slot) return;
     slot.profileId = null;
-    slot.coolingUntilMs = this.now() + this.cooldownMs;
+    this.rest(slot, this.now(), this.now(), this.refusalCooldownMs);
   }
 
   /**
@@ -248,6 +263,7 @@ export class LicenseKeyPool {
     keyFingerprint: string,
     seatReleased: boolean,
     restingSinceMs?: number,
+    uncertainRelease = false,
   ): void {
     const slot = this.slots.find(
       (candidate) => fingerprintLicenseKey(candidate.key) === keyFingerprint,
@@ -256,7 +272,8 @@ export class LicenseKeyPool {
     slot.profileId = null;
     slot.blockedByUnreconciledLease = false;
     slot.coolingUntilMs = null;
-    if (!seatReleased) this.rest(slot, restingSinceMs ?? this.now(), this.now());
+    if (!seatReleased) this.rest(slot, restingSinceMs ?? this.now(), this.now(),
+      uncertainRelease ? this.refusalCooldownMs : this.cooldownMs);
   }
 
   /** Keys that could be handed out right now. */
@@ -269,9 +286,7 @@ export class LicenseKeyPool {
    * When the next key becomes usable, for telling an operator how long the wait is.
    *
    * Null means the wait has no deadline this pool can name: either a key is free already, or every
-   * key is held by a profile that is still open and will free it whenever it is closed. Only a
-   * cooling key has a time attached, because only a cooling key is waiting on the vendor's clock
-   * rather than on the operator.
+   * key is held by a profile that is still open. Only a cooling key has a local retry deadline.
    */
   nextFreeAtMs(): number | null {
     this.refresh();
@@ -305,13 +320,14 @@ export class LicenseKeyPool {
   ): LicenseCapacitySnapshot {
     this.refresh();
     const pendingFingerprints = new Set<string>();
-    const coolingFingerprints = new Set<string>();
+    const coolingDeadlines = new Map<string, number>();
+    const now = this.now();
     for (const record of leaseRecords) {
       if (record.state === "confirmed-released" || record.state === "expired") continue;
       if (record.state === "cooling" || record.state === "terminal-refused") {
-        const updatedAt = record.updatedAt === undefined ? Number.NaN : Date.parse(record.updatedAt);
-        if (!Number.isNaN(updatedAt) && updatedAt + this.cooldownMs <= this.now()) continue;
-        coolingFingerprints.add(record.keyFingerprint);
+        const deadline = this.leaseRetryAt(record, now);
+        if (deadline <= now) continue;
+        coolingDeadlines.set(record.keyFingerprint, deadline);
       } else {
         pendingFingerprints.add(record.keyFingerprint);
       }
@@ -324,13 +340,21 @@ export class LicenseKeyPool {
       pendingRecovery: 0,
       cooling: 0,
     };
+    const retryDeadlines: number[] = [];
     for (const slot of this.slots) {
       const fingerprint = fingerprintLicenseKey(slot.key);
       if (slot.profileId !== null) capacity.active += 1;
-      else if (slot.coolingUntilMs !== null || coolingFingerprints.has(fingerprint)) {
+      else if (slot.blockedByUnreconciledLease || pendingFingerprints.has(fingerprint)) {
+        capacity.pendingRecovery += 1;
+      } else if (slot.coolingUntilMs !== null || coolingDeadlines.has(fingerprint)) {
         capacity.cooling += 1;
-      } else if (pendingFingerprints.has(fingerprint)) capacity.pendingRecovery += 1;
-      else capacity.free += 1;
+        const durableDeadline = coolingDeadlines.get(fingerprint);
+        const deadline = Math.max(slot.coolingUntilMs ?? 0, durableDeadline ?? 0);
+        if (deadline > now) retryDeadlines.push(deadline);
+      } else capacity.free += 1;
+    }
+    if (capacity.free === 0 && retryDeadlines.length > 0) {
+      capacity.retryAt = new Date(Math.min(...retryDeadlines)).toISOString();
     }
     return capacity;
   }

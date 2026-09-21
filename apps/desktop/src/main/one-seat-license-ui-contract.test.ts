@@ -47,3 +47,15 @@ test("keeps the primary-key replacement path separate from additional-seat entit
   assert.match(settings, /cloakBrowserLicenseKeys: trimmed \? \[trimmed, \.\.\.kept\] : kept/);
   assert.match(settings, /additionalKeysEnabled=\{false\}/);
 });
+
+test("cooling guidance names a manual retry deadline and does not promise instant reuse", () => {
+  const message = source("license-seat-wait-message.ts");
+  const driver = source("ChromiumBrowserDriver.ts");
+  const main = source("index.ts");
+  assert.match(message, /Do not retry before/);
+  assert.match(message, /Retrying early may extend the wait/);
+  assert.match(message, /no automatic retry/);
+  assert.doesNotMatch(message, /It frees in|free one sooner|Close a running profile to free/);
+  assert.match(driver, /seatReleasedOverride \?\? false/);
+  assert.match(main, /capacitySnapshot\(licenseLeaseJournal\.snapshot\(\)\)/);
+});

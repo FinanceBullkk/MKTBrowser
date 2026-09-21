@@ -15,15 +15,9 @@ import { relative, sep } from "node:path";
  * Close browsers left behind by an app that did not exit cleanly.
  *
  * `before-quit` already calls `closeAll()`, so the normal path leaves nothing behind. This is for
- * the abnormal one: Task Manager, a power cut, a crash. The child Chromium survives, and because
- * CloakBrowser releases its licence seat only during its own shutdown flush, that survivor holds
- * the seat until the lease expires — measured at 7 to 17 minutes. On a plan with exactly one seat
- * the operator simply cannot open anything for that long, the app reports zero profiles running,
- * and nothing on screen connects the two facts.
- *
- * The whole point is closing them POLITELY. `Browser.close` over the orphan's own DevTools port
- * hands the seat back; SIGKILL keeps it, which would make this sweep a slower way to stay locked
- * out. So a kill here is a failure with a consolation prize, and is logged as one.
+ * the abnormal one: Task Manager or a crash can leave Chromium heartbeating to the vendor.
+ * Prefer Browser.close to preserve profile data, then escalate only if the owned process survives.
+ * Neither shutdown method proves vendor release; startup reconciliation must rest the key.
  */
 
 export type OrphanSweepReason =
@@ -142,7 +136,8 @@ export async function sweepOrphanedProfileBrowsers(
     if (politeFailure === null) {
       closed.push(orphan.pid);
       const profileId = licensedProfileId(profilesRoot, orphan.commandLine);
-      if (profileId) recoveries.push({ pid: orphan.pid, profileId, seatReleased: true });
+      // CDP confirms local shutdown, not a vendor session release.
+      if (profileId) recoveries.push({ pid: orphan.pid, profileId, seatReleased: false });
       deps.log({ reason: "ORPHAN-SWEEP-CLOSED", pid: orphan.pid, port });
       continue;
     }

@@ -68,6 +68,7 @@ import {
 import { isCachedEngineVersionAllowed } from "./compatibility-engine-pin.ts";
 import { resolveCloakBrowserProManifest } from "./cloakbrowser-pro-channel.ts";
 import { findActivatedWindowsEngine } from "./activated-windows-engine-cache.ts";
+import { fetchEngineArchiveSha256, requireEngineArchiveSha256 } from "./engine-archive-checksum.ts";
 
 const execFileP = promisify(execFile);
 
@@ -268,11 +269,10 @@ export class ChromiumBootstrap extends EventEmitter {
 
       // download() now owns the full integrity story: resumable transfer,
       // truncation detection, SHA-256 verification against the engine's
-      // published checksum (when one exists), and automatic retries. It
-      // only returns once the file on disk is byte-complete and — for
-      // CloakBrowser, which publishes SHA256SUMS — checksum-verified.
-      // CFT has no canonical published hash, so there the SHA is computed
-      // for record-keeping only and we rely on HTTPS + (macOS) codesign.
+      // published checksum, and automatic retries. CloakBrowser and all
+      // compatibility-pinned downloads require a valid expected digest.
+      // Unpinned development CFT has no published hash: its digest is recorded
+      // only, with HTTPS + (macOS) codesign. It cannot establish a signed pin.
       const sha256 = await this.download(manifest, zipPath);
 
       this.setStatus({ kind: "verifying", version: manifest.version });
@@ -566,6 +566,10 @@ export class ChromiumBootstrap extends EventEmitter {
    *     with an actionable message (switch engine / change network).
    */
   private async download(manifest: BrowserDownloadManifest, outPath: string): Promise<string> {
+    const expectedSha256 =
+      this.engine === "cloakbrowser" || this.pinnedManifest || manifest.sha256 !== undefined
+        ? requireEngineArchiveSha256(manifest.sha256)
+        : undefined;
     const MAX_ATTEMPTS = 5;
     let lastError: Error | null = null;
 
@@ -582,13 +586,13 @@ export class ChromiumBootstrap extends EventEmitter {
           MAX_ATTEMPTS,
         );
 
-        if (manifest.sha256 && sha !== manifest.sha256) {
+        if (expectedSha256 && sha !== expectedSha256) {
           // Byte-complete but wrong content. Resuming would just append to
           // already-corrupt bytes, so nuke the file and force a fresh full
           // pull on the next attempt.
           await rm(outPath, { force: true });
           throw new Error(
-            `checksum mismatch (got ${sha.slice(0, 12)}…, expected ${manifest.sha256.slice(0, 12)}…) — ` +
+            `checksum mismatch (got ${sha.slice(0, 12)}…, expected ${expectedSha256.slice(0, 12)}…) — ` +
               `the download was altered in transit, likely by an antivirus or proxy`,
           );
         }
@@ -853,13 +857,13 @@ export class ChromiumBootstrap extends EventEmitter {
       const asset = release.assets.find((a) => a.name === assetName);
       if (asset) {
         const sums = release.assets.find((a) => a.name === "SHA256SUMS");
+        if (!sums) throw new Error("CloakBrowser release has no SHA256SUMS; download refused.");
+        const version = release.tag_name.replace(/^chromium-v?|^v/, "");
         return {
           // Tags look like "chromium-v146.0.7680.177.4" — strip prefix.
-          version: release.tag_name.replace(/^chromium-v?|^v/, ""),
+          version,
           url: asset.browser_download_url,
-          sha256: sums
-            ? await fetchCloakBrowserSha256(sums.browser_download_url, assetName)
-            : undefined,
+          sha256: await fetchEngineArchiveSha256(sums.browser_download_url, assetName, version),
         };
       }
     }
@@ -991,21 +995,6 @@ function cloakBrowserAssetName(): string {
   return process.arch === "arm64"
     ? "cloakbrowser-linux-arm64.tar.gz"
     : "cloakbrowser-linux-x64.tar.gz";
-}
-
-async function fetchCloakBrowserSha256(sumsUrl: string, assetName: string): Promise<string> {
-  const res = await fetch(sumsUrl);
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status} fetching CloakBrowser SHA256SUMS`);
-  }
-  const text = await res.text();
-  for (const line of text.split(/\r?\n/)) {
-    const [hash, name] = line.trim().split(/\s+/, 2);
-    if (hash && name?.replace(/^\*/, "") === assetName && /^[a-f0-9]{64}$/i.test(hash)) {
-      return hash.toLowerCase();
-    }
-  }
-  throw new Error(`CloakBrowser SHA256SUMS has no checksum for ${assetName}`);
 }
 
 /**

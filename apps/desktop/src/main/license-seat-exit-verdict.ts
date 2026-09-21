@@ -1,13 +1,11 @@
 /**
- * Whether an already-exited Browser gave its vendor seat back cleanly.
- *
- * A normal window close exits with code 0 and no signal after the engine flushes its session. A
- * crash, hard kill, or ambiguous exit may leave the vendor heartbeat lease alive, so it must rest.
+ * Process exit status cannot prove that the vendor released a session. The licensed .6 engine
+ * can exit normally while its seat remains held, so every observed exit requires a local wait.
  */
 export function didBrowserExitReleaseSeat(
-  exitCode: number | null,
-  signal: NodeJS.Signals | null,
-  exitBelongsToBrowser = true,
+  _exitCode: number | null,
+  _signal: NodeJS.Signals | null,
+  _exitBelongsToBrowser = true,
 ): boolean {
-  return exitBelongsToBrowser && exitCode === 0 && signal === null;
+  return false;
 }

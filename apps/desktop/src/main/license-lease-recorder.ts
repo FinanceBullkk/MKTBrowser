@@ -44,6 +44,7 @@ export class LicenseLeaseRecorder {
   // Node's strip-only TypeScript mode, which rejects that syntax.
   private readonly journal: LeaseJournalLike;
   private readonly log: LeaseRecorderLogger;
+  private readonly pendingRefusals = new Set<string>();
 
   constructor(journal: LeaseJournalLike, log: LeaseRecorderLogger = () => undefined) {
     this.journal = journal;
@@ -89,11 +90,12 @@ export class LicenseLeaseRecorder {
   /**
    * The browser is gone.
    *
-   * `seatReleased` is the same honest answer the key pool is given: only a shutdown the browser
-   * flushed itself hands the session back. Anything else leaves the seat resting, and recording it
-   * as released is what makes the next launch pick a key the server still counts as taken.
+   * `seatReleased` requires independent vendor release proof. Local shutdown alone is not proof;
+   * an unstarted reservation is the only production path that can be released immediately.
    */
-  async released(profileId: string, seatReleased: boolean): Promise<boolean> {
+  async released(profileId: string, seatReleased: boolean, uncertainRelease = false): Promise<boolean> {
+    // Cleanup must not downgrade a failed refusal write to the shorter ordinary-close wait.
+    if (this.pendingRefusals.has(profileId)) await this.refused(profileId);
     const state = this.journal.get(profileId)?.state;
     if (state === undefined) return seatReleased;
 
@@ -115,7 +117,7 @@ export class LicenseLeaseRecorder {
       let currentState = state;
       if (currentState === "starting") {
         await this.journal.transition(profileId, "pending-recovery", {
-          lastErrorCode: "LAUNCH_ENDED_EARLY",
+          lastErrorCode: uncertainRelease ? "LICENCE_RELEASE_UNCONFIRMED" : "LAUNCH_ENDED_EARLY",
         });
         currentState = "pending-recovery";
         if (!seatReleased) {
@@ -132,7 +134,7 @@ export class LicenseLeaseRecorder {
       }
       await this.journal.transition(profileId, seatReleased ? "confirmed-released" : "cooling", {
         childPid: null,
-        lastErrorCode: seatReleased ? null : undefined,
+        lastErrorCode: seatReleased ? null : uncertainRelease ? "LICENCE_RELEASE_UNCONFIRMED" : undefined,
       });
     });
     return seatReleased;
@@ -146,15 +148,20 @@ export class LicenseLeaseRecorder {
    */
   async refused(profileId: string, errorCode = "LICENCE_SEAT_REFUSED"): Promise<void> {
     const state = this.journal.get(profileId)?.state;
-    if (state === "terminal-refused") return;
+    if (state === "terminal-refused") {
+      this.pendingRefusals.delete(profileId);
+      return;
+    }
     if (state !== "reserved" && state !== "starting") {
       throw new Error(`License lease journal terminal-refused failed for profile=${profileId}.`);
     }
+    this.pendingRefusals.add(profileId);
     await this.attempt("terminal-refused", profileId, () =>
       this.journal.transition(profileId, "terminal-refused", {
         childPid: null,
         lastErrorCode: errorCode,
       }),
     );
+    this.pendingRefusals.delete(profileId);
   }
 }

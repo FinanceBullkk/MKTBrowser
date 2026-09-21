@@ -43,7 +43,7 @@ function harness(overrides: Partial<OrphanSweepDeps> = {}) {
   return { deps, events, killedPids, closedPorts, alive };
 }
 
-test("closes an orphan through its own DevTools port so the seat comes back", async () => {
+test("closes an orphan through its own DevTools port without claiming vendor release", async () => {
   const h = harness({
     enumerate: async () => ({ processes: [browser(101, 9222)], enumerated: true }),
   });
@@ -54,7 +54,7 @@ test("closes an orphan through its own DevTools port so the seat comes back", as
   assert.deepEqual(out.closed, [101]);
   assert.deepEqual(out.killed, []);
   assert.deepEqual(out.recoveries, [
-    { pid: 101, profileId: "p101", seatReleased: true },
+    { pid: 101, profileId: "p101", seatReleased: false },
   ]);
   assert.deepEqual(h.closedPorts, [9222]);
   assert.deepEqual(

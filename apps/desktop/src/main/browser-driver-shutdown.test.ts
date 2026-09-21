@@ -36,7 +36,7 @@ function fixture(startupBarrier = Promise.resolve()) {
   const closed: string[] = [];
   const active = new Map<string, object>();
   Object.defineProperty(driver, "running", { value: active });
-  Object.defineProperty(driver, "launchWithKeyRotation", { configurable: true, value: async (id: string) => {
+  Object.defineProperty(driver, "launchWithLicenseSeat", { configurable: true, value: async (id: string) => {
     launched.push(id);
     active.set(id, {});
     return { id, cdpEndpoint: "fixture", pid: 1, startedAt: "fixture" };
@@ -68,7 +68,7 @@ test("closeAll joins an already started launch, coalesces drains, then permits l
   const { driver, closed, active } = fixture();
   const launched = deferred();
   const finishLaunch = deferred();
-  Object.defineProperty(driver, "launchWithKeyRotation", { configurable: true, value: async (id: string) => {
+  Object.defineProperty(driver, "launchWithLicenseSeat", { configurable: true, value: async (id: string) => {
     launched.resolve();
     await finishLaunch.promise;
     active.set(id, {});

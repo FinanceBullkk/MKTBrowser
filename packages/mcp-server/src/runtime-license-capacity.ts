@@ -26,12 +26,20 @@ export async function resolveRuntimeLicenseCapacity(
     ) {
       return null;
     }
+    if (capacity.retryAt !== undefined && (
+      typeof capacity.retryAt !== "string" ||
+      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(capacity.retryAt) ||
+      !Number.isFinite(Date.parse(capacity.retryAt)) ||
+      new Date(capacity.retryAt).toISOString() !== capacity.retryAt ||
+      capacity.free !== 0 || Number(capacity.cooling) === 0
+    )) return null;
     return {
       total: Number(capacity.total),
       free: Number(capacity.free),
       active: Number(capacity.active),
       pendingRecovery: Number(capacity.pendingRecovery),
       cooling: Number(capacity.cooling),
+      ...(capacity.retryAt === undefined ? {} : { retryAt: capacity.retryAt }),
     };
   } catch {
     return null;

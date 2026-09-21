@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { didBrowserExitReleaseSeat } from "./license-seat-exit-verdict.ts";
 
-test("treats only a normal zero exit as a clean seat release", () => {
-  assert.equal(didBrowserExitReleaseSeat(0, null), true);
+test("never infers vendor release from process exit, including normal code zero", () => {
+  assert.equal(didBrowserExitReleaseSeat(0, null), false);
   assert.equal(didBrowserExitReleaseSeat(1, null), false);
   assert.equal(didBrowserExitReleaseSeat(null, "SIGKILL"), false);
   assert.equal(didBrowserExitReleaseSeat(null, null), false);

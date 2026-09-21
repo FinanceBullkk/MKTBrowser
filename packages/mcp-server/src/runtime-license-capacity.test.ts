@@ -42,3 +42,14 @@ test("includes measured capacity in the authenticated runtime report", async () 
 
   assert.deepEqual(runtime.licenseCapacity, measured);
 });
+
+test("preserves only a valid aggregate manual retry deadline", async () => {
+  const measured = { total: 1, free: 0, active: 0, pendingRecovery: 0, cooling: 1,
+    retryAt: "2026-09-21T04:30:00.000Z" };
+  const runtime = await buildRuntimeInfo({ licenseCapacity: () => ({ ...measured, key: "secret" }) });
+  assert.deepEqual(runtime.licenseCapacity, measured);
+  for (const retryAt of ["invalid", "2026-02-30T04:30:00.000Z", 123, null]) {
+    assert.equal(await resolveRuntimeLicenseCapacity(() => ({ ...measured, retryAt })), null);
+  }
+  assert.equal(await resolveRuntimeLicenseCapacity(() => ({ ...measured, free: 1, cooling: 0 })), null);
+});

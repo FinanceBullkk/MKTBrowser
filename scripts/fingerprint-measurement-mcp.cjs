@@ -7,9 +7,14 @@ const net = require("node:net");
 const path = require("node:path");
 const { measureCdpEndpoint } = require("./fingerprint-measurement-cdp.cjs");
 
+// Default propagation window between profiles. It is deliberately short, and on 21 September
+// 2026 it proved too short on a one-seat key: the vendor answered a launch with
+// session_limit_exceeded (active_sessions 1, limit 1) minutes after a clean close that the
+// local pool had already reported as a free seat. A longer explicit quiet interval does not
+// itself prove that the vendor has released the seat.
 const REMOTE_SEAT_SETTLE_MS = 5_000;
 
-async function launchMktBrowser({ executable, userData, licenseKey }) {
+async function launchMktBrowser({ executable, appPath, userData, licenseKey }) {
   await writeFile(
     path.join(userData, "settings.json"),
     JSON.stringify({
@@ -28,7 +33,7 @@ async function launchMktBrowser({ executable, userData, licenseKey }) {
     MKT_BROWSER_MCP_PORT: String(port),
   };
   delete env.ELECTRON_RUN_AS_NODE;
-  const child = spawn(executable, [`--user-data-dir=${userData}`], {
+  const child = spawn(executable, [...(appPath ? [appPath] : []), `--user-data-dir=${userData}`], {
     env,
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
@@ -41,6 +46,8 @@ async function launchMktBrowser({ executable, userData, licenseKey }) {
   child.stderr.on("data", collect);
 
   try {
+    // Surface executable/startup errors through the caller's cleanup path.
+    await once(child, "spawn");
     const tokenPath = path.join(userData, "mcp-token");
     await waitFor(() => existsSync(tokenPath), 30_000, "MCP token", child);
     const token = (await readFile(tokenPath, "utf8")).trim();
@@ -106,10 +113,48 @@ async function assertSeatFree(app, stage) {
   );
 }
 
-async function measureCloakProfile(app, profileId, probeUrl) {
+/**
+ * Retained opt-in experiment from 21 September 2026, not a seat-recovery strategy.
+ * A fixed 17-minute wait and vendor API release checks did not prove that a launch would work.
+ * Later refusals 18 minutes apart stayed blocked for 40 minutes. Whether each attempt resets
+ * the vendor timer remains unconfirmed; retries may prolong the hold and are disabled by default.
+ */
+const SEAT_RETRY_INTERVAL_MS = 2 * 60_000;
+
+function isSeatBusyError(error) {
+  const message = String(error?.message ?? error);
+  return (
+    message.includes("ENGINE_UNAVAILABLE") ||
+    /session limit|seat|capacity/i.test(message)
+  );
+}
+
+async function launchWithSeatRetry(app, profileId, retryDeadlineMs, log) {
+  for (;;) {
+    try {
+      return await app.callTool("launch_profile", { profile_id: profileId });
+    } catch (error) {
+      if (!isSeatBusyError(error) || Date.now() >= retryDeadlineMs) throw error;
+      log(`seat still busy; asking again in ${SEAT_RETRY_INTERVAL_MS / 1000}s`);
+      await delay(SEAT_RETRY_INTERVAL_MS);
+    }
+  }
+}
+
+async function measureCloakProfile(app, profileId, probeUrl, options = {}) {
+  const {
+    settleMs = REMOTE_SEAT_SETTLE_MS,
+    seatRetryMinutes = 0,
+    log = () => {},
+  } = options;
+  if (seatRetryMinutes > 0) {
+    log("WARNING: experimental seat retries are enabled; each attempt may prolong the vendor hold. This is not a validated recovery policy.");
+  }
   let launched = false;
   try {
-    const profile = await app.callTool("launch_profile", { profile_id: profileId });
+    const profile = seatRetryMinutes > 0
+      ? await launchWithSeatRetry(app, profileId, Date.now() + seatRetryMinutes * 60_000, log)
+      : await app.callTool("launch_profile", { profile_id: profileId });
     launched = true;
     const measurement = await measureCdpEndpoint({
       cdpEndpoint: profile.cdpEndpoint,
@@ -120,10 +165,9 @@ async function measureCloakProfile(app, profileId, probeUrl) {
   } finally {
     if (launched) {
       await app.callTool("close_profile", { profile_id: profileId });
+      // Honour an explicit quiet interval before checking the now-conservative local capacity.
+      await delay(settleMs);
       await waitForSeatFree(app, 15_000);
-      // Local capacity flips to free as soon as Browser.close completes. Give the vendor service
-      // a short propagation window before handing the same one-seat key to the next profile.
-      await delay(REMOTE_SEAT_SETTLE_MS);
     }
   }
 }
@@ -169,7 +213,7 @@ async function waitForSeatFree(app, timeoutMs) {
     }
     await delay(250);
   }
-  throw new Error("CloakBrowser seat did not return after Browser.close.");
+  throw new Error("CloakBrowser local seat remains unavailable after close; vendor release is unconfirmed. Stop and respect the reported retry time.");
 }
 
 async function callTool(baseUrl, token, name, toolArgs) {

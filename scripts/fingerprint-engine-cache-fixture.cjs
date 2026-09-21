@@ -48,15 +48,15 @@ async function seedVerifiedStableEngineCache({
   ),
 }) {
   const metadata = JSON.parse(await readFile(path.join(sourceRoot, "current.json"), "utf8"));
-  assert.equal(metadata.version, expectedVersion, "Installed engine cache is not Stable .2.");
+  assert.equal(metadata.version, expectedVersion, "Installed engine cache does not match the requested pin.");
   assert.equal(
     metadata.sha256,
     expectedArchiveSha256,
-    "Installed engine cache does not match the release-authority archive hash.",
+    "Installed engine cache does not match the expected archive hash.",
   );
   assert.match(metadata.binaryRelative, /^runtime[\\/]chrome\.exe$/i);
   const sourceBinary = path.resolve(sourceRoot, metadata.binaryRelative);
-  assert.ok(existsSync(sourceBinary), "Installed Stable .2 runtime is incomplete.");
+  assert.ok(existsSync(sourceBinary), "Installed pinned engine runtime is incomplete.");
 
   const sourceRuntime = path.resolve(sourceRoot, "runtime");
   const destinationRoot = path.join(userData, "chromium", "cloakbrowser");
@@ -77,7 +77,7 @@ async function seedVerifiedStableEngineCache({
     sha256File(sourceBinary),
     sha256File(destinationBinary),
   ]);
-  assert.equal(copiedRuntimeSha256, sourceRuntimeSha256, "Copied Stable .2 runtime changed bytes.");
+  assert.equal(copiedRuntimeSha256, sourceRuntimeSha256, "Copied pinned runtime changed bytes.");
   return {
     version: metadata.version,
     archiveSha256: metadata.sha256,
