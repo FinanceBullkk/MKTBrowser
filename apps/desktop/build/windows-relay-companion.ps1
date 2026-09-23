@@ -11,6 +11,11 @@ function Same-Path([string]$Left, [string]$Right) {
   return [string]::Equals([IO.Path]::GetFullPath($Left), [IO.Path]::GetFullPath($Right), [StringComparison]::OrdinalIgnoreCase)
 }
 
+function Is-Reparse-Path([string]$Path) {
+  if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) { return $false }
+  return [bool]((Get-Item -LiteralPath $Path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)
+}
+
 function File-Sha256([string]$Path) {
   $stream = [IO.File]::OpenRead($Path)
   $hash = [Security.Cryptography.SHA256]::Create()
@@ -43,14 +48,30 @@ function Relay-Listener([string]$ExpectedPath) {
   return $found
 }
 
-function Has-DirectStartup {
+function Has-UnsafeRelayStartup([string]$ExpectedLauncherPath) {
   if (-not (Test-Path -LiteralPath $StartupDirectory)) { throw "startup-unavailable" }
+  if (Is-Reparse-Path $StartupDirectory) { throw "startup-unverified" }
   $shell = New-Object -ComObject WScript.Shell
   try {
     foreach ($link in @(Get-ChildItem -LiteralPath $StartupDirectory -Filter '*.lnk' -File)) {
+      if (Is-Reparse-Path $link.FullName) { return $true }
       $shortcut = $shell.CreateShortcut($link.FullName)
       try {
-        if ($link.Name -ieq "MKTTool Relay.lnk" -or [IO.Path]::GetFileName($shortcut.TargetPath) -ieq "MKTTool-Relay.exe") { return $true }
+        $target = $shortcut.TargetPath
+        $isCanonicalLink = $link.Name -ieq "MKTTool Relay.lnk"
+        $targetName = [IO.Path]::GetFileName($target)
+        $isRelayTarget = $targetName -ieq "MKTTool-Relay.exe" -or $targetName -ieq "start-mkttool-relay.cmd"
+        if (-not ($isCanonicalLink -or $isRelayTarget)) { continue }
+
+        if ($isCanonicalLink -and
+            (Same-Path $target $ExpectedLauncherPath) -and
+            $shortcut.Arguments -ceq "" -and
+            -not (Is-Reparse-Path (Split-Path -Parent $ExpectedLauncherPath)) -and
+            -not (Is-Reparse-Path $ExpectedLauncherPath)) {
+          continue
+        }
+        # Direct Relay targets and any mismatched/duplicate wrapper entry are never a safe companion state.
+        return $true
       } finally {
         [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut)
       }
@@ -65,8 +86,10 @@ function Invoke-Companion {
   if (-not $env:LOCALAPPDATA -or -not $env:SystemRoot) { return "blocked" }
   $relayDirectory = Join-Path $env:LOCALAPPDATA "MKTTool-Relay"
   $relay = Join-Path $relayDirectory "MKTTool-Relay.exe"
+  $relayLauncher = Join-Path $relayDirectory "start-mkttool-relay.cmd"
   if (-not (Test-Path -LiteralPath $relay -PathType Leaf)) { return "not-installed" }
-  foreach ($path in @($relayDirectory, $relay)) {
+  if (-not (Test-Path -LiteralPath $relayLauncher -PathType Leaf)) { return "blocked" }
+  foreach ($path in @($relayDirectory, $relay, $relayLauncher)) {
     if ((Get-Item -LiteralPath $path).Attributes -band [IO.FileAttributes]::ReparsePoint) { return "blocked" }
   }
   $manifest = Get-Content -LiteralPath (Join-Path $PSScriptRoot "..\relay\relay-release.json") -Raw | ConvertFrom-Json
@@ -82,18 +105,20 @@ function Invoke-Companion {
   $processes = @(Relay-Processes $relay)
   if (Relay-Listener $relay) { return "running" }
   if ($processes.Count -eq 0) {
-    # A standalone repair recreates the direct login entry; require combined repair before spawning.
-    if (Has-DirectStartup) { return "blocked" }
+    if (Has-UnsafeRelayStartup $relayLauncher) { return "blocked" }
     $processes = @(Relay-Processes $relay)
     if (Relay-Listener $relay) { return "running" }
     if ($processes.Count -eq 0) {
       $browserProcess = Get-Process -Id $ExpectedBrowserProcessId -ErrorAction Stop
       if (-not (Same-Path $browserProcess.Path $ExpectedBrowserPath)) { return "blocked" }
-      # Never inherit a development identity directory or Node injection into the installed Relay.
+      # Never inherit development identity or TLS/Node overrides into the installed Relay.
       $env:RELAY_HOME = $null
       $env:NODE_OPTIONS = $null
+      $env:NODE_EXTRA_CA_CERTS = $null
+      $env:NODE_USE_SYSTEM_CA = $null
+      $env:NODE_TLS_REJECT_UNAUTHORIZED = $null
       $env:ELECTRON_RUN_AS_NODE = $null
-      Start-Process -FilePath $relay -WorkingDirectory $relayDirectory -WindowStyle Hidden -ErrorAction Stop
+      Start-Process -FilePath $relayLauncher -WorkingDirectory $relayDirectory -WindowStyle Hidden -ErrorAction Stop
       $started = $true
     }
   }

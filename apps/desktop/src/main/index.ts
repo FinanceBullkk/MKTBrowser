@@ -41,7 +41,6 @@ import {
   resolveMktBrowserMcpPort,
   type ChromiumStatus,
   type ExtensionConfig,
-  type MktBrowserCapability,
   type ProxyConfig,
 } from "@mktbrowser/types";
 import { ChromiumBrowserDriver } from "./ChromiumBrowserDriver.ts";
@@ -140,6 +139,7 @@ let switchToCftInFlight: Promise<ChromiumStatus> | null = null;
 let activeCompatibilityEnginePin: CompatibilityEnginePin | null = null;
 let backgroundLifecycle: WindowsBackgroundLifecycle | null = null;
 let relayCompanion: WindowsRelayCompanion | null = null;
+let localInstallInspector: WindowsLocalInstallInspector | null = null;
 let activationPending = false;
 let shutdownStarted = false;
 let checkingRelay = false;
@@ -151,6 +151,7 @@ const relayFailureNotifier = new RelayFailureNotifier({
 async function checkRelayCompanion(notifyFailure = false): Promise<void> {
   if (!relayCompanion || shutdownStarted || checkingRelay) return;
   checkingRelay = true;
+  localInstallInspector?.invalidate();
   try {
     const result = await relayCompanion.start();
     if (shutdownStarted || result.status === "cancelled") return;
@@ -159,6 +160,9 @@ async function checkRelayCompanion(notifyFailure = false): Promise<void> {
       relayFailureNotifier.show(result.message, notifyFailure || !backgroundLifecycle?.canHide);
     }
   } finally {
+    // A companion check can create, repair, or reject the owned Relay installation. Do not keep
+    // the pre-check ownership snapshot available for profile actions.
+    localInstallInspector?.invalidate();
     checkingRelay = false;
   }
 }
@@ -367,7 +371,7 @@ app
     }
 
     const userData = app.getPath("userData");
-    const localInstallInspector = new WindowsLocalInstallInspector({
+    localInstallInspector = new WindowsLocalInstallInspector({
       scriptPath: join(
         process.resourcesPath,
         "installer",
@@ -386,13 +390,7 @@ app
         "Startup",
       ),
     });
-    const runtimeCapabilities = async (): Promise<MktBrowserCapability[]> => {
-      // Keep the capacity payload diagnostic until driver lifecycle writes and startup recovery
-      // make it complete. MKTTool only treats it as launch authority once this capability appears.
-      const capabilities: MktBrowserCapability[] = [];
-      if (await localInstallInspector.isReady()) capabilities.push("local-install-ready-v1");
-      return capabilities;
-    };
+    const localInstallReadiness = () => localInstallInspector?.snapshot() ?? "unavailable";
     const dataRoot = join(userData, "data");
     licenseLeaseJournal = await LicenseLeaseJournal.open(join(dataRoot, "license-leases.json"));
     if (process.platform === "win32" && !app.commandLine.hasSwitch("user-data-dir")) {
@@ -606,6 +604,9 @@ app
         ? (licenseSeatCoordinator?.snapshot() ?? null)
         : null;
     const refreshLicenseCapacity = async () => {
+      // This callback is reached only by an explicit Web "Check again" action. Refreshing its
+      // unrelated capacity observation must not leave a just-stale install verdict actionable.
+      localInstallInspector?.invalidate();
       if (chromiumBootstrap.getEngine() !== "cloakbrowser") return null;
       // Startup reconciliation may invalidate an observation after it has begun. Wait for that
       // one-time state transition so the first operator refresh reflects a stable local snapshot.
@@ -684,7 +685,7 @@ app
       // has since been removed, which is exactly the answer the caller is trying to verify.
       engineInfo: () =>
         describeEngineStatus(chromiumBootstrap.getEngine(), chromiumBootstrap.getStatus()),
-      runtimeCapabilities,
+      localInstallReadiness,
       licenseCapacity,
       refreshLicenseCapacity,
       // The release the operator installed — not the MCP contract constant. These drifted apart
@@ -737,7 +738,7 @@ app
               accessPolicy,
               engineInfo: () =>
                 describeEngineStatus(chromiumBootstrap.getEngine(), chromiumBootstrap.getStatus()),
-              runtimeCapabilities,
+              localInstallReadiness,
               licenseCapacity,
               refreshLicenseCapacity,
               appVersion: app.getVersion(),

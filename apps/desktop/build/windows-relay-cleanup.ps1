@@ -4,9 +4,28 @@ if (-not $env:LOCALAPPDATA) {
   throw "LOCALAPPDATA is unavailable."
 }
 
-$relayExe = [IO.Path]::GetFullPath(
-  (Join-Path $env:LOCALAPPDATA "MKTTool-Relay\MKTTool-Relay.exe")
-)
+$relayDirectory = [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA "MKTTool-Relay"))
+$relayExe = [IO.Path]::GetFullPath((Join-Path $relayDirectory "MKTTool-Relay.exe"))
+$relayLauncher = [IO.Path]::GetFullPath((Join-Path $relayDirectory "start-mkttool-relay.cmd"))
+
+function Same-Path([string]$Left, [string]$Right) {
+  if (-not $Left -or -not $Right) { return $false }
+  return [string]::Equals([IO.Path]::GetFullPath($Left), [IO.Path]::GetFullPath($Right), [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Is-Reparse-Path([string]$Path) {
+  if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) { return $false }
+  return [bool]((Get-Item -LiteralPath $Path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)
+}
+
+if (Is-Reparse-Path $relayDirectory) {
+  throw "The owned MKTTool Relay directory could not be verified safely."
+}
+foreach ($path in @($relayExe, $relayLauncher)) {
+  if (Is-Reparse-Path $path) {
+    throw "An owned MKTTool Relay artifact could not be verified safely."
+  }
+}
 
 <#
   Resolving which processes are the owned Relay needs two independent sources, because each one
@@ -81,40 +100,60 @@ $shortcutFolders = @(
   [Environment]::GetFolderPath("Desktop")
 )
 
-foreach ($folder in $shortcutFolders) {
-  Get-ChildItem -LiteralPath $folder -Filter "*.lnk" -File -ErrorAction SilentlyContinue |
-    ForEach-Object {
-      $isOwned = $false
-      try {
-        $target = $shell.CreateShortcut($_.FullName).TargetPath
-        $isOwned = $target -and [IO.Path]::GetFullPath($target).Equals(
-          $relayExe,
-          [StringComparison]::OrdinalIgnoreCase
-        )
-      } catch {
-        # Ownership is unknown, so preserve the shortcut.
-      }
-      if ($isOwned) {
+try {
+  foreach ($folder in $shortcutFolders) {
+    if (-not (Test-Path -LiteralPath $folder) -or (Is-Reparse-Path $folder)) { continue }
+    Get-ChildItem -LiteralPath $folder -Filter "*.lnk" -File -ErrorAction SilentlyContinue |
+      ForEach-Object {
+        $isOwned = $false
+        $shortcut = $null
         try {
-          Remove-Item -LiteralPath $_.FullName -Force -ErrorAction Stop
+          if (-not (Is-Reparse-Path $_.FullName)) {
+            $shortcut = $shell.CreateShortcut($_.FullName)
+            $target = $shortcut.TargetPath
+            $targetIsOwned = (Same-Path $target $relayExe) -or (Same-Path $target $relayLauncher)
+            $targetParent = if ($target) { Split-Path -Parent $target } else { "" }
+            $isOwned = $targetIsOwned -and
+              $shortcut.Arguments -ceq "" -and
+              -not (Is-Reparse-Path $targetParent) -and
+              -not (Is-Reparse-Path $target)
+          }
         } catch {
-          throw "An owned MKTTool Relay shortcut could not be removed."
+          # Ownership is unknown, so preserve the shortcut.
+          $isOwned = $false
+        } finally {
+          if ($shortcut) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut) }
+        }
+        if ($isOwned) {
+          try {
+            Remove-Item -LiteralPath $_.FullName -Force -ErrorAction Stop
+          } catch {
+            throw "An owned MKTTool Relay shortcut could not be removed."
+          }
         }
       }
-    }
+  }
+} finally {
+  if ($shell) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) }
 }
 
-# A scanner or the loader can hold a briefly surviving handle after the process is gone, so retry
-# rather than deciding on the first attempt. The throw still fails the uninstall closed if the file
-# genuinely cannot be removed.
-$removeDeadline = [DateTime]::UtcNow.AddSeconds(15)
-while ($true) {
-  Remove-Item -LiteralPath $relayExe -Force -ErrorAction SilentlyContinue
-  if (-not (Test-Path -LiteralPath $relayExe)) {
-    break
+function Remove-OwnedRelayArtifact([string]$Path, [string]$Label) {
+  if (-not (Test-Path -LiteralPath $Path)) { return }
+  if ((Get-Item -LiteralPath $Path -Force).PSIsContainer -or (Is-Reparse-Path $Path)) {
+    throw "The owned MKTTool Relay $Label could not be verified safely."
   }
-  if ([DateTime]::UtcNow -ge $removeDeadline) {
-    throw "The owned MKTTool Relay executable is still present."
+
+  # A scanner or loader can hold a briefly surviving handle after process exit. Retry, but fail closed.
+  $removeDeadline = [DateTime]::UtcNow.AddSeconds(15)
+  while ($true) {
+    Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    if ([DateTime]::UtcNow -ge $removeDeadline) {
+      throw "The owned MKTTool Relay $Label is still present."
+    }
+    Start-Sleep -Milliseconds 250
   }
-  Start-Sleep -Milliseconds 250
 }
+
+Remove-OwnedRelayArtifact $relayExe "executable"
+Remove-OwnedRelayArtifact $relayLauncher "startup wrapper"

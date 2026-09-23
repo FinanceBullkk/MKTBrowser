@@ -109,7 +109,7 @@ async function main() {
     probeServer = await startProbeServer(stageAProbeAssets());
     app = await launchMktBrowser({ executable, userData, licenseKey });
     const runtime = await waitForReadyRuntime(app, 120_000);
-    assert.equal(runtime.contractVersion, 5, "Stage A requires control contract 5.");
+    assert.equal(runtime.contractVersion, 6, "Stage A requires control contract 6.");
     assert.equal(runtime.engine?.kind, "cloakbrowser", "Stage A did not select CloakBrowser.");
     assert.equal(runtime.engine?.version, enginePin.version, "The active engine version drifted.");
     receipt.runtime = {

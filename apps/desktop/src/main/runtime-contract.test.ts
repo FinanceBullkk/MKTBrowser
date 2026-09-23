@@ -15,13 +15,14 @@ import { resolveRuntimeCapabilities } from "../../../../packages/mcp-server/src/
 const REPO_ROOT = new URL("../../../../", import.meta.url);
 
 test("publishes a versioned runtime contract", () => {
-  assert.equal(MKT_BROWSER_CONTRACT_VERSION, 5);
+  assert.equal(MKT_BROWSER_CONTRACT_VERSION, 6);
   assert.equal(MKT_BROWSER_PROFILE_SCHEMA_VERSION, 3);
   assert.deepEqual(
     [...MKT_BROWSER_BASE_CAPABILITIES],
     [
       "profile-contract-v1",
       "runtime-info-v1",
+      "install-readiness-v1",
       "idempotent-create-v1",
       "atomic-launch-v1",
       "managed-profile-v1",
@@ -33,6 +34,7 @@ test("publishes a versioned runtime contract", () => {
     [
       "profile-contract-v1",
       "runtime-info-v1",
+      "install-readiness-v1",
       "idempotent-create-v1",
       "atomic-launch-v1",
       "managed-profile-v1",
@@ -43,18 +45,19 @@ test("publishes a versioned runtime contract", () => {
   );
 });
 
-test("keeps the local-install capability conditional at runtime", async () => {
+test("keeps local-install readiness conditional and nonblocking at runtime", async () => {
   const server = source("packages/mcp-server/src/server.ts");
   const main = source("apps/desktop/src/main/index.ts");
 
   assert.match(server, /runtimeCapabilities/);
+  assert.match(server, /localInstallReadiness/);
   assert.deepEqual(await resolveRuntimeCapabilities(), [...MKT_BROWSER_BASE_CAPABILITIES]);
   assert.deepEqual(
     await resolveRuntimeCapabilities(async () => [
-      "local-install-ready-v1",
-      "local-install-ready-v1",
+      "license-capacity-v1",
+      "license-capacity-v1",
     ]),
-    [...MKT_BROWSER_BASE_CAPABILITIES, "local-install-ready-v1"],
+    [...MKT_BROWSER_BASE_CAPABILITIES, "license-capacity-v1"],
   );
   assert.deepEqual(
     await resolveRuntimeCapabilities(async () => {
@@ -62,8 +65,20 @@ test("keeps the local-install capability conditional at runtime", async () => {
     }),
     [...MKT_BROWSER_BASE_CAPABILITIES],
   );
-  assert.match(main, /local-install-ready-v1/);
+  assert.match(server, /local-install-ready-v1/);
+  assert.match(server, /readiness === "unavailable"/);
+  assert.match(main, /localInstallInspector\?\.snapshot\(\)/);
+  assert.doesNotMatch(main, /await localInstallInspector\.isReady\(\)/);
   assert.match(main, /WindowsLocalInstallInspector/);
+  const companionCheck = main.slice(
+    main.indexOf("async function checkRelayCompanion"),
+    main.indexOf("const ADDITIONAL_LICENSE_KEYS_ENABLED"),
+  );
+  assert.equal(
+    companionCheck.match(/localInstallInspector\?\.invalidate\(\);/g)?.length,
+    2,
+    "a Relay check must invalidate both the pre-check and post-check ownership snapshots",
+  );
 });
 
 test("publishes measured license capacity without exposing lease or key identities", () => {
@@ -94,6 +109,11 @@ test("waits for startup recovery before the first explicit capacity refresh", ()
   const refresh = main.slice(refreshStart, refreshEnd);
 
   assert.ok(refreshStart >= 0 && refreshEnd > refreshStart, "capacity refresh wiring is missing");
+  assert.ok(
+    refresh.indexOf("localInstallInspector?.invalidate();") <
+      refresh.indexOf("licenseSeatCoordinator?.refresh()"),
+    "an explicit Web retry must invalidate the install snapshot before it can observe capacity",
+  );
   assert.ok(
     refresh.indexOf("await startupOrphanSweep") <
       refresh.indexOf("licenseSeatCoordinator?.refresh()"),

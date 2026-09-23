@@ -71,6 +71,7 @@ test("runs conflict inspection before any install mutation", () => {
 test("detects fixed-port, running Browser path, MultiZen, and startup conflicts without privileged CIM", () => {
   assert.match(detector, /MKTBrowser\.exe/);
   assert.match(detector, /MKTTool-Relay\.exe/);
+  assert.match(detector, /start-mkttool-relay\.cmd/);
   assert.match(detector, /MultiZen/);
   assert.match(detector, /Assert-Listener \$listeners 47821/);
   assert.match(detector, /Assert-Listener \$listeners 47822/);
@@ -122,6 +123,10 @@ test("repairs only exact-target owned shortcut duplicates after all conflict che
 
   assert.ok(browserCheckAt >= 0 && relayCheckAt > browserCheckAt && repairAt > relayCheckAt);
   assert.match(detector, /Same-Path \$_\.Target \$ExpectedPath/);
+  assert.match(detector, /start-mkttool-relay\.cmd/);
+  assert.match(detector, /function Assert-Relay-Shortcuts/);
+  assert.match(detector, /AllowLegacyDirectTarget/);
+  assert.match(detector, /\$shortcut\.Arguments/);
   assert.match(detector, /Remove-Item -LiteralPath \$duplicate\.Link -Force -ErrorAction Stop/);
   assert.doesNotMatch(detector, /Stop-Process|taskkill|Remove-Item[^\n]+MultiZen/i);
   assert.match(detector, /MultiZen data was not modified/);

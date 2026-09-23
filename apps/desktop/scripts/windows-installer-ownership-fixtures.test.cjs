@@ -71,8 +71,11 @@ test("standard-user conflict inspection and owned shortcut repair stay non-destr
   try {
     const browserPath = join(root, "expected", "MKTBrowser.exe");
     const relayPath = join(root, "expected", "MKTTool-Relay.exe");
+    const relayLauncherPath = join(root, "expected", "start-mkttool-relay.cmd");
     const inventoryPath = join(root, "inventory.json");
     mkdirSync(join(root, "expected"), { recursive: true });
+    writeFileSync(relayLauncherPath, "@echo off\r\n", "ascii");
+    writeFileSync(relayPath, "fixture", "ascii");
     writeInventory(inventoryPath, {});
 
     const probe = spawnSync("powershell.exe", detectorArgs(root, browserPath, relayPath, false, false, inventoryPath), {

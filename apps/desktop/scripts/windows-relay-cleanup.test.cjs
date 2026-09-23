@@ -14,7 +14,7 @@
  */
 const assert = require("node:assert/strict");
 const { execFileSync, spawn } = require("node:child_process");
-const { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } = require("node:fs");
+const { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 const test = require("node:test");
@@ -40,14 +40,16 @@ function stageOwnedRelay(t) {
   const relayDirectory = join(root, "MKTTool-Relay");
   mkdirSync(relayDirectory, { recursive: true });
   const relayExecutable = join(relayDirectory, "MKTTool-Relay.exe");
+  const relayLauncher = join(relayDirectory, "start-mkttool-relay.cmd");
   copyFileSync(HOST_EXECUTABLE, relayExecutable);
-  return { root, relayExecutable };
+  writeFileSync(relayLauncher, "@echo off\r\n", "ascii");
+  return { root, relayExecutable, relayLauncher };
 }
 
-function runCleanup(powershell, root) {
+function runCleanup(powershell, root, scriptPath = script) {
   return execFileSync(
     powershell,
-    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script],
+    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath],
     {
       encoding: "utf8",
       windowsHide: true,
@@ -59,11 +61,41 @@ function runCleanup(powershell, root) {
   );
 }
 
+const psQuote = (value) => `'${value.replaceAll("'", "''")}'`;
+
+function stageShortcutFixtureScript(t, root, startup, desktop) {
+  const source = readFileSync(script, "utf8");
+  const replacement = `$shortcutFolders = @(\n  ${psQuote(startup)},\n  ${psQuote(desktop)}\n)`;
+  const staged = source.replace(
+    /\$shortcutFolders = @\(\r?\n\s*\[Environment\]::GetFolderPath\("Startup"\),\r?\n\s*\[Environment\]::GetFolderPath\("Desktop"\)\r?\n\)/,
+    replacement,
+  );
+  assert.notEqual(staged, source, "test fixture did not replace shortcut folders");
+  const path = join(root, "cleanup-shortcut-fixture.ps1");
+  writeFileSync(path, staged, "utf8");
+  return path;
+}
+
+function createShortcut(link, target, argumentsValue = "") {
+  const command = [
+    "$shell = New-Object -ComObject WScript.Shell",
+    "try {",
+    `  $shortcut = $shell.CreateShortcut(${psQuote(link)})`,
+    `  $shortcut.TargetPath = ${psQuote(target)}`,
+    `  $shortcut.Arguments = ${psQuote(argumentsValue)}`,
+    "  $shortcut.Save()",
+    "} finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) }",
+  ].join("\n");
+  execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], {
+    encoding: "utf8", windowsHide: true, timeout: 10_000,
+  });
+}
+
 for (const [label, powershell] of POWERSHELL_HOSTS) {
   const hostAvailable = { skip: process.platform !== "win32" || !existsSync(powershell) };
 
   test(`removes a running owned Relay from the ${label}`, hostAvailable, async (t) => {
-    const { root, relayExecutable } = stageOwnedRelay(t);
+    const { root, relayExecutable, relayLauncher } = stageOwnedRelay(t);
 
     // `pause` keeps the copy alive without a window and without a busy loop.
     const child = spawn(relayExecutable, ["/c", "pause"], {
@@ -83,14 +115,16 @@ for (const [label, powershell] of POWERSHELL_HOSTS) {
       false,
       "a running owned Relay must be stopped and its executable removed",
     );
+    assert.equal(existsSync(relayLauncher), false, "the owned Relay startup wrapper must be removed");
   });
 
   test(`removes an idle owned Relay from the ${label}`, hostAvailable, (t) => {
-    const { root, relayExecutable } = stageOwnedRelay(t);
+    const { root, relayExecutable, relayLauncher } = stageOwnedRelay(t);
 
     runCleanup(powershell, root);
 
     assert.equal(existsSync(relayExecutable), false);
+    assert.equal(existsSync(relayLauncher), false);
   });
 
   test(`succeeds when the owned Relay is already gone, from the ${label}`, hostAvailable, (t) => {
@@ -103,3 +137,43 @@ for (const [label, powershell] of POWERSHELL_HOSTS) {
     assert.equal(existsSync(join(root, "MKTTool-Relay", "MKTTool-Relay.exe")), false);
   });
 }
+
+test("removes exact legacy and wrapper shortcuts while preserving foreign or argument-bearing entries", { skip: process.platform !== "win32" }, (t) => {
+  const { root, relayExecutable, relayLauncher } = stageOwnedRelay(t);
+  const startup = join(root, "Startup");
+  const desktop = join(root, "Desktop");
+  const foreignDirectory = join(root, "foreign");
+  mkdirSync(startup, { recursive: true });
+  mkdirSync(desktop, { recursive: true });
+  mkdirSync(foreignDirectory, { recursive: true });
+  const foreignLauncher = join(foreignDirectory, "start-mkttool-relay.cmd");
+  writeFileSync(foreignLauncher, "@echo off\r\n", "ascii");
+
+  const legacyLink = join(startup, "MKTTool Relay.lnk");
+  const wrapperLink = join(desktop, "MKTTool Relay.lnk");
+  const foreignLink = join(startup, "Foreign Relay.lnk");
+  const argumentLink = join(desktop, "Relay Arguments.lnk");
+  createShortcut(legacyLink, relayExecutable);
+  createShortcut(wrapperLink, relayLauncher);
+  createShortcut(foreignLink, foreignLauncher);
+  createShortcut(argumentLink, relayLauncher, "--unsafe");
+
+  const fixtureScript = stageShortcutFixtureScript(t, root, startup, desktop);
+  runCleanup(join(windowsRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), root, fixtureScript);
+
+  assert.equal(existsSync(legacyLink), false, "legacy direct shortcut remained");
+  assert.equal(existsSync(wrapperLink), false, "safe wrapper shortcut remained");
+  assert.equal(existsSync(foreignLink), true, "foreign wrapper shortcut was removed");
+  assert.equal(existsSync(argumentLink), true, "argument-bearing wrapper shortcut was removed");
+  assert.equal(existsSync(relayExecutable), false, "owned Relay executable remained");
+  assert.equal(existsSync(relayLauncher), false, "owned Relay wrapper remained");
+});
+
+test("cleanup keeps wrapper deletion behind exact target and non-reparse ownership checks", () => {
+  const source = readFileSync(script, "utf8");
+  assert.match(source, /start-mkttool-relay\.cmd/);
+  assert.match(source, /Same-Path \$target \$relayExe\) -or \(Same-Path \$target \$relayLauncher/);
+  assert.match(source, /\$shortcut\.Arguments -ceq ""/);
+  assert.match(source, /Remove-OwnedRelayArtifact \$relayLauncher "startup wrapper"/);
+  assert.match(source, /Is-Reparse-Path \$relayDirectory/);
+});

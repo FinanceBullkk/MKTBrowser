@@ -40,7 +40,7 @@ export function mktBrowserMcpBaseUrl(port: number = MKT_BROWSER_DEFAULT_MCP_PORT
  * written against the previous number would now behave incorrectly. Adding an optional response
  * field is not a bump.
  */
-export const MKT_BROWSER_CONTRACT_VERSION = 5;
+export const MKT_BROWSER_CONTRACT_VERSION = 6;
 
 /** Bump when the on-disk profile record changes shape and needs a migration. */
 export const MKT_BROWSER_PROFILE_SCHEMA_VERSION = 3;
@@ -54,6 +54,7 @@ export const MKT_BROWSER_PROFILE_SCHEMA_VERSION = 3;
 export const MKT_BROWSER_BASE_CAPABILITIES = [
   "profile-contract-v1",
   "runtime-info-v1",
+  "install-readiness-v1",
   "idempotent-create-v1",
   "atomic-launch-v1",
   "managed-profile-v1",
@@ -71,6 +72,9 @@ export const MKT_BROWSER_CAPABILITIES = [
 ] as const;
 
 export type MktBrowserCapability = (typeof MKT_BROWSER_CAPABILITIES)[number];
+
+/** A current, local-only installation ownership observation. */
+export type MktBrowserLocalInstallReadiness = "checking" | "ready" | "failed" | "unavailable";
 
 /**
  * Stable machine-readable failure codes. Each names the layer that refused, so the Relay can tell
@@ -154,6 +158,8 @@ export interface MktBrowserRuntimeInfo {
   contractVersion: number;
   profileSchemaVersion: number;
   engine: MktBrowserEngineInfo;
+  /** `checking` and `unavailable` are fail-closed; only `ready` permits managed profile actions. */
+  localInstallReadiness: MktBrowserLocalInstallReadiness;
   capabilities: MktBrowserCapability[];
   /** Null when this build cannot produce a complete measured capacity view. */
   licenseCapacity: MktBrowserLicenseCapacity | null;

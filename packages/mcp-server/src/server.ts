@@ -15,7 +15,9 @@ import {
   MKT_BROWSER_MCP_SERVER_VERSION,
   MKT_BROWSER_PROFILE_SCHEMA_VERSION,
   type LaunchedProfile,
+  type MktBrowserCapability,
   type MktBrowserEngineInfo,
+  type MktBrowserLocalInstallReadiness,
   type MktBrowserRuntimeInfo,
   type MktBrowserOperationDiagnostic,
   type ProfileId,
@@ -232,6 +234,8 @@ export interface BrowserDriver {
   ): Promise<unknown>;
 }
 
+export type RuntimeLocalInstallReadinessProvider = () => MktBrowserLocalInstallReadiness;
+
 export interface MktBrowserMcpServerOptions {
   profileManager: ProfileManager;
   browserDriver: BrowserDriver;
@@ -245,6 +249,8 @@ export interface MktBrowserMcpServerOptions {
   engineInfo?: () => MktBrowserEngineInfo;
   /** Runtime-dependent capabilities that have passed their local checks on this device. */
   runtimeCapabilities?: RuntimeCapabilityProvider;
+  /** A synchronous, fail-closed local-install snapshot for `get_runtime_info`. */
+  localInstallReadiness?: RuntimeLocalInstallReadinessProvider;
   /** Aggregate local key/lease state. Never includes key identifiers or profile details. */
   licenseCapacity?: RuntimeLicenseCapacityProvider;
   /** Explicit bounded refresh. It observes capacity only and never launches an engine. */
@@ -463,6 +469,7 @@ export function createMktBrowserMcpServer(opts: MktBrowserMcpServerOptions): Mkt
     browserDriver,
     engineInfo,
     runtimeCapabilities,
+    localInstallReadiness,
     licenseCapacity,
     refreshLicenseCapacity,
     appVersion,
@@ -507,6 +514,7 @@ export function createMktBrowserMcpServer(opts: MktBrowserMcpServerOptions): Mkt
         browserDriver,
         engineInfo,
         runtimeCapabilities,
+        localInstallReadiness,
         licenseCapacity,
         refreshLicenseCapacity,
         appVersion,
@@ -534,6 +542,7 @@ interface DispatchDeps {
   browserDriver: BrowserDriver;
   engineInfo?: () => MktBrowserEngineInfo;
   runtimeCapabilities?: MktBrowserMcpServerOptions["runtimeCapabilities"];
+  localInstallReadiness?: MktBrowserMcpServerOptions["localInstallReadiness"];
   licenseCapacity?: MktBrowserMcpServerOptions["licenseCapacity"];
   refreshLicenseCapacity?: MktBrowserMcpServerOptions["refreshLicenseCapacity"];
   appVersion?: string;
@@ -564,18 +573,44 @@ function buildRuntimeIdentity(engineInfo?: () => MktBrowserEngineInfo, appVersio
   };
 }
 
+function resolveLocalInstallReadiness(
+  provider?: RuntimeLocalInstallReadinessProvider,
+): MktBrowserLocalInstallReadiness {
+  try {
+    const readiness = provider?.() ?? "checking";
+    return (
+      readiness === "ready" ||
+      readiness === "failed" ||
+      readiness === "checking" ||
+      readiness === "unavailable"
+    )
+      ? readiness
+      : "checking";
+  } catch {
+    return "checking";
+  }
+}
+
 export async function buildRuntimeInfo(options: {
   engineInfo?: () => MktBrowserEngineInfo;
   runtimeCapabilities?: MktBrowserMcpServerOptions["runtimeCapabilities"];
+  localInstallReadiness?: MktBrowserMcpServerOptions["localInstallReadiness"];
   licenseCapacity?: MktBrowserMcpServerOptions["licenseCapacity"];
   appVersion?: string;
 } = {}): Promise<MktBrowserRuntimeInfo> {
-  const [capabilities, licenseCapacity] = await Promise.all([
+  const localInstallReadiness = resolveLocalInstallReadiness(options.localInstallReadiness);
+  const [runtimeCapabilities, licenseCapacity] = await Promise.all([
     resolveRuntimeCapabilities(options.runtimeCapabilities),
     resolveRuntimeLicenseCapacity(options.licenseCapacity),
   ]);
+  const capabilities: MktBrowserCapability[] = runtimeCapabilities.filter(
+    (capability) => capability !== "local-install-ready-v1",
+  );
+  if (localInstallReadiness === "ready") capabilities.push("local-install-ready-v1");
+
   return {
     ...buildRuntimeIdentity(options.engineInfo, options.appVersion),
+    localInstallReadiness,
     capabilities,
     licenseCapacity,
   };

@@ -43,6 +43,31 @@ test("includes measured capacity in the authenticated runtime report", async () 
   assert.deepEqual(runtime.licenseCapacity, measured);
 });
 
+test("reports the fail-closed local-install snapshot before advertising readiness", async () => {
+  for (const readiness of ["checking", "failed", "unavailable", "ready"] as const) {
+    const runtime = await buildRuntimeInfo({
+      localInstallReadiness: () => readiness,
+      // A generic capability provider cannot bypass the current install snapshot.
+      runtimeCapabilities: () => ["local-install-ready-v1"],
+    });
+
+    assert.equal(runtime.localInstallReadiness, readiness);
+    assert.equal(runtime.capabilities.includes("install-readiness-v1"), true);
+    assert.equal(runtime.capabilities.includes("local-install-ready-v1"), readiness === "ready");
+  }
+
+  let current: "ready" | "checking" = "ready";
+  const provider = () => current;
+  let runtime = await buildRuntimeInfo({ localInstallReadiness: provider });
+  assert.equal(runtime.localInstallReadiness, "ready");
+  assert.equal(runtime.capabilities.includes("local-install-ready-v1"), true);
+
+  current = "checking";
+  runtime = await buildRuntimeInfo({ localInstallReadiness: provider });
+  assert.equal(runtime.localInstallReadiness, "checking");
+  assert.equal(runtime.capabilities.includes("local-install-ready-v1"), false);
+});
+
 test("preserves only a valid aggregate manual retry deadline", async () => {
   const measured = { total: 1, free: 0, active: 0, pendingRecovery: 0, cooling: 1,
     retryAt: "2026-09-21T04:30:00.000Z" };

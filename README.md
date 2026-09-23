@@ -18,8 +18,8 @@ place.
 
 | | |
 |---|---|
-| Prepared candidate | `20260922-browser-0.3.24-relay-18-fast-profile-reuse-cft` |
-| Browser | `0.3.24`, control contract `5`, profile schema `3` |
+| Prepared candidate | `20260922-browser-0.3.24-relay-18-fast-profile-reuse-cft`; Browser `0.3.24`, control contract `5`, profile schema `3` |
+| Current source | control contract `6`; no replacement Browser/Relay candidate has been built or allocated |
 | Source behavior | verified sequential admission, SDK shutdown and explicit capacity refresh |
 | Pinned Relay | locally built and smoke-verified v18 (`fabb6ebb…ac44f4`) from MKTTool `49b6292`; immutable publication remains OPEN |
 | Pinned engine | CFT `152.0.7977.64` (`b0db25de…8004`), exact archive published in sequences 24 and 25 |

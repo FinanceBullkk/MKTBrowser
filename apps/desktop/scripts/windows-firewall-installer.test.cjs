@@ -180,7 +180,10 @@ test("runs Relay uninstall cleanup from a parser-safe script file", () => {
   assert.match(relayCleanup, /Remove-Item -LiteralPath \$_\.FullName -Force -ErrorAction Stop/);
   assert.match(relayCleanup, /Ownership is unknown, so preserve the shortcut/);
   assert.match(relayCleanup, /owned MKTTool Relay shortcut could not be removed/);
-  assert.match(relayCleanup, /Remove-Item -LiteralPath \$relayExe/);
+  assert.match(relayCleanup, /function Remove-OwnedRelayArtifact\(\[string\]\$Path, \[string\]\$Label\)/);
+  assert.match(relayCleanup, /Remove-Item -LiteralPath \$Path -Force -ErrorAction SilentlyContinue/);
+  assert.match(relayCleanup, /Remove-OwnedRelayArtifact \$relayExe "executable"/);
+  assert.match(relayCleanup, /Remove-OwnedRelayArtifact \$relayLauncher "startup wrapper"/);
   assert.doesNotMatch(relayCleanup, /relay-config\.json/);
 });
 

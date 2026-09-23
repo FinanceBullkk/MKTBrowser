@@ -155,7 +155,9 @@ test("keeps desktop packaging metadata aligned with the product identity", () =>
   assert.match(installerInclude, /\$2 == 1/);
   assert.match(installerInclude, /windows-relay-cleanup\.ps1/);
   assert.match(relayCleanup, /CreateShortcut/);
-  assert.match(relayCleanup, /Remove-Item -LiteralPath \$relayExe/);
+  assert.match(relayCleanup, /function Remove-OwnedRelayArtifact/);
+  assert.match(relayCleanup, /Remove-OwnedRelayArtifact \$relayExe "executable"/);
+  assert.match(relayCleanup, /Remove-OwnedRelayArtifact \$relayLauncher "startup wrapper"/);
   assert.doesNotMatch(installerInclude, /nsProcess/);
   assert.doesNotMatch(installerInclude, /Remove-Item[^\r\n]*relay-config\.json/i);
   assert.doesNotMatch(relayCleanup, /Remove-Item[^\r\n]*relay-config\.json/i);

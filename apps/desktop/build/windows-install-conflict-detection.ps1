@@ -22,6 +22,26 @@ function Same-Path([string]$Left, [string]$Right) {
     )
 }
 
+function Is-Reparse-Path([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) { return $false }
+    return [bool]((Get-Item -LiteralPath $Path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)
+}
+
+function Shortcut-Property([object]$Shortcut, [string]$Name, [object]$DefaultValue) {
+    $property = $Shortcut.PSObject.Properties[$Name]
+    if ($null -eq $property) { return $DefaultValue }
+    return $property.Value
+}
+
+function Shortcut-Path-Is-Reparse([object]$Shortcut, [string]$PropertyName, [string]$Path) {
+    $value = Shortcut-Property $Shortcut $PropertyName $null
+    if ($null -ne $value) {
+        if ($value -is [bool]) { return $value }
+        return [string]::Equals([string]$value, "true", [StringComparison]::OrdinalIgnoreCase)
+    }
+    return Is-Reparse-Path $Path
+}
+
 function Stop-With([int]$Code, [string]$Message) {
     [Console]::Error.WriteLine($Message)
     exit $Code
@@ -187,8 +207,20 @@ function Shortcut-Targets([string]$Directory, [object]$Inventory) {
     $shell = New-Object -ComObject WScript.Shell
     try {
         return @(Get-ChildItem -LiteralPath $Directory -Filter '*.lnk' -File | ForEach-Object {
+            $linkItem = Get-Item -LiteralPath $_.FullName -Force
             $shortcut = $shell.CreateShortcut($_.FullName)
-            [pscustomobject]@{ Link = $_.FullName; Target = $shortcut.TargetPath }
+            try {
+                $target = $shortcut.TargetPath
+                [pscustomobject]@{
+                    Link = $_.FullName
+                    Target = $target
+                    Arguments = $shortcut.Arguments
+                    LinkIsReparsePoint = [bool]($linkItem.Attributes -band [IO.FileAttributes]::ReparsePoint)
+                    TargetIsReparsePoint = Is-Reparse-Path $target
+                }
+            } finally {
+                [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut)
+            }
         })
     } finally {
         if ([Runtime.InteropServices.Marshal]::IsComObject($shell)) {
@@ -232,6 +264,73 @@ function Repair-OwnedShortcuts([object[]]$Duplicates, [string]$Label) {
     }
 }
 
+function Assert-Safe-Relay-Launcher([string]$ExpectedLauncherPath, [int]$Code) {
+    if (-not (Test-Path -LiteralPath $ExpectedLauncherPath -PathType Leaf) -or
+        (Is-Reparse-Path (Split-Path -Parent $ExpectedLauncherPath)) -or
+        (Is-Reparse-Path $ExpectedLauncherPath)) {
+        Stop-With $Code "The MKTTool Relay startup wrapper could not be verified. Safe action: run Relay repair, then retry."
+    }
+}
+
+function Assert-Safe-Relay-Executable([string]$ExpectedRelayPath, [int]$Code) {
+    if (-not (Test-Path -LiteralPath $ExpectedRelayPath -PathType Leaf) -or
+        (Is-Reparse-Path (Split-Path -Parent $ExpectedRelayPath)) -or
+        (Is-Reparse-Path $ExpectedRelayPath)) {
+        Stop-With $Code "The MKTTool Relay executable could not be verified. Safe action: run Relay repair, then retry."
+    }
+}
+
+function Assert-Relay-Shortcuts(
+    [object[]]$Shortcuts,
+    [string]$ExpectedRelayPath,
+    [string]$ExpectedLauncherPath,
+    [string]$CanonicalLink,
+    [bool]$AllowLegacyDirectTarget,
+    [int]$Code,
+    [string]$Label
+) {
+    $ownedDuplicates = @()
+    foreach ($shortcut in $Shortcuts) {
+        $link = [string](Shortcut-Property $shortcut "Link" "")
+        $target = [string](Shortcut-Property $shortcut "Target" "")
+        $isCanonicalLink = Same-Path $link $CanonicalLink
+        $targetName = [IO.Path]::GetFileName($target)
+        $isRelayTarget = $targetName -ieq "MKTTool-Relay.exe" -or $targetName -ieq "start-mkttool-relay.cmd"
+        if (-not ($isCanonicalLink -or $isRelayTarget)) { continue }
+        $targetParent = if ($target) { Split-Path -Parent $target } else { "" }
+
+        if ((Shortcut-Path-Is-Reparse $shortcut "LinkIsReparsePoint" $link) -or
+            (Shortcut-Path-Is-Reparse $shortcut "TargetIsReparsePoint" $target) -or
+            (Is-Reparse-Path $targetParent)) {
+            Stop-With $Code "A $Label startup entry could not be verified safely. Safe action: disable that entry in Windows Startup Apps, then retry."
+        }
+        if (([string](Shortcut-Property $shortcut "Arguments" "")) -cne "") {
+            Stop-With $Code "A $Label startup entry has unsupported arguments. Safe action: disable that entry in Windows Startup Apps, then retry."
+        }
+
+        if (Same-Path $target $ExpectedLauncherPath) {
+            Assert-Safe-Relay-Launcher $ExpectedLauncherPath $Code
+            if (-not $isCanonicalLink) { $ownedDuplicates += $shortcut }
+            continue
+        }
+
+        # Legacy direct links are upgrade-only. Runtime inspection must fail closed until the wrapper replaces them.
+        if ($AllowLegacyDirectTarget -and $isCanonicalLink -and (Same-Path $target $ExpectedRelayPath)) {
+            if ((Is-Reparse-Path (Split-Path -Parent $ExpectedRelayPath)) -or (Is-Reparse-Path $ExpectedRelayPath)) {
+                Stop-With $Code "A $Label startup entry could not be verified safely. Safe action: disable that entry in Windows Startup Apps, then retry."
+            }
+            continue
+        }
+
+        Stop-With $Code "A startup entry points to a different $Label installation. Safe action: disable that entry in Windows Startup Apps, then retry."
+    }
+
+    if (-not $RepairOwnedShortcuts -and $ownedDuplicates.Count -gt 0) {
+        Stop-With $Code "Duplicate $Label startup entries were found. Safe action: run installer repair, then retry."
+    }
+    return $ownedDuplicates
+}
+
 try {
     $inventory = $null
     if (-not [string]::IsNullOrWhiteSpace($InventoryPath)) {
@@ -256,7 +355,13 @@ try {
 
     $shortcuts = Shortcut-Targets $StartupDirectory $inventory
     $browserDuplicates = @(Assert-Shortcuts $shortcuts "MKTBrowser.exe" $ExpectedBrowserPath (Join-Path $StartupDirectory "MKT Browser.lnk") 25 "MKT Browser")
-    $relayDuplicates = @(Assert-Shortcuts $shortcuts "MKTTool-Relay.exe" $ExpectedRelayPath (Join-Path $StartupDirectory "MKTTool Relay.lnk") 26 "MKTTool Relay")
+    $expectedRelayLauncherPath = Join-Path (Split-Path -Parent ([IO.Path]::GetFullPath($ExpectedRelayPath))) "start-mkttool-relay.cmd"
+    # Browser takeover removes the Relay startup link, so runtime checks must verify the wrapper directly.
+    if ($RuntimeInspection.IsPresent) {
+        Assert-Safe-Relay-Launcher $expectedRelayLauncherPath 26
+        Assert-Safe-Relay-Executable $ExpectedRelayPath 26
+    }
+    $relayDuplicates = @(Assert-Relay-Shortcuts $shortcuts $ExpectedRelayPath $expectedRelayLauncherPath (Join-Path $StartupDirectory "MKTTool Relay.lnk") (-not $RuntimeInspection.IsPresent) 26 "MKTTool Relay")
 
     if ($RepairOwnedShortcuts) {
         Repair-OwnedShortcuts $browserDuplicates "MKT Browser"
