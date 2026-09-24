@@ -1,12 +1,12 @@
 $ErrorActionPreference = "Stop"
 
-if (-not $env:GITHUB_ENV -or -not $env:GITHUB_PATH) {
-  throw "GITHUB_ENV and GITHUB_PATH are required to pin the workflow Node.js executable."
+if (-not $env:GITHUB_OUTPUT) {
+  throw "GITHUB_OUTPUT is required to publish the verified Node.js toolchain."
 }
 
 # actions/setup-node prepends its selected toolcache directory to PATH. Resolve it once, verify the
-# contract, and persist the absolute executables so later PowerShell steps never fall back to a
-# machine-wide Node.js installation or lose the action-managed PATH. A runner can drop the
+# contract, and publish immutable step outputs so later PowerShell steps never fall back to a
+# machine-wide Node.js installation or trust a mutable GITHUB_ENV value. A runner can drop the
 # action-managed PATH while starting a new PowerShell process, so the toolcache is an explicit
 # fallback rather than guessing from a machine-wide `node.exe`.
 $nodeExecutable = $null
@@ -75,17 +75,19 @@ if ($nodeMajor -ne 22) {
 }
 
 $nodeDirectory = Split-Path -Parent $nodeExecutable
-$corepackCommand = Join-Path $nodeDirectory "corepack.cmd"
 $corepackEntrypoint = Join-Path $nodeDirectory "node_modules\corepack\dist\corepack.js"
 if (-not (Test-Path -LiteralPath $corepackEntrypoint -PathType Leaf)) {
   throw "The Node.js 22 toolcache does not contain the bundled Corepack entrypoint beside node.exe."
 }
 
 $nodeSha256 = (Get-FileHash -LiteralPath $nodeExecutable -Algorithm SHA256).Hash.ToLowerInvariant()
-Add-Content -LiteralPath $env:GITHUB_ENV -Value "MKT_BROWSER_NODE22_EXE=$nodeExecutable"
-Add-Content -LiteralPath $env:GITHUB_ENV -Value "NODE22_BIN=$nodeExecutable"
-Add-Content -LiteralPath $env:GITHUB_ENV -Value "MKT_BROWSER_COREPACK22_CMD=$corepackCommand"
-Add-Content -LiteralPath $env:GITHUB_ENV -Value "MKT_BROWSER_COREPACK22_ENTRYPOINT=$corepackEntrypoint"
-Add-Content -LiteralPath $env:GITHUB_PATH -Value $nodeDirectory
+$corepackSha256 = (Get-FileHash -LiteralPath $corepackEntrypoint -Algorithm SHA256).Hash.ToLowerInvariant()
+@(
+  "node22_exe=$nodeExecutable"
+  "node22_version=$nodeVersion"
+  "node22_sha256=$nodeSha256"
+  "corepack22_entrypoint=$corepackEntrypoint"
+  "corepack22_sha256=$corepackSha256"
+) | Add-Content -LiteralPath $env:GITHUB_OUTPUT
 
-Write-Host "Pinned Node.js $nodeVersion executable at $nodeExecutable ($nodeSha256)."
+Write-Host "Pinned Node.js $nodeVersion executable at $nodeExecutable ($nodeSha256); Corepack SHA-256 $corepackSha256."

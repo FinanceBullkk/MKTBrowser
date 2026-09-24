@@ -69,6 +69,18 @@ function assertCandidateEngine(candidate, engine) {
   }
 }
 
+function assertCandidateRelay(candidate, relay) {
+  for (const [field, expected] of Object.entries({
+    relayVersion: relay.version,
+    relaySha256: relay.sha256,
+    relaySizeBytes: relay.sizeBytes,
+  })) {
+    const match = new RegExp(`^\\s*${field}:\\s*("[^"]*"|[0-9]+),\\s*$`, "m").exec(candidate);
+    assert.ok(match, `Missing exact candidate field ${field}`);
+    assert.equal(JSON.parse(match[1]), expected, `Candidate field ${field} differs from Browser Relay pin`);
+  }
+}
+
 test("keeps the Windows candidate version and pinned Relay coherent", () => {
   const root = readJson("package.json");
   const desktop = readJson("apps/desktop/package.json");
@@ -126,6 +138,7 @@ test("keeps the Windows candidate version and pinned Relay coherent", () => {
     new RegExp(`browserVersion: "${escapeForRegExp(expectedVersion)}"`),
     `MKTTool does not name browser version ${expectedVersion}. ${staleSibling}`,
   );
+  assertCandidateRelay(candidate, relay);
   const engine = readJson("apps/desktop/windows-engine-release.json");
   assertCandidateEngine(candidate, engine);
   const mktToolMetadata = readFileSync(path.join(mktToolRoot, MKTTOOL_FILES[1]), "utf8");
@@ -160,6 +173,26 @@ test("engine coherence is field-bound even when the candidate ID still contains 
   assert.notEqual(changed, candidate);
   assert.ok(changed.includes("cft"));
   assert.throws(() => assertCandidateEngine(changed, engine), /engineKind differs/);
+});
+
+test("Relay coherence is field-bound for every candidate artifact field", () => {
+  const candidate = readFileSync(path.join(resolveMktToolRoot(), MKTTOOL_FILES[2]), "utf8");
+  const relay = readJson("apps/desktop/relay-release.json");
+  const mutations = {
+    relayVersion: relay.version + 1,
+    relaySha256: relay.sha256 === "0".repeat(64) ? `1${"0".repeat(63)}` : "0".repeat(64),
+    relaySizeBytes: relay.sizeBytes + 1,
+  };
+
+  for (const [field, replacement] of Object.entries(mutations)) {
+    const expression = new RegExp(`^(\\s*${field}:\\s*)("[^"]*"|[0-9]+)(,\\s*)$`, "m");
+    const changed = candidate.replace(expression, `$1${JSON.stringify(replacement)}$3`);
+    assert.notEqual(changed, candidate, `fixture did not mutate ${field}`);
+    assert.throws(
+      () => assertCandidateRelay(changed, relay),
+      new RegExp(`${field} differs from Browser Relay pin`),
+    );
+  }
 });
 
 test("honours an explicit MKTTOOL_ROOT and rejects a missing checkout", () => {

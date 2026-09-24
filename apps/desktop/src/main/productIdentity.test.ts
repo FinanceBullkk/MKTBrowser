@@ -84,7 +84,7 @@ test("keeps desktop packaging metadata aligned with the product identity", () =>
     rootPackage.scripts?.["audit:production"],
     "yarn npm audit --all --recursive --environment production --severity high",
   );
-  assert.match(releaseWorkflow, /run: yarn audit:production/);
+  assert.match(releaseWorkflow, /- name: Audit production dependencies[\s\S]*?yarn audit:production/);
   assert.doesNotMatch(builderConfig, /^\s+extract-zip:/m);
   assert.match(builderConfig, /^\s+yauzl: "3\.4\.0"$/m);
   assert.doesNotMatch(viteConfig, /"extract-zip"/);
@@ -135,11 +135,18 @@ test("keeps desktop packaging metadata aligned with the product identity", () =>
   assert.match(relayFetcher, /headers\.Authorization = `Bearer \$\{releaseToken\}`/);
   assert.doesNotMatch(relayFetcher, /MKTTOOL_RELEASE_COOKIE/);
 
-  // The fetcher reading the right variable is only half of it. CI shipped a stale
-  // `MKTTOOL_RELEASE_COOKIE` env line that nothing read, so the installer job ran with no
-  // Authorization header and the pinned Relay download failed closed — a break nobody saw because
-  // that job only runs on workflow_dispatch. Pin the name the workflow actually passes.
+  // The dispatch secret stays under an alias until the bound snapshot is verified. The snapshot
+  // wrapper alone receives the canonical name, so no earlier Node, Corepack, or package step can
+  // inherit the release token.
   assert.match(
+    releaseCandidateWorkflow,
+    /MKT_RELEASE_TOKEN_AFTER_VERIFICATION: \$\{\{ secrets\.MKTTOOL_RELEASE_TOKEN \}\}/,
+  );
+  assert.match(
+    releaseCandidateWorkflow,
+    /\$env:MKTTOOL_RELEASE_TOKEN = \$releaseToken/,
+  );
+  assert.doesNotMatch(
     releaseCandidateWorkflow,
     /MKTTOOL_RELEASE_TOKEN: \$\{\{ secrets\.MKTTOOL_RELEASE_TOKEN \}\}/,
   );

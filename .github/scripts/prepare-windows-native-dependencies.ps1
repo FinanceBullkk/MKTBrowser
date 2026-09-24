@@ -1,3 +1,11 @@
+param(
+  [Parameter(Mandatory = $true)]
+  [string]$NodeExecutable,
+  [Parameter(Mandatory = $true)]
+  [ValidatePattern("^[a-fA-F0-9]{64}$")]
+  [string]$NodeSha256
+)
+
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
@@ -7,21 +15,27 @@ $betterSqliteVersion = "12.11.1"
 $expectedNodeAbi = "127"
 $expectedSha256 = "927b34496e946dc7c9a45636a03a039df72f10191ccc4960b8616d1a9319e45b"
 
-if (-not $env:GITHUB_ENV) {
+if (-not $env:GITHUB_ENV -or -not $env:RUNNER_TEMP) {
   throw "GITHUB_ENV is required to export native dependency settings."
 }
 
-if (-not $env:MKT_BROWSER_NODE22_EXE -or -not (Test-Path -LiteralPath $env:MKT_BROWSER_NODE22_EXE -PathType Leaf)) {
-  throw "MKT_BROWSER_NODE22_EXE must name the pinned Node.js 22 executable."
+if (-not (Test-Path -LiteralPath $NodeExecutable -PathType Leaf)) {
+  throw "NodeExecutable must name the pinned Node.js 22 executable."
+}
+
+$NodeExecutable = (Resolve-Path -LiteralPath $NodeExecutable).Path
+$actualNodeSha256 = (Get-FileHash -LiteralPath $NodeExecutable -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($actualNodeSha256 -ne $NodeSha256.ToLowerInvariant()) {
+  throw "NodeExecutable does not match the SHA-256 emitted by the Node.js setup step."
 }
 
 if (-not (Select-String -LiteralPath "yarn.lock" -SimpleMatch "resolution: `"better-sqlite3@npm:$betterSqliteVersion`"" -Quiet)) {
   throw "The pinned better-sqlite3 version no longer matches yarn.lock."
 }
 
-$nodeAbi = (& $env:MKT_BROWSER_NODE22_EXE -p "process.versions.modules").Trim()
-$nodePlatform = (& $env:MKT_BROWSER_NODE22_EXE -p "process.platform").Trim()
-$nodeArch = (& $env:MKT_BROWSER_NODE22_EXE -p "process.arch").Trim()
+$nodeAbi = (& $NodeExecutable -p "process.versions.modules").Trim()
+$nodePlatform = (& $NodeExecutable -p "process.platform").Trim()
+$nodeArch = (& $NodeExecutable -p "process.arch").Trim()
 if ($nodeAbi -ne $expectedNodeAbi -or $nodePlatform -ne "win32" -or $nodeArch -ne "x64") {
   throw "No reviewed better-sqlite3 prebuild is pinned for Node ABI $nodeAbi on $nodePlatform-$nodeArch."
 }

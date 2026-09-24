@@ -425,9 +425,10 @@ test("keeps optional hosted diagnostics manual and refuses skipped pipeline evid
 
   // The coverage floor only exists if the required pipeline runs it. A contract that lives in a
   // script nobody invokes is the same shape of mistake as a check that never ran on the artifact.
-  assert.ok(
-    pipeline.includes("run: yarn test:critical-coverage"),
-    "the required pipeline must run the critical coverage contract",
+  assert.match(
+    pipeline,
+    /- name: Critical coverage contract[\s\S]*?shell: pwsh[\s\S]*?yarn test:critical-coverage/,
+    "the required pipeline must run the critical coverage contract through its pinned Windows shell",
   );
 
   // Phase 4 builds exactly one installer, from a frozen tree, in one place. With an unsigned release
@@ -489,26 +490,73 @@ test("builds the release candidate once, from a named commit, and never rebuilds
   }
 });
 
-test("disables the setup-node package-manager cache in every workflow that uses it", () => {
+test("accounts for every setup-node cache and permits only the exact Node 24 Relay npm cache", () => {
   // The action probes for a cache using its bundled Yarn 1, which refuses to run against a project
   // pinned to yarn@4.5.0 through `packageManager`. On 23 August this took down the comparison and
   // attestation jobs of the first real release-candidate run, before either had done any work, and
   // the run read as a reproducibility failure when nothing had been compared at all.
-  for (const workflow of [
+  const releaseCandidateWorkflow = ".github/workflows/release-candidate.yml";
+  const workflows = [
     ".github/workflows/windows-pipeline.yml",
-    ".github/workflows/release-candidate.yml",
+    releaseCandidateWorkflow,
     ".github/workflows/release.yml",
     ".github/workflows/pr-release-gate.yml",
-  ]) {
+  ];
+  for (const workflow of workflows) {
     const contents = source(workflow);
-    const setupSteps = contents.split("uses: actions/setup-node@").length - 1;
-    const disabled = contents.split("package-manager-cache: false").length - 1;
+    const setupSteps = contents
+      .split(/(?=^ {6}- name:)/m)
+      .filter((step) => step.includes("uses: actions/setup-node@"));
+    const npmCacheSteps = setupSteps.filter((step) => /^[ \t]+cache:[ \t]*npm[ \t]*\r?$/m.test(step));
+    const explicitNpmCaches = contents.match(/^[ \t]+cache:[ \t]*npm[ \t]*\r?$/gm) ?? [];
+
     assert.equal(
-      disabled,
-      setupSteps,
-      `${workflow} has ${setupSteps} setup-node step(s) but disables the cache ${disabled} time(s)`,
+      explicitNpmCaches.length,
+      npmCacheSteps.length,
+      `${workflow} may use npm caching only in a setup-node step`,
     );
+    assert.equal(
+      npmCacheSteps.length,
+      workflow === releaseCandidateWorkflow ? 1 : 0,
+      `${workflow} may not add an unreviewed setup-node npm cache`,
+    );
+    for (const step of setupSteps) {
+      const disabled = /^[ \t]+package-manager-cache:[ \t]*false[ \t]*\r?$/m.test(step);
+      const npmCache = /^[ \t]+cache:[ \t]*npm[ \t]*\r?$/m.test(step);
+      assert.notEqual(disabled, npmCache, "each setup-node step must select exactly one cache mode");
+      assert.ok(disabled || npmCache, "every setup-node step must disable caching or use the reviewed npm cache");
+    }
   }
+
+  const releaseCandidate = source(releaseCandidateWorkflow);
+  const node24CacheAt = releaseCandidate.indexOf("- name: Setup Node.js 24 for the exact Relay candidate");
+  const relayBuildAt = releaseCandidate.indexOf("- name: Build and verify the exact Relay candidate archive");
+  assert.ok(node24CacheAt >= 0 && node24CacheAt < relayBuildAt, "the Node 24 cache must precede the Relay build");
+  const node24CacheStep = releaseCandidate.slice(node24CacheAt, relayBuildAt);
+  assert.match(node24CacheStep, /node-version: 24\.21\.0/);
+  assert.match(node24CacheStep, /^[ \t]+cache:[ \t]*npm[ \t]*\r?$/m);
+  assert.match(
+    node24CacheStep,
+    /cache-dependency-path: \$\{\{ steps\.mkttool_location\.outputs\.root \}\}\/package-lock\.json/,
+  );
+  const relayBuildStep = releaseCandidate.slice(
+    relayBuildAt,
+    releaseCandidate.indexOf("\n      - name:", relayBuildAt + 1),
+  );
+  assert.match(relayBuildStep, /working-directory: \$\{\{ steps\.mkttool_location\.outputs\.root \}\}/);
+  assert.match(
+    relayBuildStep,
+    /\$nodeExecutable = "\$\{\{ steps\.relay_build_toolchain\.outputs\.node_executable \}\}"/,
+  );
+  assert.match(
+    relayBuildStep,
+    /\$npmCli = "\$\{\{ steps\.relay_build_toolchain\.outputs\.npm_cli \}\}"/,
+  );
+  assert.match(relayBuildStep, /& \$nodeExecutable \$npmCli ci/);
+  assert.match(
+    relayBuildStep,
+    /emit-relay-build-toolchain-receipt\.cjs[\s\S]*--node \$nodeExecutable[\s\S]*--package-lock "\$env:MKTTOOL_ROOT\/package-lock\.json"[\s\S]*--verify "\$env:RUNNER_TEMP\/relay-build-toolchain-\$\{\{ matrix\.attempt \}\}\.json"/,
+  );
 });
 
 test("keeps browser ownership until failed launches and shutdown sweeps finish", () => {

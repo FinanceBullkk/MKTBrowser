@@ -18,6 +18,37 @@ const path = require("node:path");
 const desktopRoot = path.resolve(__dirname, "..");
 const manifestPath = path.join(desktopRoot, "relay-release.json");
 const payloadDir = path.join(desktopRoot, ".relay-payload");
+const CANONICAL_RELAY_RELEASE_ORIGIN = "https://mkttool-web-production.up.railway.app";
+const UNSAFE_INHERITED_ENVIRONMENT_NAMES = new Set([
+  "NODE_OPTIONS",
+  "NODE_EXTRA_CA_CERTS",
+  "NODE_USE_SYSTEM_CA",
+  "NODE_TLS_REJECT_UNAUTHORIZED",
+  "ELECTRON_RUN_AS_NODE",
+]);
+
+function assertSafeInheritedEnvironment(environment = process.env) {
+  const unsafeNames = Object.keys(environment)
+    .filter((name) => UNSAFE_INHERITED_ENVIRONMENT_NAMES.has(name.toUpperCase()))
+    .sort();
+  if (unsafeNames.length > 0) {
+    throw new Error(
+      `Unsafe inherited Node/TLS environment: ${unsafeNames.join(", ")}.`,
+    );
+  }
+}
+
+function canonicalRelayReleaseUrl(version) {
+  return `${CANONICAL_RELAY_RELEASE_ORIGIN}/api/relay/download/v${version}`;
+}
+
+function assertCanonicalRelayReleaseUrl(value, version) {
+  const expected = canonicalRelayReleaseUrl(version);
+  if (value !== expected) {
+    throw new Error("Pinned Relay URL must equal the canonical immutable Relay release URL.");
+  }
+  return expected;
+}
 
 function readManifest() {
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
@@ -30,11 +61,7 @@ function readManifest() {
   if (!/^[0-9a-f]{64}$/.test(manifest.sha256)) {
     throw new Error("relay-release.json must contain a lowercase SHA-256 digest.");
   }
-  const url = new URL(manifest.url);
-  if (url.protocol !== "https:" || !url.pathname.endsWith(`/v${manifest.version}`)) {
-    throw new Error("Pinned Relay URL must be HTTPS and end with its immutable version.");
-  }
-  return { ...manifest, url: url.href };
+  return { ...manifest, url: assertCanonicalRelayReleaseUrl(manifest.url, manifest.version) };
 }
 
 function sha256(file) {
@@ -45,11 +72,14 @@ function sha256(file) {
 }
 
 async function fetchPinnedRelay(options = {}) {
+  const environment = options.environment ?? process.env;
+  // A token-bearing downloader must refuse inherited TLS/Node policy before it can read a token.
+  assertSafeInheritedEnvironment(environment);
   const manifest = readManifest();
   mkdirSync(payloadDir, { recursive: true });
   const finalPath = path.join(payloadDir, `MKTTool-Relay-v${manifest.version}.zip`);
   const partialPath = `${finalPath}.partial`;
-  const localArchive = process.env.MKTTOOL_RELAY_ARCHIVE?.trim();
+  const localArchive = environment.MKTTOOL_RELAY_ARCHIVE?.trim();
 
   if (localArchive) {
     if (!existsSync(localArchive)) throw new Error(`Local pinned Relay archive not found: ${localArchive}`);
@@ -91,7 +121,7 @@ async function fetchPinnedRelay(options = {}) {
   // A token scoped to this one route, not a human's session cookie. A cookie unlocks the whole
   // app including the identity vault, expires mid-build, and dies when that person leaves the
   // team. See MKTTool/src/lib/relay/release-download-token.ts for the server side.
-  const releaseToken = process.env.MKTTOOL_RELEASE_TOKEN?.trim();
+  const releaseToken = environment.MKTTOOL_RELEASE_TOKEN?.trim();
   if (releaseToken) headers.Authorization = `Bearer ${releaseToken}`;
   if (start > 0) headers.Range = `bytes=${start}-`;
   const response = await (options.fetchImpl ?? fetch)(manifest.url, { headers, redirect: "error" });
@@ -126,4 +156,11 @@ if (require.main === module) {
     });
 }
 
-module.exports = { fetchPinnedRelay, readManifest };
+module.exports = {
+  CANONICAL_RELAY_RELEASE_ORIGIN,
+  assertCanonicalRelayReleaseUrl,
+  assertSafeInheritedEnvironment,
+  canonicalRelayReleaseUrl,
+  fetchPinnedRelay,
+  readManifest,
+};

@@ -58,6 +58,14 @@ const localElectronDist = path.join(desktopRoot, "node_modules", "electron", "di
 const workspaceLinksPath = path.join(desktopRoot, "node_modules", "@mktbrowser");
 const relayPayloadPath = path.join(desktopRoot, ".relay-payload", "MKTTool-Relay.zip");
 
+function assertTokenlessWindowsPackaging(environment = process.env) {
+  if ((environment.MKTTOOL_RELEASE_TOKEN ?? "").trim()) {
+    throw new Error(
+      "Refusing Windows packaging while the Relay release token is present. Use the tokenized CMD wrapper.",
+    );
+  }
+}
+
 /**
  * Both copies exist because yarn's workspace layout gives `profile-manager` its own `node_modules`.
  * A rebuild may replace either, so both are captured and restored.
@@ -95,6 +103,8 @@ function readPinnedElectronVersion() {
  * @param {boolean} [options.includeRelay] Fetch and stage the pinned Relay payload.
  */
 async function packageWindows({ builderArgs, label, includeRelay = false }) {
+  // Package scripts run after Yarn starts, so protect direct callers as well as shell entry points.
+  assertTokenlessWindowsPackaging();
   assertSupportedNodeVersion();
   assertWorkspaceQualityContract(repoRoot);
   runPrepackageQualityGates(label);
@@ -259,4 +269,10 @@ function runAsScript(options) {
   });
 }
 
-module.exports = { packageWindows, resolveCorepackInvocation, runAsScript, windowsSigningArgs };
+module.exports = {
+  assertTokenlessWindowsPackaging,
+  packageWindows,
+  resolveCorepackInvocation,
+  runAsScript,
+  windowsSigningArgs,
+};

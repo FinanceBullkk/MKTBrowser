@@ -3,7 +3,10 @@ const { readFileSync } = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
 
-const { resolveCorepackInvocation } = require("./package-windows.cjs");
+const {
+  assertTokenlessWindowsPackaging,
+  resolveCorepackInvocation,
+} = require("./package-windows.cjs");
 
 const desktopPackage = JSON.parse(
   readFileSync(path.join(__dirname, "..", "package.json"), "utf8"),
@@ -13,8 +16,17 @@ test("compiles fresh application bundles before every official installer package
   assert.equal(desktopPackage.scripts["build:win"], "yarn package:windows-installer");
   assert.match(
     desktopPackage.scripts["package:windows-installer"],
-    /^node \.\.\/\.\.\/scripts\/verify-node-version\.cjs && electron-vite build && node /,
+    /^node \.\/scripts\/assert-tokenless-windows-packaging\.cjs && node \.\.\/\.\.\/scripts\/verify-node-version\.cjs && electron-vite build && node /,
   );
+});
+
+test("refuses direct packageWindows callers that still carry a Relay release token", () => {
+  const token = "test-release-token-not-for-output";
+  assert.throws(
+    () => assertTokenlessWindowsPackaging({ MKTTOOL_RELEASE_TOKEN: token }),
+    /Refusing Windows packaging while the Relay release token is present/,
+  );
+  assert.doesNotThrow(() => assertTokenlessWindowsPackaging({ MKTTOOL_RELEASE_TOKEN: "" }));
 });
 
 test("quotes the live Windows gate so Yarn does not expand PowerShell environment syntax", () => {

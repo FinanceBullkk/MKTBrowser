@@ -1,5 +1,7 @@
 const assert = require("node:assert/strict");
-const { mkdtempSync, writeFileSync } = require("node:fs");
+const { execFileSync } = require("node:child_process");
+const { createHash } = require("node:crypto");
+const { mkdtempSync, readFileSync, writeFileSync } = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
@@ -8,6 +10,59 @@ const {
   dependencyInventory,
   parseArguments,
 } = require("./emit-release-provenance.cjs");
+const {
+  BROWSER_HASHED_FILES,
+  MKTTOOL_HASHED_FILES,
+  RELAY_BUILD_TOOLCHAIN_TYPE,
+  TOKEN_CONSUMER_FILES,
+  WINDOWS_TOOLCHAIN_TYPE,
+  parseWindowsInstallerCandidate,
+} = require("./release-candidate-source-binding.cjs");
+
+const repoRoot = path.resolve(__dirname, "..");
+const mktToolRoot = path.resolve(repoRoot, "..", "MKTTool");
+
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function git(root, ...args) {
+  return execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
+}
+
+function windowsToolchainReceipt() {
+  return {
+    schemaVersion: 1,
+    type: WINDOWS_TOOLCHAIN_TYPE,
+    platform: "win32",
+    arch: "x64",
+    node: { fileName: "node.exe", version: "22.23.2", sha256: "a".repeat(64) },
+    corepack: { fileName: "corepack.js", version: "0.34.6", sha256: "b".repeat(64) },
+    yarn: { fileName: "yarn.js", version: "4.5.0", sha256: "c".repeat(64) },
+  };
+}
+
+function relayBuildToolchainReceipt({ directory, packageLockPath }) {
+  const nodePath = path.join(directory, "node-v24.21.0-win-x64", "node.exe");
+  return {
+    schemaVersion: 1,
+    type: RELAY_BUILD_TOOLCHAIN_TYPE,
+    platform: "win32",
+    arch: "x64",
+    node: { path: nodePath, fileName: "node.exe", version: "24.21.0", sha256: "d".repeat(64) },
+    npmCli: {
+      path: path.join(path.dirname(nodePath), "node_modules", "npm", "bin", "npm-cli.js"),
+      fileName: "npm-cli.js",
+      version: "11.6.2",
+      sha256: "e".repeat(64),
+    },
+    mktToolPackageLock: {
+      path: "package-lock.json",
+      sizeBytes: readFileSync(packageLockPath).length,
+      sha256: sha256(readFileSync(packageLockPath)),
+    },
+  };
+}
 
 function fixtures() {
   const directory = mkdtempSync(path.join(os.tmpdir(), "mkt-provenance-"));
@@ -18,7 +73,80 @@ function fixtures() {
     manifestPath,
     JSON.stringify({ manifestSha256: "b".repeat(64), fileCount: 42, entries: [] }),
   );
-  return { installerPath, manifestPath };
+  const candidate = parseWindowsInstallerCandidate(readFileSync(
+    path.join(mktToolRoot, "src/lib/setup/windows-installer-candidate.ts"),
+    "utf8",
+  ));
+  const receipt = windowsToolchainReceipt();
+  const windowsToolchainReceiptPath = path.join(directory, "windows-toolchain.json");
+  writeFileSync(windowsToolchainReceiptPath, JSON.stringify(receipt));
+  const relayReceipt = relayBuildToolchainReceipt({
+    directory,
+    packageLockPath: path.join(mktToolRoot, "package-lock.json"),
+  });
+  const relayBuildToolchainReceiptPath = path.join(directory, "relay-build-toolchain.json");
+  writeFileSync(relayBuildToolchainReceiptPath, JSON.stringify(relayReceipt));
+  const mktToolHashes = Object.fromEntries(MKTTOOL_HASHED_FILES.map((file) => [file, "f".repeat(64)]));
+  mktToolHashes["package-lock.json"] = relayReceipt.mktToolPackageLock.sha256;
+  const sourceBinding = {
+    schemaVersion: 5,
+    type: "mktbrowser.release-candidate-source-binding",
+    candidate,
+    relayArtifact: {
+      version: candidate.relay.version,
+      sizeBytes: candidate.relay.sizeBytes,
+      sha256: candidate.relay.sha256,
+      executableSizeBytes: 1,
+      executableSha256: "d".repeat(64),
+      sourceCommit: git(mktToolRoot, "rev-parse", "HEAD"),
+      nodeVersion: "v24.21.0",
+      platform: "win32",
+      arch: "x64",
+      webOrigin: "https://mkttool.example.invalid",
+      compatibilityFloor: 32,
+      archive: {
+        fileName: "MKTTool-Relay.zip",
+        sizeBytes: candidate.relay.sizeBytes,
+        sha256: candidate.relay.sha256,
+      },
+      sidecar: {
+        fileName: "MKTTool-Relay.metadata.json",
+        sizeBytes: 1,
+        sha256: "e".repeat(64),
+      },
+    },
+    windowsToolchain: receipt,
+    windowsToolchainReceiptSha256: sha256(readFileSync(windowsToolchainReceiptPath)),
+    relayBuildToolchain: relayReceipt,
+    relayBuildToolchainReceiptSha256: sha256(readFileSync(relayBuildToolchainReceiptPath)),
+    browser: {
+      commit: git(repoRoot, "rev-parse", "HEAD"),
+      tree: git(repoRoot, "rev-parse", "HEAD^{tree}"),
+      clean: true,
+      hashes: Object.fromEntries(BROWSER_HASHED_FILES.map((file) => [file, "e".repeat(64)])),
+    },
+    tokenConsumers: TOKEN_CONSUMER_FILES.map((relativePath) => ({
+      relativePath,
+      canonicalRelativePath: relativePath,
+      sha256: "e".repeat(64),
+    })),
+    mktTool: {
+      commit: git(mktToolRoot, "rev-parse", "HEAD"),
+      tree: git(mktToolRoot, "rev-parse", "HEAD^{tree}"),
+      clean: true,
+      hashes: mktToolHashes,
+    },
+  };
+  const sourceBindingPath = path.join(directory, "source-binding.json");
+  writeFileSync(sourceBindingPath, JSON.stringify(sourceBinding));
+  return {
+    installerPath,
+    manifestPath,
+    sourceBindingPath,
+    windowsToolchainReceiptPath,
+    relayBuildToolchainReceiptPath,
+    candidateId: candidate.id,
+  };
 }
 
 test("resolves every packaged dependency to a concrete version", () => {
@@ -37,12 +165,16 @@ test("resolves every packaged dependency to a concrete version", () => {
 });
 
 test("binds the artifact to the tree that produced it, not only to the commit", () => {
-  const { installerPath, manifestPath } = fixtures();
+  const { installerPath, manifestPath, sourceBindingPath, windowsToolchainReceiptPath, relayBuildToolchainReceiptPath, candidateId } = fixtures();
 
   const provenance = buildProvenance({
     installerPath,
     payloadManifestPath: manifestPath,
     dependencyAudit: "no-high-severity-advisories",
+    candidateId,
+    sourceBindingPath,
+    windowsToolchainReceiptPath,
+    relayBuildToolchainReceiptPath,
   });
 
   // Two commits with different messages and the same tree produce the same artifact, so the tree is
@@ -56,6 +188,15 @@ test("binds the artifact to the tree that produced it, not only to the commit", 
   assert.equal(provenance.payload.manifestSha256, "b".repeat(64));
   assert.equal(provenance.payload.fileCount, 42);
   assert.equal(provenance.dependencyAudit, "no-high-severity-advisories");
+  assert.match(provenance.source.mktTool.commit, /^[a-f0-9]{40}$/);
+  assert.match(provenance.source.mktTool.tree, /^[a-f0-9]{40}$/);
+  assert.match(provenance.sourceBinding.sha256, /^[a-f0-9]{64}$/);
+  assert.equal(provenance.product.node, undefined, "Ubuntu attestation Node must not be recorded as build evidence");
+  assert.equal(provenance.windowsToolchain.node.version, "22.23.2");
+  assert.equal(provenance.windowsToolchain.corepack.sha256, "b".repeat(64));
+  assert.equal(provenance.windowsToolchain.yarn.sha256, "c".repeat(64));
+  assert.equal(provenance.relayBuildToolchain.node.version, "24.21.0");
+  assert.equal(provenance.relayBuildToolchain.npmCli.sha256, "e".repeat(64));
 
   // The pinned Relay and engine travel with the record, because "which installer" is not enough to
   // answer "what did the operator actually receive".
@@ -64,11 +205,15 @@ test("binds the artifact to the tree that produced it, not only to the commit", 
 });
 
 test("states that the release is unsigned instead of leaving a silence", () => {
-  const { installerPath, manifestPath } = fixtures();
+  const { installerPath, manifestPath, sourceBindingPath, windowsToolchainReceiptPath, relayBuildToolchainReceiptPath, candidateId } = fixtures();
   const provenance = buildProvenance({
     installerPath,
     payloadManifestPath: manifestPath,
     dependencyAudit: "clean",
+    candidateId,
+    sourceBindingPath,
+    windowsToolchainReceiptPath,
+    relayBuildToolchainReceiptPath,
   });
 
   // A missing signature field would leave a reader deciding whether it was a decision or a mistake.
@@ -80,11 +225,15 @@ test("states that the release is unsigned instead of leaving a silence", () => {
 });
 
 test("dates the unsigned exception as this artifact's shelf life, not the decision's deadline", () => {
-  const { installerPath, manifestPath } = fixtures();
+  const { installerPath, manifestPath, sourceBindingPath, windowsToolchainReceiptPath, relayBuildToolchainReceiptPath, candidateId } = fixtures();
   const provenance = buildProvenance({
     installerPath,
     payloadManifestPath: manifestPath,
     dependencyAudit: "clean",
+    candidateId,
+    sourceBindingPath,
+    windowsToolchainReceiptPath,
+    relayBuildToolchainReceiptPath,
   });
 
   /*
@@ -105,6 +254,96 @@ test("dates the unsigned exception as this artifact's shelf life, not the decisi
   assert.match(provenance.signing.note, /not on a fixed date/);
 });
 
+test("refuses provenance when the source binding names another candidate or Browser tree", () => {
+  const { installerPath, manifestPath, sourceBindingPath, windowsToolchainReceiptPath, relayBuildToolchainReceiptPath, candidateId } = fixtures();
+  const binding = JSON.parse(readFileSync(sourceBindingPath, "utf8"));
+  binding.candidate.id = "other-candidate";
+  writeFileSync(sourceBindingPath, JSON.stringify(binding));
+
+  assert.throws(
+    () => buildProvenance({
+      installerPath,
+      payloadManifestPath: manifestPath,
+      dependencyAudit: "clean",
+      candidateId,
+      sourceBindingPath,
+      windowsToolchainReceiptPath,
+      relayBuildToolchainReceiptPath,
+    }),
+    /does not match the requested release candidate ID/,
+  );
+
+  binding.candidate.id = candidateId;
+  binding.browser.tree = "0".repeat(40);
+  writeFileSync(sourceBindingPath, JSON.stringify(binding));
+  assert.throws(
+    () => buildProvenance({
+      installerPath,
+      payloadManifestPath: manifestPath,
+      dependencyAudit: "clean",
+      candidateId,
+      sourceBindingPath,
+      windowsToolchainReceiptPath,
+      relayBuildToolchainReceiptPath,
+    }),
+    /does not match the checked-out Browser source/,
+  );
+});
+
+test("refuses provenance when the uploaded Windows toolchain receipt differs from the binding", () => {
+  const { installerPath, manifestPath, sourceBindingPath, windowsToolchainReceiptPath, relayBuildToolchainReceiptPath, candidateId } = fixtures();
+  const receipt = JSON.parse(readFileSync(windowsToolchainReceiptPath, "utf8"));
+  receipt.yarn.sha256 = "0".repeat(64);
+  writeFileSync(windowsToolchainReceiptPath, JSON.stringify(receipt));
+
+  assert.throws(
+    () => buildProvenance({
+      installerPath,
+      payloadManifestPath: manifestPath,
+      dependencyAudit: "clean",
+      candidateId,
+      sourceBindingPath,
+      windowsToolchainReceiptPath,
+      relayBuildToolchainReceiptPath,
+    }),
+    /Windows toolchain receipt does not match the source binding/,
+  );
+});
+
+test("refuses provenance when the uploaded Relay build toolchain receipt is missing, malformed, or differs from the binding", () => {
+  const { installerPath, manifestPath, sourceBindingPath, windowsToolchainReceiptPath, relayBuildToolchainReceiptPath, candidateId } = fixtures();
+  const options = {
+    installerPath,
+    payloadManifestPath: manifestPath,
+    dependencyAudit: "clean",
+    candidateId,
+    sourceBindingPath,
+    windowsToolchainReceiptPath,
+    relayBuildToolchainReceiptPath,
+  };
+
+  assert.throws(
+    () => buildProvenance({ ...options, relayBuildToolchainReceiptPath: null }),
+    /Relay build toolchain receipt cannot bind source: A Relay build toolchain receipt is required/,
+  );
+  writeFileSync(relayBuildToolchainReceiptPath, "{}", "utf8");
+  assert.throws(
+    () => buildProvenance(options),
+    /Relay build toolchain receipt cannot bind source: Relay build toolchain receipt is malformed/,
+  );
+
+  const changed = relayBuildToolchainReceipt({
+    directory: path.dirname(relayBuildToolchainReceiptPath),
+    packageLockPath: path.join(mktToolRoot, "package-lock.json"),
+  });
+  changed.npmCli.sha256 = "0".repeat(64);
+  writeFileSync(relayBuildToolchainReceiptPath, JSON.stringify(changed), "utf8");
+  assert.throws(
+    () => buildProvenance(options),
+    /Relay build toolchain receipt does not match the source binding/,
+  );
+});
+
 test("requires the artifact, the payload manifest, and an output path", () => {
   assert.throws(() => parseArguments([]), /installer/);
   assert.throws(() => parseArguments(["--installer", "a.exe"]), /payload-manifest/);
@@ -122,6 +361,14 @@ test("requires the artifact, the payload manifest, and an output path", () => {
     "m.json",
     "--output",
     "p.json",
+    "--candidate-id",
+    "candidate",
+    "--source-binding",
+    "binding.json",
+      "--windows-toolchain-receipt",
+      "toolchain.json",
+      "--relay-build-toolchain-receipt",
+      "relay-toolchain.json",
   ]);
   assert.equal(options.installerPath, "a.exe");
   assert.equal(options.output, "p.json");

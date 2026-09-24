@@ -21,6 +21,11 @@ const { createHash } = require("node:crypto");
 const { execFileSync } = require("node:child_process");
 const { readFileSync, statSync, writeFileSync } = require("node:fs");
 const path = require("node:path");
+const {
+  assertValidBinding,
+  readBoundRelayBuildToolchainReceipt,
+  readWindowsToolchainReceipt,
+} = require("./release-candidate-source-binding.cjs");
 
 const repoRoot = path.resolve(__dirname, "..");
 
@@ -69,11 +74,51 @@ function sha256OfFile(filePath) {
  */
 function frozenSource() {
   return {
-    commit: process.env.GITHUB_SHA || git("rev-parse", "HEAD"),
+    commit: git("rev-parse", "HEAD"),
     tree: git("rev-parse", "HEAD^{tree}"),
     branch: process.env.GITHUB_REF_NAME || git("rev-parse", "--abbrev-ref", "HEAD"),
     // A dirty tree cannot be attested: the artifact would not correspond to any committed state.
     clean: git("status", "--porcelain") === "",
+  };
+}
+
+function readSourceBinding(
+  sourceBindingPath,
+  candidateId,
+  source,
+  windowsToolchainReceiptPath,
+  relayBuildToolchainReceiptPath,
+) {
+  if (!sourceBindingPath) throw new Error("A verified source binding is required for release provenance.");
+  const binding = assertValidBinding(JSON.parse(readFileSync(sourceBindingPath, "utf8")));
+  if (!candidateId || binding.candidate.id !== candidateId) {
+    throw new Error("The source binding does not match the requested release candidate ID.");
+  }
+  if (binding.browser.commit !== source.commit || binding.browser.tree !== source.tree) {
+    throw new Error("The source binding does not match the checked-out Browser source.");
+  }
+  const windowsToolchain = readWindowsToolchainReceipt(windowsToolchainReceiptPath);
+  if (
+    windowsToolchain.sha256 !== binding.windowsToolchainReceiptSha256 ||
+    JSON.stringify(windowsToolchain.receipt) !== JSON.stringify(binding.windowsToolchain)
+  ) {
+    throw new Error("The uploaded Windows toolchain receipt does not match the source binding.");
+  }
+  const relayBuildToolchain = readBoundRelayBuildToolchainReceipt(relayBuildToolchainReceiptPath);
+  if (
+    relayBuildToolchain.sha256 !== binding.relayBuildToolchainReceiptSha256 ||
+    JSON.stringify(relayBuildToolchain.receipt) !== JSON.stringify(binding.relayBuildToolchain)
+  ) {
+    throw new Error("The uploaded Relay build toolchain receipt does not match the source binding.");
+  }
+  return {
+    sha256: sha256OfFile(sourceBindingPath),
+    browserCommit: binding.browser.commit,
+    browserTree: binding.browser.tree,
+    mktToolCommit: binding.mktTool.commit,
+    mktToolTree: binding.mktTool.tree,
+    windowsToolchain: windowsToolchain.receipt,
+    relayBuildToolchain: relayBuildToolchain.receipt,
   };
 }
 
@@ -123,6 +168,9 @@ function buildProvenance({
   dependencyAudit,
   engineReleasePath = process.env.MKT_BROWSER_ENGINE_RELEASE_FILE || "apps/desktop/windows-engine-release.json",
   candidateId = process.env.MKT_RELEASE_CANDIDATE_ID?.trim() || null,
+  sourceBindingPath = process.env.MKT_RELEASE_SOURCE_BINDING || null,
+  windowsToolchainReceiptPath = process.env.MKT_RELEASE_WINDOWS_TOOLCHAIN_RECEIPT || null,
+  relayBuildToolchainReceiptPath = process.env.MKT_RELEASE_RELAY_BUILD_TOOLCHAIN_RECEIPT || null,
 }) {
   const installerStats = statSync(installerPath);
   const payloadManifest = JSON.parse(readFileSync(payloadManifestPath, "utf8"));
@@ -130,6 +178,14 @@ function buildProvenance({
   const generatedAt = new Date();
   const artifactUsableUntil = new Date(
     generatedAt.getTime() + UNSIGNED_ARTIFACT_USABLE_DAYS * 24 * 60 * 60 * 1000,
+  );
+  const source = frozenSource();
+  const sourceBinding = readSourceBinding(
+    sourceBindingPath,
+    candidateId,
+    source,
+    windowsToolchainReceiptPath,
+    relayBuildToolchainReceiptPath,
   );
 
   return {
@@ -151,15 +207,25 @@ function buildProvenance({
         "days after this build, not on a fixed date, and it does not express a deadline for the " +
         "unsigned-shipping decision itself.",
     },
-    source: frozenSource(),
+    source: {
+      ...source,
+      mktTool: {
+        commit: sourceBinding.mktToolCommit,
+        tree: sourceBinding.mktToolTree,
+      },
+    },
+    sourceBinding,
     // The candidate id is supplied by the release manifest, never inferred from a filename. Keep it
     // nullable while a dirty/local build is being inspected; the publisher requires it before R2.
     candidateId,
     product: {
       version: desktopPackage.version,
       electron: desktopPackage.devDependencies?.electron ?? null,
-      node: process.version,
     },
+    // This is the Windows process that built the payload, not this Ubuntu attestation process.
+    windowsToolchain: sourceBinding.windowsToolchain,
+    // Relay is built with Node 24/npm before the Browser's Node 22/Yarn packaging toolchain runs.
+    relayBuildToolchain: sourceBinding.relayBuildToolchain,
     installer: {
       fileName: path.basename(installerPath),
       sizeBytes: installerStats.size,
@@ -195,6 +261,9 @@ function parseArguments(argv) {
     dependencyAudit: null,
     engineReleasePath: null,
     candidateId: null,
+    sourceBindingPath: null,
+    windowsToolchainReceiptPath: null,
+    relayBuildToolchainReceiptPath: null,
   };
   for (let index = 0; index < argv.length; index += 2) {
     const [name, value] = [argv[index], argv[index + 1]];
@@ -205,9 +274,20 @@ function parseArguments(argv) {
     else if (name === "--dependency-audit") options.dependencyAudit = value;
     else if (name === "--engine-release") options.engineReleasePath = value;
     else if (name === "--candidate-id") options.candidateId = value;
+    else if (name === "--source-binding") options.sourceBindingPath = value;
+    else if (name === "--windows-toolchain-receipt") options.windowsToolchainReceiptPath = value;
+    else if (name === "--relay-build-toolchain-receipt") options.relayBuildToolchainReceiptPath = value;
     else throw new Error(`Unknown option: ${name}`);
   }
-  for (const required of ["installerPath", "payloadManifestPath", "output"]) {
+  for (const required of [
+    "installerPath",
+    "payloadManifestPath",
+    "output",
+    "candidateId",
+    "sourceBindingPath",
+    "windowsToolchainReceiptPath",
+    "relayBuildToolchainReceiptPath",
+  ]) {
     if (!options[required]) throw new Error(`--${required.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)} is required`);
   }
   return options;
@@ -224,6 +304,9 @@ if (require.main === module) {
       dependencyAudit: options.dependencyAudit ?? "not-recorded",
       engineReleasePath: options.engineReleasePath ?? undefined,
       candidateId: options.candidateId ?? undefined,
+      sourceBindingPath: options.sourceBindingPath ?? undefined,
+      windowsToolchainReceiptPath: options.windowsToolchainReceiptPath ?? undefined,
+      relayBuildToolchainReceiptPath: options.relayBuildToolchainReceiptPath ?? undefined,
     });
     if (!provenance.source.clean) {
       throw new Error(
@@ -234,6 +317,7 @@ if (require.main === module) {
     writeFileSync(options.output, `${JSON.stringify(provenance, null, 2)}\n`, "utf8");
     process.stdout.write(
       `Release provenance written.\n  tree      ${provenance.source.tree}\n` +
+        `  MKTTool   ${provenance.source.mktTool.commit}\n` +
         `  installer ${provenance.installer.installerSha256}\n` +
         `  payload   ${provenance.payload.manifestSha256}\n`,
     );

@@ -25,6 +25,12 @@ on:
       candidate_id:
         description: "Immutable release candidate ID from the release manifest"
         required: true
+      mkttool_commit:
+        description: "Exact 40-character MKTTool commit SHA containing the candidate tuple"
+        required: true
+      relay_compatibility_floor:
+        description: "Positive immutable compatibility floor embedded in the candidate Relay"
+        required: true
 
 permissions:
   contents: read
@@ -40,9 +46,19 @@ jobs:
         id: freeze_commit
         env:
           CONFIRM: ${{ inputs.confirm_commit }}
+          MKTTOOL_COMMIT: ${{ inputs.mkttool_commit }}
+          RELAY_COMPATIBILITY_FLOOR: ${{ inputs.relay_compatibility_floor }}
         run: |
           if [ "${#CONFIRM}" -lt 8 ]; then
             echo "::error::Name at least 8 characters of the commit being frozen."
+            exit 1
+          fi
+          if ! [[ "$MKTTOOL_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "::error::mkttool_commit must be an exact 40-character commit SHA."
+            exit 1
+          fi
+          if ! [[ "$RELAY_COMPATIBILITY_FLOOR" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::relay_compatibility_floor must be a positive integer."
             exit 1
           fi
           case "$GITHUB_SHA" in
@@ -59,18 +75,16 @@ jobs:
           OUTCOME: ${{ steps.freeze_commit.outcome }}
         run: |
           status=PASS
-          reason="The explicitly named commit matches the checked-out source."
+          reason="The Browser source and exact MKTTool commit input passed the freeze checks."
           if [ "$OUTCOME" != "success" ]; then
             status=FAIL
-            reason="The checked-out source did not match the explicitly named commit."
+            reason="The Browser source or MKTTool commit input did not pass the freeze checks."
           fi
           node scripts/ci-gate-status.cjs --gate frozen-source --status "$status" --reason "$reason" --owner release-engineering --required
 
   build:
     needs: freeze
     runs-on: windows-latest
-    env:
-      MKTTOOL_ROOT: ${{ github.workspace }}/mkttool
     strategy:
       # Two independent builds of one tree. `fail-fast: false` so a failure in one still leaves the
       # other's evidence to compare against when diagnosing.
@@ -84,13 +98,121 @@ jobs:
       - name: Checkout MKTTool sibling for packaging contracts
         id: mkttool_checkout
         uses: actions/checkout@v5
-        continue-on-error: true
         with:
           repository: Techieslab-app/MKTTool
           ssh-key: ${{ secrets.MKTTOOL_DEPLOY_KEY }}
-          ref: master
+          ref: ${{ inputs.mkttool_commit }}
           path: mkttool
           fetch-depth: 1
+
+      # actions/checkout requires a path under GITHUB_WORKSPACE. Move the verified sibling out
+      # before source binding so its nested .git directory cannot make the Browser tree dirty.
+      - name: Relocate the verified MKTTool sibling outside Browser source
+        id: mkttool_location
+        shell: pwsh
+        run: |
+          $checkoutRoot = Join-Path $env:GITHUB_WORKSPACE 'mkttool'
+          $mkttoolRoot = Join-Path $env:RUNNER_TEMP "mkttool-${{ matrix.attempt }}"
+          if (-not (Test-Path -LiteralPath $checkoutRoot -PathType Container)) {
+            throw 'The MKTTool checkout is unavailable for relocation.'
+          }
+          if (Test-Path -LiteralPath $mkttoolRoot) {
+            throw "The isolated MKTTool path already exists: $mkttoolRoot"
+          }
+          Move-Item -LiteralPath $checkoutRoot -Destination $mkttoolRoot
+          $mkttoolRoot = (Resolve-Path -LiteralPath $mkttoolRoot).Path
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "MKTTOOL_ROOT=$mkttoolRoot"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "root=$mkttoolRoot"
+
+      - name: Refuse a mutable or mismatched MKTTool checkout
+        id: mkttool_source
+        shell: pwsh
+        env:
+          MKTTOOL_COMMIT: ${{ inputs.mkttool_commit }}
+        run: |
+          if ($env:MKTTOOL_COMMIT -notmatch '^[a-fA-F0-9]{40}$') {
+            throw 'mkttool_commit must be an exact 40-character commit SHA.'
+          }
+          $actual = (& git -C "$env:MKTTOOL_ROOT" rev-parse HEAD).Trim()
+          if (-not [string]::Equals($actual, $env:MKTTOOL_COMMIT, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "MKTTool checkout $actual does not match requested commit $env:MKTTOOL_COMMIT."
+          }
+          if (-not (Test-Path "$env:MKTTOOL_ROOT/src/lib/setup/windows-installer-candidate.ts")) {
+            throw 'The exact MKTTool checkout does not contain the installer candidate tuple.'
+          }
+          Write-Host "MKTTool checkout is pinned to $actual."
+
+      # The Relay archive and its sidecar are ignored build outputs, so a clean sibling checkout
+      # cannot bind them until this exact candidate build has staged both files. The source-binding
+      # step below still requires their candidate hashes and the sidecar's source commit.
+      - name: Setup Node.js 24 for the exact Relay candidate
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24.21.0
+          cache: npm
+          cache-dependency-path: ${{ steps.mkttool_location.outputs.root }}/package-lock.json
+
+      - name: Emit immutable Relay build toolchain receipt
+        id: relay_build_toolchain
+        shell: pwsh
+        working-directory: ${{ steps.mkttool_location.outputs.root }}
+        run: |
+          $nodeExecutable = (Get-Command node.exe -CommandType Application -ErrorAction Stop).Path
+          $receiptPath = "$env:RUNNER_TEMP/relay-build-toolchain-${{ matrix.attempt }}.json"
+          & $nodeExecutable "$env:GITHUB_WORKSPACE/scripts/emit-relay-build-toolchain-receipt.cjs" `
+            --node $nodeExecutable `
+            --mkttool-root "$env:MKTTOOL_ROOT" `
+            --package-lock "$env:MKTTOOL_ROOT/package-lock.json" `
+            --output $receiptPath `
+            --github-output "$env:GITHUB_OUTPUT"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build and verify the exact Relay candidate archive
+        shell: pwsh
+        working-directory: ${{ steps.mkttool_location.outputs.root }}
+        env:
+          RELAY_COMPATIBILITY_FLOOR: ${{ inputs.relay_compatibility_floor }}
+        run: |
+          if ($env:RELAY_COMPATIBILITY_FLOOR -notmatch '^[1-9][0-9]*$') {
+            throw 'relay_compatibility_floor must be a positive integer.'
+          }
+          $nodeExecutable = "${{ steps.relay_build_toolchain.outputs.node_executable }}"
+          $npmCli = "${{ steps.relay_build_toolchain.outputs.npm_cli }}"
+          $unsafeEnvironmentNames = @(
+            'MKTTOOL_RELEASE_TOKEN',
+            'MKT_RELEASE_TOKEN_AFTER_VERIFICATION',
+            'NODE_OPTIONS',
+            'NODE_EXTRA_CA_CERTS',
+            'NODE_USE_SYSTEM_CA',
+            'NODE_TLS_REJECT_UNAUTHORIZED',
+            'ELECTRON_RUN_AS_NODE'
+          )
+          Get-ChildItem Env: |
+            Where-Object { $unsafeEnvironmentNames -contains $_.Name.ToUpperInvariant() } |
+            ForEach-Object { Remove-Item -LiteralPath "Env:$($_.Name)" -ErrorAction SilentlyContinue }
+          $nodeVersion = (& $nodeExecutable --version).Trim()
+          if ($nodeVersion -ne 'v24.21.0') {
+            throw "Relay candidate build requires Node v24.21.0; found $nodeVersion."
+          }
+          & $nodeExecutable $npmCli ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $nodeExecutable "$env:GITHUB_WORKSPACE/scripts/emit-relay-build-toolchain-receipt.cjs" `
+            --node $nodeExecutable `
+            --mkttool-root "$env:MKTTOOL_ROOT" `
+            --package-lock "$env:MKTTOOL_ROOT/package-lock.json" `
+            --verify "$env:RUNNER_TEMP/relay-build-toolchain-${{ matrix.attempt }}.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $nodeExecutable $npmCli run relay:build -- "--web-origin=https://mkttool-web-production.up.railway.app" "--compatibility-floor=$env:RELAY_COMPATIBILITY_FLOOR"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $nodeExecutable $npmCli run relay:verify -- --archive=relay/dist/MKTTool-Relay.zip --metadata=relay/dist/MKTTool-Relay.metadata.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # A package script must not be able to replace the pinned Relay build toolchain after ci.
+          & $nodeExecutable "$env:GITHUB_WORKSPACE/scripts/emit-relay-build-toolchain-receipt.cjs" `
+            --node $nodeExecutable `
+            --mkttool-root "$env:MKTTOOL_ROOT" `
+            --package-lock "$env:MKTTOOL_ROOT/package-lock.json" `
+            --verify "$env:RUNNER_TEMP/relay-build-toolchain-${{ matrix.attempt }}.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Setup Node.js 22
         uses: actions/setup-node@v5
@@ -99,58 +221,238 @@ jobs:
           package-manager-cache: false
 
       # A PowerShell runner can lose the action-managed PATH between steps. Resolve and
-      # pin the executable once so every packaging command below uses the verified Node 22 binary.
+      # pin the executable once so every packaging command below reads immutable step outputs.
       - name: Pin Node.js 22 executable
+        id: node22
         shell: pwsh
         run: ./.github/scripts/prepare-windows-node22.ps1
 
-      - name: Record MKTTool packaging checkout status
+      # Keep the Yarn download in a fresh, explicit Corepack home. The receipt below hashes the
+      # exact Node/Corepack/Yarn files that both independent package jobs consume.
+      - name: Enable Corepack for the pinned toolchain
+        shell: pwsh
+        run: |
+          $corepackHome = Join-Path $env:RUNNER_TEMP "mktbrowser-corepack-${{ matrix.attempt }}"
+          New-Item -ItemType Directory -Force -Path $corepackHome | Out-Null
+          $env:COREPACK_HOME = $corepackHome
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "COREPACK_HOME=$corepackHome"
+          & "${{ steps.node22.outputs.node22_exe }}" "${{ steps.node22.outputs.corepack22_entrypoint }}" enable
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "${{ steps.node22.outputs.node22_exe }}" "${{ steps.node22.outputs.corepack22_entrypoint }}" prepare yarn@4.5.0 --activate
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Record exact MKTTool packaging checkout
+        shell: pwsh
+        run: '& "${{ steps.node22.outputs.node22_exe }}" scripts/ci-gate-status.cjs --gate mkttool-packaging-checkout --status PASS --reason "The exact requested MKTTool commit contains the candidate tuple." --owner release-engineering --required'
+
+      - name: Emit immutable Windows toolchain receipt
+        id: windows_toolchain
+        shell: pwsh
+        run: |
+          $receiptPath = "$env:RUNNER_TEMP/windows-toolchain-${{ matrix.attempt }}.json"
+          & "${{ steps.node22.outputs.node22_exe }}" scripts/emit-windows-toolchain-receipt.cjs `
+            --node "${{ steps.node22.outputs.node22_exe }}" `
+            --node-sha256 "${{ steps.node22.outputs.node22_sha256 }}" `
+            --corepack "${{ steps.node22.outputs.corepack22_entrypoint }}" `
+            --corepack-sha256 "${{ steps.node22.outputs.corepack22_sha256 }}" `
+            --corepack-home "$env:COREPACK_HOME" `
+            --output $receiptPath `
+            --github-output "$env:GITHUB_OUTPUT"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Capture clean source binding before packaging
+        id: source_binding_pre
         shell: pwsh
         env:
-          OUTCOME: ${{ steps.mkttool_checkout.outcome }}
+          MKT_RELEASE_CANDIDATE_ID: ${{ inputs.candidate_id }}
         run: |
-          $status = 'OPEN'
-          $reason = 'The MKTTool sibling checkout is unavailable for release packaging.'
-          if (($env:OUTCOME -eq 'success') -and (Test-Path "$env:MKTTOOL_ROOT/src/lib/setup/windows-installer-release.ts") -and (Test-Path "$env:MKTTOOL_ROOT/src/lib/setup/windows-installer-release-metadata.ts")) {
-            $status = 'PASS'
-            $reason = 'The explicit MKTTool sibling checkout is available for release packaging.'
-          }
-          & $env:MKT_BROWSER_NODE22_EXE scripts/ci-gate-status.cjs --gate mkttool-packaging-checkout --status $status --reason $reason --owner release-engineering --required
+          $bindingPath = "$env:RUNNER_TEMP/source-binding-pre-${{ matrix.attempt }}.json"
+          & "${{ steps.node22.outputs.node22_exe }}" scripts/release-candidate-source-binding.cjs `
+            --mkttool-root "$env:MKTTOOL_ROOT" `
+            --candidate-id "$env:MKT_RELEASE_CANDIDATE_ID" `
+            --windows-toolchain-receipt "$env:RUNNER_TEMP/windows-toolchain-${{ matrix.attempt }}.json" `
+            --relay-build-toolchain-receipt "$env:RUNNER_TEMP/relay-build-toolchain-${{ matrix.attempt }}.json" `
+            --output $bindingPath
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $bindingSha256 = (Get-FileHash -LiteralPath $bindingPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "pre_binding_sha256=$bindingSha256"
 
-      - name: Enable Corepack
+      # Keep a verifier copy outside the mutable Browser checkout. Its hash is already included in
+      # the clean source binding, then checked again immediately before any token reaches a wrapper.
+      - name: Preserve the bound token-consumer verifier
+        id: token_consumer_verifier
         shell: pwsh
         run: |
-          & $env:MKT_BROWSER_NODE22_EXE $env:MKT_BROWSER_COREPACK22_ENTRYPOINT enable
-          & $env:MKT_BROWSER_NODE22_EXE $env:MKT_BROWSER_COREPACK22_ENTRYPOINT prepare yarn@4.5.0 --activate
+          $bindingPath = "$env:RUNNER_TEMP/source-binding-pre-${{ matrix.attempt }}.json"
+          $binding = Get-Content -LiteralPath $bindingPath -Raw | ConvertFrom-Json
+          $relativePath = 'scripts/verify-tokenized-relay-consumers.cjs'
+          $expectedHash = [string]$binding.browser.hashes.PSObject.Properties[$relativePath].Value
+          if ($binding.schemaVersion -ne 5 -or $expectedHash -notmatch '^[a-f0-9]{64}$') {
+            throw 'The clean source binding does not contain a valid token-consumer verifier identity.'
+          }
+          $sourcePath = Join-Path $env:GITHUB_WORKSPACE $relativePath
+          $verifierPath = Join-Path $env:RUNNER_TEMP "token-consumer-verifier-${{ matrix.attempt }}.cjs"
+          Copy-Item -LiteralPath $sourcePath -Destination $verifierPath
+          $actualHash = (Get-FileHash -LiteralPath $verifierPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualHash -ne $expectedHash) {
+            throw 'The preserved token-consumer verifier does not match the clean source binding.'
+          }
+          $verifierPath = (Resolve-Path -LiteralPath $verifierPath).Path
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "path=$verifierPath"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "sha256=$actualHash"
 
       - name: Prepare Windows native dependencies
         shell: pwsh
-        run: ./.github/scripts/prepare-windows-native-dependencies.ps1
+        run: ./.github/scripts/prepare-windows-native-dependencies.ps1 -NodeExecutable "${{ steps.node22.outputs.node22_exe }}" -NodeSha256 "${{ steps.node22.outputs.node22_sha256 }}"
 
       - name: Install dependencies
         shell: pwsh
-        run: "& $env:MKT_BROWSER_NODE22_EXE $env:MKT_BROWSER_COREPACK22_ENTRYPOINT yarn install --immutable"
+        run: '& "${{ steps.node22.outputs.node22_exe }}" "${{ steps.node22.outputs.corepack22_entrypoint }}" yarn install --immutable'
 
       - name: Audit production dependencies
         shell: pwsh
-        run: "& $env:MKT_BROWSER_NODE22_EXE $env:MKT_BROWSER_COREPACK22_ENTRYPOINT yarn audit:production"
+        run: '& "${{ steps.node22.outputs.node22_exe }}" "${{ steps.node22.outputs.corepack22_entrypoint }}" yarn audit:production'
 
-      - name: Build the combined Windows installer
+      - name: Verify token consumers then build the combined Windows installer
         env:
-          MKTTOOL_RELEASE_TOKEN: ${{ secrets.MKTTOOL_RELEASE_TOKEN }}
+          MKT_RELEASE_TOKEN_AFTER_VERIFICATION: ${{ secrets.MKTTOOL_RELEASE_TOKEN }}
           MKT_BROWSER_ENGINE_RELEASE_FILE: ${{ github.workspace }}/apps/desktop/windows-engine-release.json
+          MKT_BROWSER_NODE22_EXE: ${{ steps.node22.outputs.node22_exe }}
+          MKT_BROWSER_NODE22_SHA256: ${{ steps.node22.outputs.node22_sha256 }}
+          MKT_BROWSER_COREPACK22_ENTRYPOINT: ${{ steps.node22.outputs.corepack22_entrypoint }}
+          MKT_BROWSER_COREPACK22_SHA256: ${{ steps.node22.outputs.corepack22_sha256 }}
+          MKT_BROWSER_YARN_ENTRYPOINT: ${{ steps.windows_toolchain.outputs.yarn_entrypoint }}
+          MKT_BROWSER_YARN_VERSION: ${{ steps.windows_toolchain.outputs.yarn_version }}
+          MKT_BROWSER_YARN_SHA256: ${{ steps.windows_toolchain.outputs.yarn_sha256 }}
         shell: pwsh
-        run: "& $env:MKT_BROWSER_NODE22_EXE $env:MKT_BROWSER_COREPACK22_ENTRYPOINT yarn workspace @mktbrowser/desktop build:win"
+        run: |
+          if (Test-Path Env:MKTTOOL_RELEASE_TOKEN) {
+            throw 'A Relay release token was present before token-consumer verification.'
+          }
+          # Keep the dispatch secret in this PowerShell local only. Remove its environment alias and
+          # every Node/Electron preload control before any verifier process can start.
+          $releaseToken = [string]$env:MKT_RELEASE_TOKEN_AFTER_VERIFICATION
+          Remove-Item Env:MKT_RELEASE_TOKEN_AFTER_VERIFICATION -ErrorAction SilentlyContinue
+          if ([string]::IsNullOrWhiteSpace($releaseToken)) {
+            throw 'A Relay release token is required after token-consumer verification.'
+          }
+          $unsafeEnvironmentNames = @(
+            'NODE_OPTIONS',
+            'NODE_EXTRA_CA_CERTS',
+            'NODE_USE_SYSTEM_CA',
+            'NODE_TLS_REJECT_UNAUTHORIZED',
+            'ELECTRON_RUN_AS_NODE'
+          )
+          Get-ChildItem Env: |
+            Where-Object { $unsafeEnvironmentNames -contains $_.Name.ToUpperInvariant() } |
+            ForEach-Object { Remove-Item -LiteralPath "Env:$($_.Name)" -ErrorAction SilentlyContinue }
+          $bindingPath = "$env:RUNNER_TEMP/source-binding-pre-${{ matrix.attempt }}.json"
+          $bindingHash = (Get-FileHash -LiteralPath $bindingPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($bindingHash -ne "${{ steps.source_binding_pre.outputs.pre_binding_sha256 }}") {
+            throw 'The clean source binding changed before token-consumer verification.'
+          }
+          $verifierPath = "${{ steps.token_consumer_verifier.outputs.path }}"
+          $verifierHash = (Get-FileHash -LiteralPath $verifierPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($verifierHash -ne "${{ steps.token_consumer_verifier.outputs.sha256 }}") {
+            throw 'The preserved token-consumer verifier changed before release-token injection.'
+          }
+          $nodeExecutable = "${{ steps.node22.outputs.node22_exe }}"
+          $nodeHash = (Get-FileHash -LiteralPath $nodeExecutable -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($nodeHash -ne "${{ steps.node22.outputs.node22_sha256 }}") {
+            throw 'The pinned Node.js executable changed before token-consumer verification.'
+          }
+          # Copy and revalidate every token-bearing input outside the mutable checkout before
+          # assigning the canonical token alias. The snapshot wrapper clears that alias before
+          # it can start Corepack, Yarn, or any package script.
+          $consumerSnapshotRoot = Join-Path $env:RUNNER_TEMP (
+            "token-consumer-snapshot-${{ matrix.attempt }}-$([guid]::NewGuid().ToString('N'))"
+          )
+          & $nodeExecutable $verifierPath `
+            --browser-root "$env:GITHUB_WORKSPACE" `
+            --binding $bindingPath `
+            --snapshot-root $consumerSnapshotRoot
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $snapshotWrapperPath = Join-Path $consumerSnapshotRoot 'apps\desktop\scripts\package-tokenized-windows-installer.cmd'
+          if (-not (Test-Path -LiteralPath $snapshotWrapperPath -PathType Leaf)) {
+            throw 'The verified token-consumer snapshot does not contain its package wrapper.'
+          }
+          $snapshotWrapperPath = (Resolve-Path -LiteralPath $snapshotWrapperPath).Path
 
-      - name: Verify Relay v16 and packaged engine pin
+          # The snapshot wrapper receives its canonical token name only after verification succeeds.
+          $env:MKTTOOL_RELEASE_TOKEN = $releaseToken
+          $releaseToken = $null
+          # The wrapper itself is verified out-of-tree; package Yarn in the checked-out Browser root
+          # after its tokenless Relay handoff has rebuilt that root's verified cache.
+          $env:MKT_BROWSER_PACKAGE_ROOT = $env:GITHUB_WORKSPACE
+          $packageExitCode = 1
+          try {
+            & cmd.exe /d /v:off /c $snapshotWrapperPath
+            $packageExitCode = $LASTEXITCODE
+          } finally {
+            Remove-Item Env:MKT_BROWSER_PACKAGE_ROOT -ErrorAction SilentlyContinue
+            Remove-Item Env:MKTTOOL_RELEASE_TOKEN -ErrorAction SilentlyContinue
+          }
+          if ($packageExitCode -ne 0) { exit $packageExitCode }
+
+      - name: Verify post-package source binding
         shell: pwsh
-        run: '& $env:MKT_BROWSER_NODE22_EXE scripts/ci-gate-status.cjs --gate relay-and-engine-packaged --reason "The staged Relay archive and packaged engine metadata are hash-bound to the candidate." --owner browser-release --required -- $env:MKT_BROWSER_NODE22_EXE scripts/release-candidate-contract.cjs --package-dir apps/desktop/release/installer/win-unpacked'
+        env:
+          MKT_RELEASE_CANDIDATE_ID: ${{ inputs.candidate_id }}
+        run: |
+          $preBindingPath = "$env:RUNNER_TEMP/source-binding-pre-${{ matrix.attempt }}.json"
+          $actualPreBindingSha256 = (Get-FileHash -LiteralPath $preBindingPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualPreBindingSha256 -ne "${{ steps.source_binding_pre.outputs.pre_binding_sha256 }}") {
+            throw 'The pre-package source binding changed before post-package verification.'
+          }
+          & "${{ steps.node22.outputs.node22_exe }}" scripts/release-candidate-source-binding.cjs `
+            --mkttool-root "$env:MKTTOOL_ROOT" `
+            --candidate-id "$env:MKT_RELEASE_CANDIDATE_ID" `
+            --windows-toolchain-receipt "$env:RUNNER_TEMP/windows-toolchain-${{ matrix.attempt }}.json" `
+            --relay-build-toolchain-receipt "$env:RUNNER_TEMP/relay-build-toolchain-${{ matrix.attempt }}.json" `
+            --verify $preBindingPath `
+            --output "$env:RUNNER_TEMP/source-binding-${{ matrix.attempt }}.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # Upload immediately after verification so later source-side checks cannot replace the
+      # binding that the independent-build comparison and provenance record consume.
+      - name: Upload Windows toolchain receipt
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-toolchain-${{ matrix.attempt }}
+          path: ${{ runner.temp }}/windows-toolchain-${{ matrix.attempt }}.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload Relay build toolchain receipt
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: relay-build-toolchain-${{ matrix.attempt }}
+          path: ${{ runner.temp }}/relay-build-toolchain-${{ matrix.attempt }}.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload source binding evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: source-binding-${{ matrix.attempt }}
+          path: |
+            ${{ runner.temp }}/source-binding-pre-${{ matrix.attempt }}.json
+            ${{ runner.temp }}/source-binding-${{ matrix.attempt }}.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Verify Relay and packaged engine pin
+        shell: pwsh
+        run: '& "${{ steps.node22.outputs.node22_exe }}" scripts/ci-gate-status.cjs --gate relay-and-engine-packaged --reason "The staged Relay archive and packaged engine metadata are hash-bound to the candidate." --owner browser-release --required -- "${{ steps.node22.outputs.node22_exe }}" scripts/release-candidate-contract.cjs --package-dir apps/desktop/release/installer/win-unpacked'
 
       # The staged tree is what the installer delivers. Comparing it rather than the compressed
       # installer keeps the comparison on the payload, where a difference means something.
       - name: Emit normalized payload manifest
         shell: pwsh
-        run: "& $env:MKT_BROWSER_NODE22_EXE scripts/normalized-payload-manifest.cjs --directory apps/desktop/release/installer/win-unpacked --output payload-manifest-${{ matrix.attempt }}.json"
+        run: '& "${{ steps.node22.outputs.node22_exe }}" scripts/normalized-payload-manifest.cjs --directory apps/desktop/release/installer/win-unpacked --output payload-manifest-${{ matrix.attempt }}.json'
 
       - name: Upload payload manifest
         uses: actions/upload-artifact@v6
@@ -174,7 +476,7 @@ jobs:
       - name: Record comparison-only installer omission
         if: matrix.attempt != 'a'
         shell: pwsh
-        run: '& $env:MKT_BROWSER_NODE22_EXE scripts/ci-gate-status.cjs --gate candidate-installer-upload --status OPEN --reason "Build B is retained only for payload comparison and is intentionally not uploaded as a second candidate." --owner browser-release --optional'
+        run: '& "${{ steps.node22.outputs.node22_exe }}" scripts/ci-gate-status.cjs --gate candidate-installer-upload --status OPEN --reason "Build B is retained only for payload comparison and is intentionally not uploaded as a second candidate." --owner browser-release --optional'
 
       - name: Record independent build job status
         if: always()
@@ -188,7 +490,7 @@ jobs:
             $status = 'PASS'
             $reason = 'The independent release-candidate build and payload manifest completed.'
           }
-          & $env:MKT_BROWSER_NODE22_EXE scripts/ci-gate-status.cjs --gate release-candidate-build --status $status --reason $reason --owner browser-release --required
+          & "${{ steps.node22.outputs.node22_exe }}" scripts/ci-gate-status.cjs --gate release-candidate-build --status $status --reason $reason --owner browser-release --required
 
   compare:
     # Always run this job so a failed/skipped build cannot hide the required comparison result.
@@ -216,6 +518,87 @@ jobs:
           pattern: payload-manifest-*
           merge-multiple: true
           path: ${{ runner.temp }}/manifests
+
+      - name: Download both verified source bindings
+        id: download_source_bindings
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v7
+        with:
+          pattern: source-binding-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/source-bindings
+
+      - name: Download both Windows toolchain receipts
+        id: download_windows_toolchains
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v7
+        with:
+          pattern: windows-toolchain-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/windows-toolchains
+
+      - name: Download both Relay build toolchain receipts
+        id: download_relay_build_toolchains
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v7
+        with:
+          pattern: relay-build-toolchain-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/relay-build-toolchains
+
+      # Both builds must retain the same Browser and MKTTool commits, trees, locks, and candidate
+      # tuple and build toolchains. Payload equality alone cannot detect a build that silently
+      # switched its sibling source, Relay Node/npm, or Browser Node/Corepack/Yarn installation.
+      - name: Require two independent builds to retain the same source binding and toolchain
+        id: source_binding_reproducibility
+        if: always()
+        shell: bash
+        run: |
+          set -o pipefail
+          first="$RUNNER_TEMP/source-bindings/source-binding-a.json"
+          second="$RUNNER_TEMP/source-bindings/source-binding-b.json"
+          first_toolchain="$RUNNER_TEMP/windows-toolchains/windows-toolchain-a.json"
+          second_toolchain="$RUNNER_TEMP/windows-toolchains/windows-toolchain-b.json"
+          first_relay_toolchain="$RUNNER_TEMP/relay-build-toolchains/relay-build-toolchain-a.json"
+          second_relay_toolchain="$RUNNER_TEMP/relay-build-toolchains/relay-build-toolchain-b.json"
+          comparison_log="$RUNNER_TEMP/source-binding-reproducibility-comparison.txt"
+          result_json="$RUNNER_TEMP/source-binding-reproducibility-result.json"
+
+          if [ "${{ needs.build.result }}" != "success" ]; then
+            status=FAIL
+            reason="The independent build matrix did not complete successfully (result: ${{ needs.build.result }})."
+            printf '%s\n' "$reason" > "$comparison_log"
+          elif [ ! -f "$first" ] || [ ! -f "$second" ] || [ ! -f "$first_toolchain" ] || [ ! -f "$second_toolchain" ] || [ ! -f "$first_relay_toolchain" ] || [ ! -f "$second_relay_toolchain" ]; then
+            status=FAIL
+            reason="The successful build matrix did not produce both verified source bindings, Windows toolchain receipts, and Relay build toolchain receipts."
+            printf '%s\n' "$reason" > "$comparison_log"
+          elif ! cmp --silent "$first_toolchain" "$second_toolchain"; then
+            status=FAIL
+            reason="The two independent Windows toolchain receipts differ."
+            printf '%s\n' "$reason" > "$comparison_log"
+          elif ! cmp --silent "$first_relay_toolchain" "$second_relay_toolchain"; then
+            status=FAIL
+            reason="The two independent Relay build toolchain receipts differ."
+            printf '%s\n' "$reason" > "$comparison_log"
+          elif node scripts/release-candidate-source-binding.cjs --compare "$first" "$second" > "$comparison_log" 2>&1; then
+            status=PASS
+            reason="Two independent builds retained the same Browser/MKTTool source binding and Windows toolchain receipt."
+          else
+            status=FAIL
+            reason="The two independent source bindings differ; see comparison evidence."
+          fi
+
+          cat "$comparison_log"
+          node scripts/ci-gate-status.cjs \
+            --gate source-binding-reproducibility \
+            --status "$status" \
+            --reason "$reason" \
+            --owner release-engineering \
+            --required \
+            --json "$result_json"
 
       # This gate compares the normalized delivered payload only. It makes no claim that the outer
       # NSIS container is byte-identical; installer-container variance remains a separate OPEN gate.
@@ -280,6 +663,20 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+      - name: Upload source-binding reproducibility evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: source-binding-reproducibility-evidence
+          path: |
+            ${{ runner.temp }}/source-bindings/**
+            ${{ runner.temp }}/windows-toolchains/**
+            ${{ runner.temp }}/relay-build-toolchains/**
+            ${{ runner.temp }}/source-binding-reproducibility-comparison.txt
+            ${{ runner.temp }}/source-binding-reproducibility-result.json
+          if-no-files-found: warn
+          retention-days: 30
+
   attest:
     needs: compare
     runs-on: ubuntu-latest
@@ -309,6 +706,24 @@ jobs:
           name: payload-manifest-a
           path: ${{ runner.temp }}/manifests
 
+      - name: Download verified build A source binding
+        uses: actions/download-artifact@v7
+        with:
+          name: source-binding-a
+          path: ${{ runner.temp }}/source-bindings
+
+      - name: Download verified build A Windows toolchain receipt
+        uses: actions/download-artifact@v7
+        with:
+          name: windows-toolchain-a
+          path: ${{ runner.temp }}/windows-toolchain
+
+      - name: Download verified build A Relay build toolchain receipt
+        uses: actions/download-artifact@v7
+        with:
+          name: relay-build-toolchain-a
+          path: ${{ runner.temp }}/relay-build-toolchain
+
       - name: Emit release provenance for the verified artifact
         id: emit_provenance
         env:
@@ -328,6 +743,9 @@ jobs:
             --installer "$installer" \
             --payload-manifest "$RUNNER_TEMP/manifests/payload-manifest-a.json" \
             --engine-release "$GITHUB_WORKSPACE/apps/desktop/windows-engine-release.json" \
+            --source-binding "$RUNNER_TEMP/source-bindings/source-binding-a.json" \
+            --windows-toolchain-receipt "$RUNNER_TEMP/windows-toolchain/windows-toolchain-a.json" \
+            --relay-build-toolchain-receipt "$RUNNER_TEMP/relay-build-toolchain/relay-build-toolchain-a.json" \
             --candidate-id "$MKT_RELEASE_CANDIDATE_ID" \
             --dependency-audit "yarn npm audit --environment production --severity high passed in both builds" \
             --output release-provenance.json
@@ -376,6 +794,7 @@ jobs:
           package-manager-cache: false
 
       - name: Pin Node.js 22 executable
+        id: node22
         shell: pwsh
         run: ./.github/scripts/prepare-windows-node22.ps1
 
@@ -426,7 +845,7 @@ jobs:
           MKT_BROWSER_TIMINGS_OUTPUT: ${{ runner.temp }}/installed-timings.json
           MKT_BROWSER_DIAGNOSTICS_DIR: ${{ runner.temp }}/installed-diagnostics
         shell: pwsh
-        run: "& $env:MKT_BROWSER_NODE22_EXE scripts/verify-packaged-runtime-contract.cjs --repeat 2"
+        run: '& "${{ steps.node22.outputs.node22_exe }}" scripts/verify-packaged-runtime-contract.cjs --repeat 2'
 
       - name: Record installed runtime-contract status
         if: always()
@@ -440,7 +859,7 @@ jobs:
             $status = 'PASS'
             $reason = 'The attested installer passed the installed runtime contract.'
           }
-          & $env:MKT_BROWSER_NODE22_EXE scripts/ci-gate-status.cjs --gate installed-runtime-contract --status $status --reason $reason --owner browser-release --required
+          & "${{ steps.node22.outputs.node22_exe }}" scripts/ci-gate-status.cjs --gate installed-runtime-contract --status $status --reason $reason --owner browser-release --required
 
       - name: Uninstall, and require the application directory to be gone
         shell: pwsh
