@@ -4,5 +4,7 @@
   "sha256": "896fc47238a4da00a636eed2a77f6c93fe53f0e55a6af1ecfa94f4cea3ef6968",
   "executableSizeBytes": 94594560,
   "executableSha256": "b64b3a2b86a21bbd1e9db4593d507af91e6deba875a7b1df241623126e2bd18a",
+  "minimumProfileActionRelayVersion": 20,
+  "promotionStatus": "quarantined",
   "url": "https://mkttool-web-production.up.railway.app/api/relay/download/v19"
 }

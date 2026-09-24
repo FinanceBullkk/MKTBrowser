@@ -62,10 +62,11 @@ function runCleanup(powershell, root, scriptPath = script) {
 }
 
 const psQuote = (value) => `'${value.replaceAll("'", "''")}'`;
+const psLiteral = (value) => value === null ? "$null" : psQuote(value);
 
 function stageShortcutFixtureScript(t, root, startup, desktop) {
   const source = readFileSync(script, "utf8");
-  const replacement = `$shortcutFolders = @(\n  ${psQuote(startup)},\n  ${psQuote(desktop)}\n)`;
+  const replacement = `$shortcutFolders = @(\n  ${psLiteral(startup)},\n  ${psLiteral(desktop)}\n)`;
   const staged = source.replace(
     /\$shortcutFolders = @\(\r?\n\s*\[Environment\]::GetFolderPath\("Startup"\),\r?\n\s*\[Environment\]::GetFolderPath\("Desktop"\)\r?\n\)/,
     replacement,
@@ -169,6 +170,16 @@ test("removes exact legacy and wrapper shortcuts while preserving foreign or arg
   assert.equal(existsSync(relayLauncher), false, "owned Relay wrapper remained");
 });
 
+test("skips unavailable known-folder values before probing shortcut paths", { skip: process.platform !== "win32" }, (t) => {
+  const { root, relayExecutable, relayLauncher } = stageOwnedRelay(t);
+  const fixtureScript = stageShortcutFixtureScript(t, root, null, "   ");
+
+  runCleanup(join(windowsRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), root, fixtureScript);
+
+  assert.equal(existsSync(relayExecutable), false, "null known-folder values must not abort owned Relay cleanup");
+  assert.equal(existsSync(relayLauncher), false, "whitespace known-folder values must not abort owned Relay cleanup");
+});
+
 test("cleanup keeps wrapper deletion behind exact target and non-reparse ownership checks", () => {
   const source = readFileSync(script, "utf8");
   assert.match(source, /start-mkttool-relay\.cmd/);
@@ -176,4 +187,5 @@ test("cleanup keeps wrapper deletion behind exact target and non-reparse ownersh
   assert.match(source, /\$shortcut\.Arguments -ceq ""/);
   assert.match(source, /Remove-OwnedRelayArtifact \$relayLauncher "startup wrapper"/);
   assert.match(source, /Is-Reparse-Path \$relayDirectory/);
+  assert.match(source, /\[string\]::IsNullOrWhiteSpace\(\[string\]\$folder\)/);
 });

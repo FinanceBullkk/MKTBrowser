@@ -71,12 +71,11 @@ rem is PowerShell-only so Corepack, Yarn, and every Node child stay outside the 
 call :validate_toolchain_tokenless
 if errorlevel 1 goto :validation_failed
 
-set "relay_handoff_path=%~dp0relay-archive-handoff.txt"
-if exist "%relay_handoff_path%" del /f /q "%relay_handoff_path%" >nul 2>nul
-if exist "%relay_handoff_path%" (
-  >&2 echo Unable to clear the Relay handoff receipt before staging.
-  exit /b 1
-)
+call :verify_release_candidate_tokenless
+if errorlevel 1 goto :candidate_ineligible
+
+call :create_relay_handoff_path
+if errorlevel 1 goto :handoff_failed
 set "MKT_BROWSER_RELAY_HANDOFF_PATH=%relay_handoff_path%"
 "%powershell_exe%" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%token_fetcher%"
 set "download_exit_code=%ERRORLEVEL%"
@@ -132,6 +131,13 @@ endlocal & exit /b %package_exit_code%
 set "validation_exit_code=%ERRORLEVEL%"
 endlocal & exit /b %validation_exit_code%
 
+:candidate_ineligible
+set "candidate_exit_code=%ERRORLEVEL%"
+set "MKTTOOL_RELEASE_TOKEN="
+set "MKTTOOL_RELAY_ARCHIVE="
+set "MKT_BROWSER_RELAY_HANDOFF_PATH="
+endlocal & exit /b %candidate_exit_code%
+
 :download_failed
 set "MKTTOOL_RELEASE_TOKEN="
 set "MKTTOOL_RELAY_ARCHIVE="
@@ -147,6 +153,35 @@ if defined relay_handoff_path if exist "%relay_handoff_path%" del /f /q "%relay_
 if not defined handoff_exit_code set "handoff_exit_code=1"
 endlocal & exit /b %handoff_exit_code%
 
+:create_relay_handoff_path
+rem A receipt belongs to one wrapper invocation. Keep its GUID generation tokenless so no child other
+rem than the fixed downloader can inherit the release token.
+set "relay_handoff_id="
+setlocal DisableDelayedExpansion
+set "MKTTOOL_RELEASE_TOKEN="
+for /f "delims=" %%I in ('""%powershell_exe%" -NoLogo -NoProfile -NonInteractive -Command "New-Guid""') do set "relay_handoff_id=%%I"
+set "relay_handoff_id_exit_code=%ERRORLEVEL%"
+endlocal & set "relay_handoff_id=%relay_handoff_id%" & set "relay_handoff_id_exit_code=%relay_handoff_id_exit_code%"
+if not "%relay_handoff_id_exit_code%"=="0" (
+  >&2 echo Unable to allocate an invocation-specific Relay handoff receipt.
+  exit /b 1
+)
+if not defined relay_handoff_id (
+  >&2 echo Relay handoff receipt allocation returned no identifier.
+  exit /b 1
+)
+if not defined TEMP (
+  >&2 echo TEMP is required for an invocation-specific Relay handoff receipt.
+  exit /b 1
+)
+set "relay_handoff_path=%TEMP%\mktbrowser-relay-archive-handoff-%relay_handoff_id%.txt"
+set "relay_handoff_id="
+if exist "%relay_handoff_path%" (
+  >&2 echo The invocation-specific Relay handoff receipt already exists.
+  exit /b 1
+)
+exit /b 0
+
 :validate_toolchain_tokenless
 set "validation_exit_code=1"
 setlocal
@@ -154,6 +189,17 @@ set "MKTTOOL_RELEASE_TOKEN="
 call :validate_toolchain
 set "validation_exit_code=%ERRORLEVEL%"
 endlocal & exit /b %validation_exit_code%
+
+:verify_release_candidate_tokenless
+set "candidate_exit_code=1"
+setlocal
+set "MKTTOOL_RELEASE_TOKEN="
+call :validate_toolchain
+if errorlevel 1 goto :verify_release_candidate_tokenless_done
+"%validated_node%" "%package_root%\scripts\release-candidate-contract.cjs"
+:verify_release_candidate_tokenless_done
+set "candidate_exit_code=%ERRORLEVEL%"
+endlocal & exit /b %candidate_exit_code%
 
 :validate_toolchain
 if not exist "%MKT_BROWSER_NODE22_EXE%" (

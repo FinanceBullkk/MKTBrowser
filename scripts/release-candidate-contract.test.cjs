@@ -5,20 +5,26 @@ const path = require("node:path");
 const test = require("node:test");
 const {
   APPROVED_ENGINE,
-  EXPECTED_RELAY,
+  HISTORICAL_RELAY,
+  PROFILE_ACTION_RELAY_FLOOR,
   assertEnginePin,
   assertNoBadTuple,
   assertPackagedEnginePinned,
   assertRelayPin,
+  assertRelayPromotionEligible,
   verifyReleaseCandidate,
 } = require("./release-candidate-contract.cjs");
 
 const repoRoot = path.resolve(__dirname, "..");
 
-test("accepts the immutable Relay v19 tuple and guarded engine source", () => {
-  const result = verifyReleaseCandidate({ repoRoot });
-  assert.equal(result.relay.version, EXPECTED_RELAY.version);
-  assert.deepEqual(result.engine, { checked: false });
+test("keeps the immutable Relay v19 tuple quarantined below the profile-action floor", () => {
+  const relay = assertRelayPin(repoRoot);
+  assert.equal(relay.version, HISTORICAL_RELAY.version);
+  assert.equal(relay.promotionStatus, "quarantined");
+  assert.equal(relay.minimumProfileActionRelayVersion, PROFILE_ACTION_RELAY_FLOOR);
+  assert.ok(relay.version < PROFILE_ACTION_RELAY_FLOOR);
+  assert.throws(() => assertRelayPromotionEligible(relay), /quarantined.*v20/i);
+  assert.throws(() => verifyReleaseCandidate({ repoRoot }), /quarantined.*v20/i);
 });
 
 test("rejects stale, future and altered Relay candidate fields", () => {
@@ -53,7 +59,7 @@ test("rejects a known-bad Relay hash and quarantined installer version", () => {
   writeFileSync(
     path.join(root, "apps", "desktop", "relay-release.json"),
     JSON.stringify({
-      ...EXPECTED_RELAY,
+      ...HISTORICAL_RELAY,
       sha256: "cfeefc7f1284492a64f5cf8b29603b3e9a36e5d488ac676d2d109b2c4364b261",
       url: "https://example.test/api/relay/download/v15",
     }),

@@ -102,6 +102,7 @@ $shortcutFolders = @(
 
 try {
   foreach ($folder in $shortcutFolders) {
+    if ([string]::IsNullOrWhiteSpace([string]$folder)) { continue }
     if (-not (Test-Path -LiteralPath $folder) -or (Is-Reparse-Path $folder)) { continue }
     Get-ChildItem -LiteralPath $folder -Filter "*.lnk" -File -ErrorAction SilentlyContinue |
       ForEach-Object {

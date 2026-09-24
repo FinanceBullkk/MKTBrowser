@@ -107,7 +107,14 @@ test("rejects a missing Node, a lock outside the isolated MKTTool checkout, and 
     /must be the exact package-lock\.json in the isolated MKTTool checkout/,
   );
   const malformedReceiptPath = write(fixture.root, "malformed-receipt.json", "{}");
-  assert.throws(() => readRelayBuildToolchainReceipt(malformedReceiptPath), /Relay build toolchain receipt is malformed/);
+  assert.throws(
+    () => readRelayBuildToolchainReceipt(malformedReceiptPath),
+    (error) => {
+      assert.match(error.message, /Relay build toolchain receipt is malformed/);
+      assert.ok(error.cause instanceof Error, "the malformed receipt cause was discarded");
+      return true;
+    },
+  );
 });
 
 test("detects post-install toolchain or package-lock drift", (t) => {

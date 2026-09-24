@@ -311,7 +311,7 @@ function readBoundRelayBuildToolchainReceipt(receiptPath) {
   try {
     return readRelayBuildToolchainReceipt(receiptPath);
   } catch (error) {
-    throw new Error(`Relay build toolchain receipt cannot bind source: ${error.message}`);
+    throw new Error(`Relay build toolchain receipt cannot bind source: ${error.message}`, { cause: error });
   }
 }
 

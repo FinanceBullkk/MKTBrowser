@@ -6,7 +6,8 @@ const { existsSync, readdirSync, readFileSync, statSync } = require("node:fs");
 const path = require("node:path");
 const APPROVED_ENGINE = Object.freeze(require("../apps/desktop/windows-engine-release.json"));
 
-const EXPECTED_RELAY = Object.freeze({
+const PROFILE_ACTION_RELAY_FLOOR = 20;
+const HISTORICAL_RELAY = Object.freeze({
   version: 19,
   sizeBytes: 35118160,
   sha256: "896fc47238a4da00a636eed2a77f6c93fe53f0e55a6af1ecfa94f4cea3ef6968",
@@ -31,23 +32,41 @@ function assertRelayPin(repoRoot) {
   const filePath = path.join(repoRoot, "apps", "desktop", "relay-release.json");
   if (!existsSync(filePath)) throw new Error(`Relay release metadata is missing: ${filePath}`);
   const relay = readJson(filePath);
-  if (relay.version !== EXPECTED_RELAY.version) {
+  if (relay.version !== HISTORICAL_RELAY.version) {
     throw new Error(
-      `Release candidate must pin Relay v${EXPECTED_RELAY.version}; found ${relay.version}.`,
+      `Recorded Relay tuple must retain v${HISTORICAL_RELAY.version}; found ${relay.version}.`,
     );
   }
-  if (relay.sizeBytes !== EXPECTED_RELAY.sizeBytes || relay.sha256 !== EXPECTED_RELAY.sha256) {
-    throw new Error(`Relay v${EXPECTED_RELAY.version} size/SHA does not match the immutable approved payload.`);
+  if (relay.sizeBytes !== HISTORICAL_RELAY.sizeBytes || relay.sha256 !== HISTORICAL_RELAY.sha256) {
+    throw new Error(`Relay v${HISTORICAL_RELAY.version} size/SHA does not match the immutable historical payload.`);
   }
-  if (typeof relay.url !== "string" || !relay.url.endsWith(EXPECTED_RELAY.urlSuffix)) {
+  if (typeof relay.url !== "string" || !relay.url.endsWith(HISTORICAL_RELAY.urlSuffix)) {
     throw new Error(
-      `Relay release URL must resolve to the immutable ${EXPECTED_RELAY.urlSuffix} object.`,
+      `Relay release URL must resolve to the immutable ${HISTORICAL_RELAY.urlSuffix} object.`,
     );
+  }
+  if (relay.minimumProfileActionRelayVersion !== PROFILE_ACTION_RELAY_FLOOR) {
+    throw new Error(`Relay tuple must record profile-action Relay floor v${PROFILE_ACTION_RELAY_FLOOR}.`);
+  }
+  if (relay.promotionStatus !== "quarantined") {
+    throw new Error("The recorded v19 Relay tuple must remain quarantined.");
   }
   if (FORBIDDEN_RELAY_HASHES.includes(String(relay.sha256).toLowerCase())) {
     throw new Error("Known-bad Relay v15 payload hash is present in the candidate.");
   }
   return relay;
+}
+
+function assertRelayPromotionEligible(relay) {
+  if (
+    relay.promotionStatus !== "eligible" ||
+    relay.version < PROFILE_ACTION_RELAY_FLOOR
+  ) {
+    throw new Error(
+      `The ${relay.promotionStatus ?? "unclassified"} Relay tuple cannot be promoted: ` +
+        `profile actions require Relay v${PROFILE_ACTION_RELAY_FLOOR} or newer.`,
+    );
+  }
 }
 
 function candidateFiles(repoRoot) {
@@ -162,16 +181,16 @@ function assertPackagedEnginePinned(repoRoot, packageDirectory) {
   if (!existsSync(relayMetadataPath)) throw new Error("Packaged Relay metadata is missing.");
   if (existsSync(relayMetadataPath)) {
     const relay = readJson(relayMetadataPath);
-    if (relay.version !== EXPECTED_RELAY.version || relay.sha256 !== EXPECTED_RELAY.sha256) {
-      throw new Error(`Packaged Relay metadata does not match the approved v${EXPECTED_RELAY.version} tuple.`);
+    if (relay.version !== HISTORICAL_RELAY.version || relay.sha256 !== HISTORICAL_RELAY.sha256) {
+      throw new Error(`Packaged Relay metadata does not match the recorded v${HISTORICAL_RELAY.version} tuple.`);
     }
     const archivePath = path.join(packageDirectory, "resources", "relay", "MKTTool-Relay.zip");
     if (!existsSync(archivePath)) throw new Error("Packaged Relay archive is missing.");
     if (existsSync(archivePath)) {
       const stats = statSync(archivePath);
       const sha256 = createHash("sha256").update(readFileSync(archivePath)).digest("hex");
-      if (stats.size !== EXPECTED_RELAY.sizeBytes || sha256 !== EXPECTED_RELAY.sha256) {
-        throw new Error(`Packaged Relay archive bytes do not match the approved v${EXPECTED_RELAY.version} tuple.`);
+      if (stats.size !== HISTORICAL_RELAY.sizeBytes || sha256 !== HISTORICAL_RELAY.sha256) {
+        throw new Error(`Packaged Relay archive bytes do not match the recorded v${HISTORICAL_RELAY.version} tuple.`);
       }
     }
   }
@@ -183,6 +202,7 @@ function verifyReleaseCandidate({
   packageDirectory,
 } = {}) {
   const relay = assertRelayPin(repoRoot);
+  assertRelayPromotionEligible(relay);
   assertEnginePin(readJson(path.join(repoRoot, "apps", "desktop", "windows-engine-release.json")));
   assertNoBadTuple(repoRoot);
   const engine = assertPackagedEnginePinned(repoRoot, packageDirectory);
@@ -215,12 +235,14 @@ if (require.main === module) {
 
 module.exports = {
   APPROVED_ENGINE,
-  EXPECTED_RELAY,
+  HISTORICAL_RELAY,
+  PROFILE_ACTION_RELAY_FLOOR,
   FORBIDDEN_RELAY_HASHES,
   assertNoBadTuple,
   assertEnginePin,
   assertPackagedEnginePinned,
   assertRelayPin,
+  assertRelayPromotionEligible,
   parseArguments,
   verifyReleaseCandidate,
 };

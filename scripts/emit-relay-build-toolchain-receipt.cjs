@@ -166,7 +166,7 @@ function readRelayBuildToolchainReceipt(receiptPath) {
   try {
     return { receipt: assertValidRelayBuildToolchainReceipt(JSON.parse(readFileSync(receiptPath, "utf8"))), sha256: sha256(receiptPath) };
   } catch (error) {
-    throw new Error(`Relay build toolchain receipt is malformed: ${error.message}`);
+    throw new Error(`Relay build toolchain receipt is malformed: ${error.message}`, { cause: error });
   }
 }
 

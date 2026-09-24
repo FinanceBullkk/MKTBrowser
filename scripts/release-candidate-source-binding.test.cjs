@@ -291,7 +291,11 @@ test("requires both uploaded toolchain receipts and detects changed post-package
   writeFileSync(fixture.relayBuildToolchainReceiptPath, "{}", "utf8");
   assert.throws(
     () => buildSourceBinding(options),
-    /Relay build toolchain receipt cannot bind source/,
+    (error) => {
+      assert.match(error.message, /Relay build toolchain receipt cannot bind source/);
+      assert.ok(error.cause instanceof Error, "the source-binding receipt cause was discarded");
+      return true;
+    },
   );
   writeFileSync(fixture.relayBuildToolchainReceiptPath, originalRelayReceipt, "utf8");
 

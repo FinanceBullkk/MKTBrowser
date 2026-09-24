@@ -1,5 +1,5 @@
 const assert = require("node:assert/strict");
-const { spawnSync } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const { createHash } = require("node:crypto");
 const {
   copyFileSync,
@@ -74,6 +74,32 @@ function writePowerShellObserver(file, mutationEnvironmentName = null) {
   );
 }
 
+function writeConcurrentPowerShellObserver(file) {
+  writeFileSync(
+    file,
+    [
+      "$handoffPath = ([string]$env:MKT_BROWSER_RELAY_HANDOFF_PATH).Trim()",
+      "$snapshotArchive = ([string]$env:MKT_BROWSER_SNAPSHOT_RELAY_ARCHIVE).Trim()",
+      "if (-not $handoffPath -or -not $snapshotArchive) { exit 1 }",
+      "$waitForMarker = ([string]$env:MKT_BROWSER_DOWNLOADER_WAIT_FOR_MARKER).Trim()",
+      "if ($waitForMarker) {",
+      "  $deadline = [DateTime]::UtcNow.AddSeconds(10)",
+      "  while (-not (Test-Path -LiteralPath $waitForMarker)) {",
+      "    if ([DateTime]::UtcNow -ge $deadline) { throw 'The concurrent handoff marker was not released.' }",
+      "    Start-Sleep -Milliseconds 10",
+      "  }",
+      "}",
+      "[IO.File]::WriteAllText($handoffPath, $snapshotArchive, [Text.UTF8Encoding]::new($false))",
+      "$afterHandoffMarker = ([string]$env:MKT_BROWSER_DOWNLOADER_AFTER_HANDOFF_MARKER).Trim()",
+      "if ($afterHandoffMarker) { [IO.File]::WriteAllText($afterHandoffMarker, 'ready', [Text.UTF8Encoding]::new($false)) }",
+      "$delayMilliseconds = 0",
+      "[void][int]::TryParse(([string]$env:MKT_BROWSER_DOWNLOADER_AFTER_HANDOFF_DELAY_MS), [ref]$delayMilliseconds)",
+      "if ($delayMilliseconds -gt 0) { Start-Sleep -Milliseconds $delayMilliseconds }",
+    ].join("\n"),
+    "utf8",
+  );
+}
+
 function writeOriginalRelayStager(file, resultEnvironmentName) {
   writeFileSync(
     file,
@@ -93,6 +119,21 @@ function writeOriginalRelayStager(file, resultEnvironmentName) {
   );
 }
 
+function writeCandidateContract(file) {
+  writeFileSync(
+    file,
+    [
+      'const { writeFileSync } = require("node:fs");',
+      'const unsafe = ["NODE_OPTIONS", "NODE_EXTRA_CA_CERTS", "NODE_USE_SYSTEM_CA", "NODE_TLS_REJECT_UNAUTHORIZED", "ELECTRON_RUN_AS_NODE"];',
+      'const inheritedUnsafe = Object.keys(process.env).filter((name) => unsafe.includes(name.toUpperCase()));',
+      'const token = process.env.MKTTOOL_RELEASE_TOKEN ?? "";',
+      'writeFileSync(process.env.MKT_BROWSER_CANDIDATE_RESULT, JSON.stringify({ tokenPresent: Boolean(token), tokenLength: token.length, inheritedUnsafe }));',
+      'if (process.env.MKT_BROWSER_CANDIDATE_CONTRACT_EXIT === "1") process.exitCode = 1;',
+    ].join("\n"),
+    "utf8",
+  );
+}
+
 function createWrapperFixture(t, { mutate = null } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "mktbrowser-tokenized-wrapper-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -101,11 +142,13 @@ function createWrapperFixture(t, { mutate = null } = {}) {
   const scriptsDirectory = path.join(snapshotRoot, "apps", "desktop", "scripts");
   const packageRoot = path.join(root, "original-browser-checkout");
   const packageScriptsDirectory = path.join(packageRoot, "apps", "desktop", "scripts");
+  const candidateContractPath = path.join(packageRoot, "scripts", "release-candidate-contract.cjs");
   const nodeDirectory = path.join(root, "node22");
   const corepackDirectory = path.join(nodeDirectory, "node_modules", "corepack", "dist");
   const yarnDirectory = path.join(root, "corepack-home", "v1");
   mkdirSync(scriptsDirectory, { recursive: true });
   mkdirSync(packageScriptsDirectory, { recursive: true });
+  mkdirSync(path.dirname(candidateContractPath), { recursive: true });
   mkdirSync(corepackDirectory, { recursive: true });
   mkdirSync(yarnDirectory, { recursive: true });
 
@@ -134,12 +177,14 @@ function createWrapperFixture(t, { mutate = null } = {}) {
       (mutate === "yarn" ? "MKT_BROWSER_MUTATE_YARN" : null),
   );
   writeOriginalRelayStager(originalRelayFetcherPath, "MKT_BROWSER_HANDOFF_RESULT");
+  writeCandidateContract(candidateContractPath);
   writeFileSync(corepackPath, "// receipt-bound Corepack entrypoint\n", "utf8");
   writeFileSync(wrongCorepackPath, "// wrong Corepack entrypoint\n", "utf8");
   writeYarnObserver(yarnPath, "MKT_BROWSER_YARN_RESULT");
 
   return {
     fixtureWrapper,
+    tokenFetcherPath,
     nodePath,
     corepackPath,
     yarnPath,
@@ -147,8 +192,35 @@ function createWrapperFixture(t, { mutate = null } = {}) {
     packageRoot,
     snapshotArchivePath,
     downloaderResultPath: path.join(root, "downloader-result.json"),
+    candidateResultPath: path.join(root, "candidate-result.json"),
     handoffResultPath: path.join(root, "handoff-result.json"),
     yarnResultPath: path.join(root, "yarn-result.json"),
+  };
+}
+
+function wrapperEnvironment(fixture, overrides = {}) {
+  return {
+    ...process.env,
+    MKT_BROWSER_NODE22_EXE: fixture.nodePath,
+    MKT_BROWSER_NODE22_SHA256: sha256(fixture.nodePath),
+    MKT_BROWSER_COREPACK22_ENTRYPOINT: fixture.corepackPath,
+    MKT_BROWSER_COREPACK22_SHA256: sha256(fixture.corepackPath),
+    MKT_BROWSER_YARN_ENTRYPOINT: fixture.yarnPath,
+    MKT_BROWSER_YARN_VERSION: "4.5.0",
+    MKT_BROWSER_YARN_SHA256: sha256(fixture.yarnPath),
+    MKT_BROWSER_DOWNLOADER_RESULT: fixture.downloaderResultPath,
+    MKT_BROWSER_CANDIDATE_RESULT: fixture.candidateResultPath,
+    MKT_BROWSER_HANDOFF_RESULT: fixture.handoffResultPath,
+    MKT_BROWSER_YARN_RESULT: fixture.yarnResultPath,
+    MKT_BROWSER_PACKAGE_ROOT: fixture.packageRoot,
+    MKT_BROWSER_SNAPSHOT_RELAY_ARCHIVE: fixture.snapshotArchivePath,
+    MKTTOOL_RELEASE_TOKEN: "test-release-token-with-bang!",
+    NODE_OPTIONS: "--trace-warnings",
+    NODE_EXTRA_CA_CERTS: "untrusted-ca.pem",
+    NODE_USE_SYSTEM_CA: "1",
+    NODE_TLS_REJECT_UNAUTHORIZED: "0",
+    ELECTRON_RUN_AS_NODE: "1",
+    ...overrides,
   };
 }
 
@@ -156,29 +228,37 @@ function runWrapper(fixture, overrides = {}) {
   return spawnSync(process.env.ComSpec ?? "cmd.exe", ["/d", "/v:off", "/c", fixture.fixtureWrapper], {
     cwd: path.dirname(path.dirname(fixture.fixtureWrapper)),
     encoding: "utf8",
-    env: {
-      ...process.env,
-      MKT_BROWSER_NODE22_EXE: fixture.nodePath,
-      MKT_BROWSER_NODE22_SHA256: sha256(fixture.nodePath),
-      MKT_BROWSER_COREPACK22_ENTRYPOINT: fixture.corepackPath,
-      MKT_BROWSER_COREPACK22_SHA256: sha256(fixture.corepackPath),
-      MKT_BROWSER_YARN_ENTRYPOINT: fixture.yarnPath,
-      MKT_BROWSER_YARN_VERSION: "4.5.0",
-      MKT_BROWSER_YARN_SHA256: sha256(fixture.yarnPath),
-      MKT_BROWSER_DOWNLOADER_RESULT: fixture.downloaderResultPath,
-      MKT_BROWSER_HANDOFF_RESULT: fixture.handoffResultPath,
-      MKT_BROWSER_YARN_RESULT: fixture.yarnResultPath,
-      MKT_BROWSER_PACKAGE_ROOT: fixture.packageRoot,
-      MKT_BROWSER_SNAPSHOT_RELAY_ARCHIVE: fixture.snapshotArchivePath,
-      MKTTOOL_RELEASE_TOKEN: "test-release-token-with-bang!",
-      NODE_OPTIONS: "--trace-warnings",
-      NODE_EXTRA_CA_CERTS: "untrusted-ca.pem",
-      NODE_USE_SYSTEM_CA: "1",
-      NODE_TLS_REJECT_UNAUTHORIZED: "0",
-      ELECTRON_RUN_AS_NODE: "1",
-      ...overrides,
-    },
+    env: wrapperEnvironment(fixture, overrides),
     windowsHide: true,
+  });
+}
+
+function runWrapperAsync(fixture, overrides = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.env.ComSpec ?? "cmd.exe", ["/d", "/v:off", "/c", fixture.fixtureWrapper], {
+      cwd: path.dirname(path.dirname(fixture.fixtureWrapper)),
+      env: wrapperEnvironment(fixture, overrides),
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    let stdout = "";
+    let stderr = "";
+    const timeout = setTimeout(() => {
+      child.kill();
+      reject(new Error("tokenized wrapper did not exit during concurrent handoff test"));
+    }, 15_000);
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.once("close", (status, signal) => {
+      clearTimeout(timeout);
+      resolve({ status, signal, stdout, stderr });
+    });
   });
 }
 
@@ -212,8 +292,17 @@ test("the tokenized Windows wrapper requires and derives the receipt-bound toolc
   assert.match(wrapper, /set "token_fetcher=%~dp0fetch-pinned-relay-for-tokenized-package\.ps1"/i);
   assert.match(wrapper, /set "original_relay_fetcher=%package_root%\\apps\\desktop\\scripts\\fetch-pinned-relay\.cjs"/i);
   assert.match(wrapper, /set "MKT_BROWSER_RELAY_HANDOFF_PATH=%relay_handoff_path%"/i);
+  assert.match(wrapper, /call :create_relay_handoff_path/i);
+  assert.match(wrapper, /set "relay_handoff_path=%TEMP%\\mktbrowser-relay-archive-handoff-%relay_handoff_id%\.txt"/i);
+  assert.match(wrapper, /:create_relay_handoff_path[\s\S]*set "MKTTOOL_RELEASE_TOKEN="[\s\S]*-Command "New-Guid"/i);
   assert.match(wrapper, /call :validate_toolchain_tokenless/i);
+  assert.match(wrapper, /call :verify_release_candidate_tokenless/i);
+  assert.match(wrapper, /:verify_release_candidate_tokenless[\s\S]*set "MKTTOOL_RELEASE_TOKEN="[\s\S]*release-candidate-contract\.cjs/i);
   assert.ok(fetcherInvocation >= 0, "wrapper must use the PowerShell-only Relay fetcher while the token exists");
+  assert.ok(
+    wrapper.indexOf("call :verify_release_candidate_tokenless") < fetcherInvocation,
+    "wrapper must reject an ineligible candidate before starting the token-bearing fetcher",
+  );
   assert.ok(tokenClear > fetcherInvocation, "wrapper must clear the token after Relay staging");
   assert.ok(archiveSet > tokenClear, "wrapper must expose the snapshot archive only after clearing the token");
   assert.ok(handoffInvocation > archiveSet, "wrapper must rehash the snapshot archive into the original checkout");
@@ -233,15 +322,64 @@ test("the tokenized Windows wrapper requires and derives the receipt-bound toolc
   }
 });
 
+test("concurrent tokenized wrappers retain invocation-scoped Relay handoffs", { skip: process.platform !== "win32", timeout: 20_000 }, async (t) => {
+  const fixture = createWrapperFixture(t);
+  writeConcurrentPowerShellObserver(fixture.tokenFetcherPath);
+
+  const secondArchivePath = path.join(fixture.packageRoot, "second-snapshot-relay.zip");
+  const secondPackageRoot = path.join(path.dirname(fixture.packageRoot), "original-browser-checkout-second");
+  const secondRelayFetcher = path.join(secondPackageRoot, "apps", "desktop", "scripts", "fetch-pinned-relay.cjs");
+  const secondCandidateContract = path.join(secondPackageRoot, "scripts", "release-candidate-contract.cjs");
+  const firstMarkerPath = path.join(path.dirname(fixture.packageRoot), "first-handoff-ready.txt");
+  const secondHandoffResultPath = path.join(path.dirname(fixture.packageRoot), "handoff-result-second.json");
+  const secondYarnResultPath = path.join(path.dirname(fixture.packageRoot), "yarn-result-second.json");
+  const secondDownloaderResultPath = path.join(path.dirname(fixture.packageRoot), "downloader-result-second.json");
+  mkdirSync(path.dirname(secondRelayFetcher), { recursive: true });
+  mkdirSync(path.dirname(secondCandidateContract), { recursive: true });
+  writeFileSync(secondArchivePath, "second verified snapshot Relay archive", "utf8");
+  writeOriginalRelayStager(secondRelayFetcher, "MKT_BROWSER_HANDOFF_RESULT");
+  writeCandidateContract(secondCandidateContract);
+
+  const first = runWrapperAsync(fixture, {
+    MKT_BROWSER_DOWNLOADER_AFTER_HANDOFF_MARKER: firstMarkerPath,
+    MKT_BROWSER_DOWNLOADER_AFTER_HANDOFF_DELAY_MS: "1000",
+  });
+  const second = runWrapperAsync(fixture, {
+    MKT_BROWSER_PACKAGE_ROOT: secondPackageRoot,
+    MKT_BROWSER_SNAPSHOT_RELAY_ARCHIVE: secondArchivePath,
+    MKT_BROWSER_DOWNLOADER_WAIT_FOR_MARKER: firstMarkerPath,
+    MKT_BROWSER_DOWNLOADER_RESULT: secondDownloaderResultPath,
+    MKT_BROWSER_HANDOFF_RESULT: secondHandoffResultPath,
+    MKT_BROWSER_YARN_RESULT: secondYarnResultPath,
+  });
+  const [firstResult, secondResult] = await Promise.all([first, second]);
+
+  assert.equal(firstResult.status, 0, firstResult.stderr || "first wrapper did not complete");
+  assert.equal(secondResult.status, 0, secondResult.stderr || "second wrapper did not complete");
+  const firstHandoff = JSON.parse(readFileSync(fixture.handoffResultPath, "utf8"));
+  const secondHandoff = JSON.parse(readFileSync(secondHandoffResultPath, "utf8"));
+  assert.equal(path.resolve(firstHandoff.archivePath), path.resolve(fixture.snapshotArchivePath));
+  assert.equal(path.resolve(secondHandoff.archivePath), path.resolve(secondArchivePath));
+  assert.equal(
+    existsSync(path.join(path.dirname(fixture.fixtureWrapper), "relay-archive-handoff.txt")),
+    false,
+    "concurrent wrappers must not create a shared snapshot-side handoff receipt",
+  );
+});
+
 test("the PowerShell-only Relay fetcher receives the token while receipt-bound Yarn is tokenless", { skip: process.platform !== "win32" }, (t) => {
   const fixture = createWrapperFixture(t);
   const token = "test-release-token-with-bang!";
   const result = runWrapper(fixture);
 
   assert.equal(result.status, 0, result.stderr || "wrapper did not complete");
+  const candidate = JSON.parse(readFileSync(fixture.candidateResultPath, "utf8"));
   const downloader = JSON.parse(readFileSync(fixture.downloaderResultPath, "utf8"));
   const handoff = JSON.parse(readFileSync(fixture.handoffResultPath, "utf8"));
   const yarn = JSON.parse(readFileSync(fixture.yarnResultPath, "utf8"));
+  assert.equal(candidate.tokenPresent, false);
+  assert.equal(candidate.tokenLength, 0);
+  assert.deepEqual(candidate.inheritedUnsafe, []);
   assert.equal(downloader.tokenPresent, true);
   assert.equal(downloader.tokenLength, token.length);
   assert.deepEqual(downloader.inheritedUnsafe, []);
@@ -255,6 +393,21 @@ test("the PowerShell-only Relay fetcher receives the token while receipt-bound Y
   assert.deepEqual(yarn.inheritedUnsafe, []);
   assert.equal(path.resolve(yarn.workingDirectory), path.resolve(fixture.packageRoot));
   assert.deepEqual(yarn.args, ["workspace", "@mktbrowser/desktop", "build:win"]);
+  assert.equal(`${result.stdout}${result.stderr}`.includes(token), false, "wrapper printed the release token");
+});
+
+test("an ineligible candidate stops before the token-bearing Relay fetcher", { skip: process.platform !== "win32" }, (t) => {
+  const fixture = createWrapperFixture(t);
+  const token = "test-release-token-with-bang!";
+  const result = runWrapper(fixture, { MKT_BROWSER_CANDIDATE_CONTRACT_EXIT: "1" });
+
+  assert.notEqual(result.status, 0);
+  const candidate = JSON.parse(readFileSync(fixture.candidateResultPath, "utf8"));
+  assert.equal(candidate.tokenPresent, false);
+  assert.equal(candidate.tokenLength, 0);
+  assert.deepEqual(candidate.inheritedUnsafe, []);
+  assert.equal(existsSync(fixture.downloaderResultPath), false, "an ineligible candidate reached the token-bearing fetcher");
+  assert.equal(existsSync(fixture.yarnResultPath), false, "an ineligible candidate reached packaging");
   assert.equal(`${result.stdout}${result.stderr}`.includes(token), false, "wrapper printed the release token");
 });
 

@@ -19,9 +19,18 @@ try {
 if (
   -not ($manifest.version -is [int] -or $manifest.version -is [long]) -or $manifest.version -le 0 -or
   -not ($manifest.sizeBytes -is [int] -or $manifest.sizeBytes -is [long]) -or $manifest.sizeBytes -le 0 -or
-  [string]$manifest.sha256 -notmatch "^[0-9a-f]{64}$"
+  [string]$manifest.sha256 -notmatch "^[0-9a-f]{64}$" -or
+  -not ($manifest.minimumProfileActionRelayVersion -is [int] -or $manifest.minimumProfileActionRelayVersion -is [long]) -or
+  $manifest.minimumProfileActionRelayVersion -le 0 -or
+  [string]::IsNullOrWhiteSpace([string]$manifest.promotionStatus)
 ) {
   Fail "Pinned Relay manifest is incomplete."
+}
+if (
+  $manifest.version -lt $manifest.minimumProfileActionRelayVersion -or
+  [string]$manifest.promotionStatus -cne "eligible"
+) {
+  Fail "Pinned Relay tuple is not eligible for tokenized Windows packaging."
 }
 $canonicalRelayOrigin = "https://mkttool-web-production.up.railway.app"
 $expectedRelayUrl = "$canonicalRelayOrigin/api/relay/download/v$($manifest.version)"
@@ -34,6 +43,9 @@ $payloadDirectory = Join-Path $desktopRoot ".relay-payload"
 $finalPath = Join-Path $payloadDirectory "MKTTool-Relay-v$($manifest.version).zip"
 $partialPath = "$finalPath.partial"
 New-Item -ItemType Directory -Force -Path $payloadDirectory | Out-Null
+$payloadMutexName = "Local\MKTBrowserRelayPayload-v$($manifest.version)-$($manifest.sha256.Substring(0, 16))"
+$payloadMutex = [Threading.Mutex]::new($false, $payloadMutexName)
+$payloadMutexHeld = $false
 
 $releaseToken = $null
 
@@ -48,10 +60,36 @@ function Write-RelayHandoff([string]$ArchivePath, [string]$HandoffPath) {
   $resolvedHandoffPath = ([string]$HandoffPath).Trim()
   if (-not $resolvedHandoffPath) { return }
   $resolvedArchivePath = (Resolve-Path -LiteralPath $ArchivePath -ErrorAction Stop).Path
-  [IO.File]::WriteAllText($resolvedHandoffPath, $resolvedArchivePath, [Text.UTF8Encoding]::new($false))
+  # CreateNew prevents a colliding receipt from replacing another invocation's verified archive path.
+  $stream = [IO.File]::Open(
+    $resolvedHandoffPath,
+    [IO.FileMode]::CreateNew,
+    [IO.FileAccess]::Write,
+    [IO.FileShare]::None
+  )
+  try {
+    $writer = New-Object IO.StreamWriter($stream, [Text.UTF8Encoding]::new($false))
+    try {
+      $writer.Write($resolvedArchivePath)
+    } finally {
+      $writer.Dispose()
+    }
+  } finally {
+    $stream.Dispose()
+  }
 }
 
 try {
+  # A single process owns the shared snapshot cache; each wrapper still receives its own handoff file.
+  try {
+    $payloadMutexHeld = $payloadMutex.WaitOne(120000)
+  } catch [Threading.AbandonedMutexException] {
+    $payloadMutexHeld = $true
+  }
+  if (-not $payloadMutexHeld) {
+    Fail "Timed out waiting for another Relay archive staging operation."
+  }
+
   if (Test-PinnedArchive $finalPath) {
     Write-RelayHandoff $finalPath ([string]$env:MKT_BROWSER_RELAY_HANDOFF_PATH)
     Write-Output "Verified Relay v$($manifest.version): $finalPath"
@@ -103,6 +141,10 @@ try {
   Write-RelayHandoff $finalPath ([string]$env:MKT_BROWSER_RELAY_HANDOFF_PATH)
   Write-Output "Verified Relay v$($manifest.version): $finalPath"
 } finally {
+  if ($payloadMutexHeld) {
+    try { [void]$payloadMutex.ReleaseMutex() } catch {}
+  }
+  $payloadMutex.Dispose()
   $releaseToken = $null
   Remove-Variable -Name releaseToken -ErrorAction SilentlyContinue
 }
