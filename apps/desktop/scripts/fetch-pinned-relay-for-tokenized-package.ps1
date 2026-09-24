@@ -44,8 +44,16 @@ function Test-PinnedArchive([string]$Path) {
   return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() -eq $manifest.sha256
 }
 
+function Write-RelayHandoff([string]$ArchivePath, [string]$HandoffPath) {
+  $resolvedHandoffPath = ([string]$HandoffPath).Trim()
+  if (-not $resolvedHandoffPath) { return }
+  $resolvedArchivePath = (Resolve-Path -LiteralPath $ArchivePath -ErrorAction Stop).Path
+  [IO.File]::WriteAllText($resolvedHandoffPath, $resolvedArchivePath, [Text.UTF8Encoding]::new($false))
+}
+
 try {
   if (Test-PinnedArchive $finalPath) {
+    Write-RelayHandoff $finalPath ([string]$env:MKT_BROWSER_RELAY_HANDOFF_PATH)
     Write-Output "Verified Relay v$($manifest.version): $finalPath"
     exit 0
   }
@@ -92,11 +100,7 @@ try {
     Fail "Pinned Relay bytes did not match the reviewed size and SHA-256."
   }
   Move-Item -LiteralPath $partialPath -Destination $finalPath -Force
-  $handoffPath = ([string]$env:MKT_BROWSER_RELAY_HANDOFF_PATH).Trim()
-  if ($handoffPath) {
-    $resolvedFinalPath = (Resolve-Path -LiteralPath $finalPath -ErrorAction Stop).Path
-    [IO.File]::WriteAllText($handoffPath, $resolvedFinalPath, [Text.UTF8Encoding]::new($false))
-  }
+  Write-RelayHandoff $finalPath ([string]$env:MKT_BROWSER_RELAY_HANDOFF_PATH)
   Write-Output "Verified Relay v$($manifest.version): $finalPath"
 } finally {
   $releaseToken = $null

@@ -98,6 +98,28 @@ test("the tokenized PowerShell fetch rehashes its snapshot archive into a separa
   assert.equal(path.resolve(readFileSync(fixture.handoffPath, "utf8").trim()), path.resolve(snapshotCachePath));
   assert.equal(readFileSync(fixture.handoffPath, "utf8").includes(token), false, "the handoff receipt contained the release token");
 
+  rmSync(fixture.handoffPath, { force: true });
+  const cached = spawnSync(
+    powershell,
+    ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", fixture.tokenizedFetcher],
+    {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        MKTTOOL_RELEASE_TOKEN: "",
+        MKT_BROWSER_RELAY_HANDOFF_PATH: fixture.handoffPath,
+      },
+      windowsHide: true,
+    },
+  );
+  assert.equal(cached.status, 0, cached.stderr || "the cached tokenized Relay fetch did not complete");
+  assert.equal(
+    path.resolve(readFileSync(fixture.handoffPath, "utf8").trim()),
+    path.resolve(snapshotCachePath),
+    "a verified cache hit did not recreate its Relay handoff receipt",
+  );
+  assert.equal(`${cached.stdout}${cached.stderr}`.includes(token), false, "the cached fetch printed the release token");
+
   const cacheKey = require.resolve(fixture.tokenlessFetcher);
   const { fetchPinnedRelay } = require(cacheKey);
   t.after(() => delete require.cache[cacheKey]);
