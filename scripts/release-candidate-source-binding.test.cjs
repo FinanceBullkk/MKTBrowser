@@ -9,6 +9,7 @@ const {
   assertSameSourceBinding,
   buildSourceBinding,
   parseArguments,
+  parseRelaySourceVersion,
   parseWindowsInstallerCandidate,
 } = require("./release-candidate-source-binding.cjs");
 const { verifyTokenConsumers } = require("./verify-tokenized-relay-consumers.cjs");
@@ -184,25 +185,15 @@ function createFixture(t) {
   };
 }
 
-test("rejects the current MKTTool Relay v20 source before accepting the Browser v19 candidate", (t) => {
-  const receiptPath = write(mkdtempSync(path.join(os.tmpdir(), "mkt-toolchain-")), "receipt.json", JSON.stringify(toolchainReceipt()));
-  t.after(() => rmSync(path.dirname(receiptPath), { recursive: true, force: true }));
+test("keeps the current MKTTool Relay source aligned with the Browser candidate", () => {
   const candidate = parseWindowsInstallerCandidate(readFileSync(
     path.join(mktToolRoot, "src/lib/setup/windows-installer-candidate.ts"),
     "utf8",
   ));
 
-  assert.equal(candidate.relay.version, 19);
-  assert.throws(
-    () => buildSourceBinding({
-      browserRoot,
-      mktToolRoot,
-      candidateId: candidate.id,
-      windowsToolchainReceiptPath: receiptPath,
-      requireClean: false,
-    }),
-    /MKTTool RELAY_VERSION does not match the reviewed candidate/,
-  );
+  assert.equal(candidate.browserVersion, "0.3.26");
+  assert.equal(candidate.relay.version, 20);
+  assert.equal(parseRelaySourceVersion(mktToolRoot), candidate.relay.version);
 });
 
 test("binds one Relay archive, build sidecar, source commit, and Windows toolchain", (t) => {

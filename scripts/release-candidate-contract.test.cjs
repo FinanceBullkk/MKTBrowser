@@ -5,26 +5,34 @@ const path = require("node:path");
 const test = require("node:test");
 const {
   APPROVED_ENGINE,
+  CURRENT_RELAY,
   HISTORICAL_RELAY,
   PROFILE_ACTION_RELAY_FLOOR,
   assertEnginePin,
   assertNoBadTuple,
   assertPackagedEnginePinned,
+  assertRelayEligibleForCandidatePackaging,
   assertRelayPin,
-  assertRelayPromotionEligible,
   verifyReleaseCandidate,
 } = require("./release-candidate-contract.cjs");
 
 const repoRoot = path.resolve(__dirname, "..");
 
-test("keeps the immutable Relay v19 tuple quarantined below the profile-action floor", () => {
+test("retains Relay v19 as history and limits v20 eligibility to candidate packaging", () => {
   const relay = assertRelayPin(repoRoot);
-  assert.equal(relay.version, HISTORICAL_RELAY.version);
-  assert.equal(relay.promotionStatus, "quarantined");
+  assert.equal(HISTORICAL_RELAY.version, 19);
+  assert.equal(relay.version, CURRENT_RELAY.version);
+  assert.equal(relay.promotionStatus, "eligible");
   assert.equal(relay.minimumProfileActionRelayVersion, PROFILE_ACTION_RELAY_FLOOR);
-  assert.ok(relay.version < PROFILE_ACTION_RELAY_FLOOR);
-  assert.throws(() => assertRelayPromotionEligible(relay), /quarantined.*v20/i);
-  assert.throws(() => verifyReleaseCandidate({ repoRoot }), /quarantined.*v20/i);
+  assert.equal(relay.executableSizeBytes, CURRENT_RELAY.executableSizeBytes);
+  assert.equal(relay.executableSha256, CURRENT_RELAY.executableSha256);
+  assert.ok(relay.version >= PROFILE_ACTION_RELAY_FLOOR);
+  assert.doesNotThrow(() => assertRelayEligibleForCandidatePackaging(relay));
+  assert.doesNotThrow(() => verifyReleaseCandidate({ repoRoot }));
+  assert.throws(
+    () => assertRelayEligibleForCandidatePackaging({ ...relay, version: HISTORICAL_RELAY.version }),
+    /eligible.*v20/i,
+  );
 });
 
 test("rejects stale, future and altered Relay candidate fields", () => {
@@ -32,10 +40,11 @@ test("rejects stale, future and altered Relay candidate fields", () => {
   mkdirSync(path.join(root, "apps", "desktop"), { recursive: true });
   const file = path.join(root, "apps", "desktop", "relay-release.json");
   const pin = JSON.parse(readFileSync(path.join(repoRoot, "apps", "desktop", "relay-release.json"), "utf8"));
-  for (const mutation of [{ version: 18 }, { version: 20 }, { sizeBytes: 1 },
-    { sha256: "0".repeat(64) }, { url: "https://example.test/api/relay/download/v18" }]) {
+  for (const mutation of [{ version: 19 }, { version: 21 }, { sizeBytes: 1 },
+    { sha256: "0".repeat(64) }, { executableSizeBytes: 1 }, { executableSha256: "0".repeat(64) },
+    { url: "https://example.test/api/relay/download/v19" }]) {
     writeFileSync(file, JSON.stringify({ ...pin, ...mutation }));
-    assert.throws(() => assertRelayPin(root), /v19|immutable/);
+    assert.throws(() => assertRelayPin(root), /v20|candidate|archive\/executable/);
   }
 });
 
@@ -59,12 +68,12 @@ test("rejects a known-bad Relay hash and quarantined installer version", () => {
   writeFileSync(
     path.join(root, "apps", "desktop", "relay-release.json"),
     JSON.stringify({
-      ...HISTORICAL_RELAY,
+      ...CURRENT_RELAY,
       sha256: "cfeefc7f1284492a64f5cf8b29603b3e9a36e5d488ac676d2d109b2c4364b261",
       url: "https://example.test/api/relay/download/v15",
     }),
   );
-  assert.throws(() => assertRelayPin(root), /v19|immutable|bad Relay/i);
+  assert.throws(() => assertRelayPin(root), /v20|candidate|bad Relay/i);
 
   const candidate = path.join(root, "package.json");
   writeFileSync(candidate, JSON.stringify({ version: "0.3.12" }));

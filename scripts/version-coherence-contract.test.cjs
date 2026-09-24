@@ -89,8 +89,9 @@ test("keeps the Windows candidate version and pinned Relay coherent", () => {
   // phép kiểm này thành phép tự soi gương: nâng `package.json` một mình là đủ để nó xanh, trong
   // khi thứ nó canh chính là "không ai được nâng phiên bản ở đúng một chỗ". Nâng bộ tuple nghĩa
   // là sửa hai dòng ngay dưới đây, chạy lại, rồi để từng assert chỉ ra chỗ nào chưa theo kịp.
-  const expectedVersion = "0.3.25";
-  const expectedCandidateId = "20260924-browser-0.3.25-relay-19-cold-start-tls-profiles-cft";
+  const expectedVersion = "0.3.26";
+  const expectedRelayVersion = "20";
+  const expectedCandidateId = "20260925-browser-0.3.26-relay-20-cold-start-tls-profiles-cft";
 
   // Mỏ neo phải tự nhất quán trước khi có tư cách phán xử chỗ khác.
   assert.ok(
@@ -100,10 +101,10 @@ test("keeps the Windows candidate version and pinned Relay coherent", () => {
 
   assert.equal(root.version, expectedVersion, "root package version drifted");
   assert.equal(desktop.version, expectedVersion, "desktop package version drifted");
-  assert.equal(relay.version, 19, "the candidate must carry immutable Relay v19");
-  assert.equal(relay.sizeBytes, 35118160);
-  assert.equal(relay.sha256, "896fc47238a4da00a636eed2a77f6c93fe53f0e55a6af1ecfa94f4cea3ef6968");
-  assert.match(relay.url, /\/api\/relay\/download\/v19$/);
+  assert.equal(String(relay.version), expectedRelayVersion, "the candidate Relay version drifted");
+  assert.equal(relay.sizeBytes, 35122816);
+  assert.equal(relay.sha256, "9cc71eba405c8ea5ff9f288491ea0b827c7403b3c43541d1fa18c48a87126d69");
+  assert.match(relay.url, new RegExp(`/api/relay/download/v${expectedRelayVersion}$`));
 
   const proxyGeo = readFileSync(path.join(repoRoot, "apps/desktop/src/main/proxyGeo.ts"), "utf8");
   assert.match(
@@ -162,7 +163,7 @@ test("keeps the Windows candidate version and pinned Relay coherent", () => {
       "apps/desktop/release/installer/windows-compatibility-artifacts.json",
     );
     assert.equal(evidence.browserVersion, expectedVersion, "generated installer evidence is stale");
-    assert.equal(evidence.artifacts.relay.version, "19", "generated Relay evidence is stale");
+    assert.equal(evidence.artifacts.relay.version, expectedRelayVersion, "generated Relay evidence is stale");
   }
 });
 
