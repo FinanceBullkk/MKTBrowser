@@ -125,11 +125,11 @@ test("release workflows bind exact MKTTool source and use immutable Node outputs
   const releaseWorkflow = readFileSync(
     path.join(repoRoot, ".github", "workflows", "release-candidate.yml"),
     "utf8",
-  );
+  ).replace(/\r\n/g, "\n");
   const windowsWorkflow = readFileSync(
     path.join(repoRoot, ".github", "workflows", "windows-pipeline.yml"),
     "utf8",
-  );
+  ).replace(/\r\n/g, "\n");
   const nodeSetup = readFileSync(
     path.join(repoRoot, ".github", "scripts", "prepare-windows-node22.ps1"),
     "utf8",

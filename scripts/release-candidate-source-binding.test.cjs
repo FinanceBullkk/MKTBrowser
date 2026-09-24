@@ -11,11 +11,11 @@ const {
   parseArguments,
   parseRelaySourceVersion,
   parseWindowsInstallerCandidate,
+  resolveMktToolRoot,
 } = require("./release-candidate-source-binding.cjs");
 const { verifyTokenConsumers } = require("./verify-tokenized-relay-consumers.cjs");
 
-const browserRoot = path.resolve(__dirname, "..");
-const mktToolRoot = path.resolve(browserRoot, "..", "MKTTool");
+const mktToolRoot = resolveMktToolRoot();
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");

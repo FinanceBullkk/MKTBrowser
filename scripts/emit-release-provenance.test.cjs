@@ -17,10 +17,11 @@ const {
   TOKEN_CONSUMER_FILES,
   WINDOWS_TOOLCHAIN_TYPE,
   parseWindowsInstallerCandidate,
+  resolveMktToolRoot,
 } = require("./release-candidate-source-binding.cjs");
 
 const repoRoot = path.resolve(__dirname, "..");
-const mktToolRoot = path.resolve(repoRoot, "..", "MKTTool");
+const mktToolRoot = resolveMktToolRoot();
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
