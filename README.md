@@ -33,6 +33,11 @@ place.
 | Prior compatibility publication | PASS for 0.3.23 — sequences 23/24/25 immutable objects read back |
 | 0.3.27 published / promoted | **No / No** |
 
+Packaging test files now run serially to avoid measured PowerShell startup contention in the
+full local suite. Each wrapper test keeps its internal concurrency assertions and deadlines.
+The previous full Browser quality run failed on that contention; final committed-source local
+quality must be refreshed before the candidate can advance.
+
 Relay packaging now normalizes delivered Windows script line endings to CRLF while preserving
 the PowerShell BOM. The candidate pins clean-checkout archive `c66a3935...5526b`; the previous
 `e749be84...7439ff` archive remains historical evidence. Final source-bound rebuild and validation
