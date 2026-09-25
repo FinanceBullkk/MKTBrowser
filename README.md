@@ -21,7 +21,7 @@ place.
 | Current source candidate | `20260925-browser-0.3.27-relay-20-cold-start-tls-profiles-cft`; Browser `0.3.27`, control contract `6`, profile schema `3` |
 | Current source | Replacement pins selected; final committed-source validation and artifact binding in progress |
 | Source behavior | verified sequential admission, SDK shutdown and explicit capacity refresh |
-| Pinned Relay | production-origin v20 archive `e749be84...7439ff`; final commit-bound rebuild and acceptance remain required |
+| Pinned Relay | production-origin v20 archive `c66a3935...5526b`; final commit-bound rebuild and acceptance remain required |
 | Pinned engine | CFT `152.0.7977.64` (`b0db25de…8004`), exact archive published in sequences 24 and 25 |
 | Packaged Cloak lifecycle | **PASS** — R27 completed `P1 -> P2 -> P1 -> P2`, 4/4 usable launches in 3.647-3.929 s with clean seat return |
 | Native fingerprint gate | **FAIL** — R28 completed 10/10 launches; criteria A/B/C all failed, so identity and real-account-safety claims remain prohibited |
@@ -32,6 +32,11 @@ place.
 | Clean-VM CFT activation | **OPEN** — signed first-run provisioning and real engine execution are not yet accepted |
 | Prior compatibility publication | PASS for 0.3.23 — sequences 23/24/25 immutable objects read back |
 | 0.3.27 published / promoted | **No / No** |
+
+Relay packaging now normalizes delivered Windows script line endings to CRLF while preserving
+the PowerShell BOM. The candidate pins clean-checkout archive `c66a3935...5526b`; the previous
+`e749be84...7439ff` archive remains historical evidence. Final source-bound rebuild and validation
+remain required.
 
 Rollout remains NO-GO. The abandoned `0.3.26` candidate passed local quality and two-build
 comparison, but its retained Relay v20 archive failed terminal update handoff. Those receipts do

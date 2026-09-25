@@ -1,7 +1,7 @@
 {
   "version": 20,
-  "sizeBytes": 35123197,
-  "sha256": "e749be841cac37916d0d9a3de37a652ed4e4c83db3bfbcb9e98d6cf8827439ff",
+  "sizeBytes": 35123164,
+  "sha256": "c66a39353252ffa7b6ad9b936f5aad02634c729560f3b49793f4cbfe5b55526b",
   "executableSizeBytes": 94620160,
   "executableSha256": "630c134f879b253fa4174905604042d0b1f7089624cf045c57e883c744666b88",
   "minimumProfileActionRelayVersion": 20,

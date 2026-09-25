@@ -102,8 +102,8 @@ test("keeps the Windows candidate version and pinned Relay coherent", () => {
   assert.equal(root.version, expectedVersion, "root package version drifted");
   assert.equal(desktop.version, expectedVersion, "desktop package version drifted");
   assert.equal(String(relay.version), expectedRelayVersion, "the candidate Relay version drifted");
-  assert.equal(relay.sizeBytes, 35123197);
-  assert.equal(relay.sha256, "e749be841cac37916d0d9a3de37a652ed4e4c83db3bfbcb9e98d6cf8827439ff");
+  assert.equal(relay.sizeBytes, 35123164);
+  assert.equal(relay.sha256, "c66a39353252ffa7b6ad9b936f5aad02634c729560f3b49793f4cbfe5b55526b");
   assert.match(relay.url, new RegExp(`/api/relay/download/v${expectedRelayVersion}$`));
 
   const proxyGeo = readFileSync(path.join(repoRoot, "apps/desktop/src/main/proxyGeo.ts"), "utf8");

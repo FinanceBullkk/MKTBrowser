@@ -40,6 +40,7 @@ const MKTTOOL_HASHED_FILES = [
   CANDIDATE_PATH,
   RELAY_SOURCE_PATH,
   "scripts/build-relay-executable.ts",
+  "scripts/normalize-relay-package-script.ts",
   "src/lib/relay/relay-release-metadata.ts",
 ];
 const WINDOWS_TOOLCHAIN_TYPE = "mktbrowser.windows-release-toolchain";

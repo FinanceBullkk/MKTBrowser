@@ -149,6 +149,7 @@ function createFixture(t) {
   }));
   write(fixtureMktToolRoot, "src/lib/relay/relay-endpoints.ts", "export const RELAY_VERSION = 19;\n");
   write(fixtureMktToolRoot, "scripts/build-relay-executable.ts", "export {};\n");
+  write(fixtureMktToolRoot, "scripts/normalize-relay-package-script.ts", "export {};\n");
   write(fixtureMktToolRoot, "src/lib/relay/relay-release-metadata.ts", "export {};\n");
   write(fixtureMktToolRoot, ".gitignore", "relay/dist/\n");
   const sourceCommit = initializeGit(fixtureMktToolRoot);
