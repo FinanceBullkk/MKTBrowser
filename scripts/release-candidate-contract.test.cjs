@@ -1,5 +1,5 @@
 const assert = require("node:assert/strict");
-const { cpSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } = require("node:fs");
+const { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
@@ -41,7 +41,8 @@ test("rejects stale, future and altered Relay candidate fields", () => {
   const file = path.join(root, "apps", "desktop", "relay-release.json");
   const pin = JSON.parse(readFileSync(path.join(repoRoot, "apps", "desktop", "relay-release.json"), "utf8"));
   for (const mutation of [{ version: 19 }, { version: 21 }, { sizeBytes: 1 },
-    { sha256: "0".repeat(64) }, { executableSizeBytes: 1 }, { executableSha256: "0".repeat(64) },
+    { sha256: "0".repeat(64) }, { sha256: "9cc71eba405c8ea5ff9f288491ea0b827c7403b3c43541d1fa18c48a87126d69" },
+    { executableSizeBytes: 1 }, { executableSha256: "0".repeat(64) },
     { url: "https://example.test/api/relay/download/v19" }]) {
     writeFileSync(file, JSON.stringify({ ...pin, ...mutation }));
     assert.throws(() => assertRelayPin(root), /v20|candidate|archive\/executable/);
@@ -78,6 +79,18 @@ test("rejects a known-bad Relay hash and quarantined installer version", () => {
   const candidate = path.join(root, "package.json");
   writeFileSync(candidate, JSON.stringify({ version: "0.3.12" }));
   assert.throws(() => assertNoBadTuple(root), /0\.3\.12/);
+});
+
+test("rejects the retained failing v20 hash in generated provenance", (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), "mktbrowser-release-quarantine-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const provenance = path.join(root, "release-provenance.json");
+  writeFileSync(provenance, JSON.stringify({ relay: { sha256: CURRENT_RELAY.sha256 } }));
+  assert.doesNotThrow(() => assertNoBadTuple(root));
+  writeFileSync(provenance, JSON.stringify({
+    relay: { sha256: "9cc71eba405c8ea5ff9f288491ea0b827c7403b3c43541d1fa18c48a87126d69" },
+  }));
+  assert.throws(() => assertNoBadTuple(root), /Known-bad Relay hash.*release-provenance/);
 });
 
 test("rejects unpinned and system-Chrome overrides in a packaged payload", () => {

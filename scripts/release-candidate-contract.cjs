@@ -15,15 +15,17 @@ const HISTORICAL_RELAY = Object.freeze({
 });
 const CURRENT_RELAY = Object.freeze({
   version: 20,
-  sizeBytes: 35122816,
-  sha256: "9cc71eba405c8ea5ff9f288491ea0b827c7403b3c43541d1fa18c48a87126d69",
-  executableSizeBytes: 94618624,
-  executableSha256: "dd05b68d97dc2e8689bb6966e34911a38297331742d29fb229366040d5d4199a",
+  sizeBytes: 35123197,
+  sha256: "e749be841cac37916d0d9a3de37a652ed4e4c83db3bfbcb9e98d6cf8827439ff",
+  executableSizeBytes: 94620160,
+  executableSha256: "630c134f879b253fa4174905604042d0b1f7089624cf045c57e883c744666b88",
   urlSuffix: "/api/relay/download/v20",
 });
 const FORBIDDEN_RELAY_HASHES = Object.freeze([
   "cfeefc7f1284492a64f5cf8b29603b3e9a36e5d488ac676d2d109b2c4364b261",
   "eb37eb544ef87b772185272aa2de4cf23000f2e2fbd92f6bde99a20e47b210d1",
+  // This retained v20 fixture hangs after a TLS handoff and is diagnostic-only.
+  "9cc71eba405c8ea5ff9f288491ea0b827c7403b3c43541d1fa18c48a87126d69",
 ]);
 function readJson(filePath) {
   return JSON.parse(readFileSync(filePath, "utf8"));
@@ -65,7 +67,7 @@ function assertRelayPin(repoRoot) {
     throw new Error("The recorded v20 Relay tuple must be source-eligible.");
   }
   if (FORBIDDEN_RELAY_HASHES.includes(String(relay.sha256).toLowerCase())) {
-    throw new Error("Known-bad Relay v15 payload hash is present in the candidate.");
+    throw new Error("Known-bad Relay payload hash is present in the candidate.");
   }
   return relay;
 }

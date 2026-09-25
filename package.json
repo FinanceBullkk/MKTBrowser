@@ -1,6 +1,6 @@
 {
   "name": "mkt-browser",
-  "version": "0.3.26",
+  "version": "0.3.27",
   "private": true,
   "description": "Internal MKTTool browser profile runtime derived from MultiZen",
   "license": "MIT",
