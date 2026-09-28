@@ -89,9 +89,9 @@ test("keeps the Windows candidate version and pinned Relay coherent", () => {
   // phép kiểm này thành phép tự soi gương: nâng `package.json` một mình là đủ để nó xanh, trong
   // khi thứ nó canh chính là "không ai được nâng phiên bản ở đúng một chỗ". Nâng bộ tuple nghĩa
   // là sửa hai dòng ngay dưới đây, chạy lại, rồi để từng assert chỉ ra chỗ nào chưa theo kịp.
-  const expectedVersion = "0.3.28";
+  const expectedVersion = "0.3.29";
   const expectedRelayVersion = "21";
-  const expectedCandidateId = "20260928-browser-0.3.28-relay-21-self-service-onboarding-cft";
+  const expectedCandidateId = "20260929-browser-0.3.29-relay-21-self-service-onboarding-cft";
 
   // Mỏ neo phải tự nhất quán trước khi có tư cách phán xử chỗ khác.
   assert.ok(

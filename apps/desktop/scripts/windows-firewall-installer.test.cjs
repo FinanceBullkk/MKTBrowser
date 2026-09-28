@@ -232,3 +232,14 @@ test("inherits the companion resource once and adds only installer payloads", ()
   assert.doesNotMatch(installerConfig, /resources\/companion/);
   assert.match(installerConfig, /from: \.relay-payload\/MKTTool-Relay\.zip/);
 });
+
+test("ships the fork MIT license beside every packaged executable", () => {
+  assert.match(
+    config,
+    /extraFiles:[\s\S]*from: \.\.\/\.\.\/LICENSE\s+to: LICENSE-MKTBrowser\.txt/,
+  );
+  assert.match(
+    config,
+    /copyright: Copyright \(c\) 2023 oboshto and MKTTool contributors/,
+  );
+});

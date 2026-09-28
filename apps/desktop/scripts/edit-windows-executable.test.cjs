@@ -4,7 +4,23 @@ const test = require("node:test");
 const {
   isTransientCommitError,
   runRceditWithRetry,
+  windowsVersionInfo,
 } = require("./edit-windows-executable.cjs");
+
+test("replaces inherited Electron version metadata with the fork identity", () => {
+  assert.deepEqual(windowsVersionInfo("0.3.29"), {
+    "file-version": "0.3.29",
+    "product-version": "0.3.29",
+    "version-string": {
+      CompanyName: "MKTTool",
+      FileDescription: "MKT Browser",
+      InternalName: "MKTBrowser",
+      LegalCopyright: "Copyright (c) 2023 oboshto and MKTTool contributors",
+      OriginalFilename: "MKTBrowser.exe",
+      ProductName: "MKT Browser",
+    },
+  });
+});
 
 test("retries transient rcedit commit failures with bounded delays", async () => {
   const calls = [];

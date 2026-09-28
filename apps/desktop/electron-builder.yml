@@ -1,6 +1,7 @@
 appId: com.mkttool.browser
 productName: MKT Browser
 executableName: MKTBrowser
+copyright: Copyright (c) 2023 oboshto and MKTTool contributors
 # Pinned to the version in package.json devDependencies so electron-builder
 # does not need to introspect node_modules. Bump in sync when upgrading.
 electronVersion: 42.8.1
@@ -15,6 +16,12 @@ files:
   - "package.json"
   - "!**/*.map"
   - "!node_modules/@mktbrowser/**"
+
+# The fork remains MIT-licensed. Ship the first-party notice beside the executable so every
+# installed copy carries the attribution and permission text required for redistribution.
+extraFiles:
+  - from: ../../LICENSE
+    to: LICENSE-MKTBrowser.txt
 
 # Override package.json metadata in the packaged app. We strip the
 # @mktbrowser/* workspace deps because electron-vite has already inlined

@@ -3,8 +3,24 @@ const { join } = require("node:path");
 
 const PRODUCT_NAME = "MKT Browser";
 const EXECUTABLE_NAME = "MKTBrowser.exe";
+const LEGAL_COPYRIGHT = "Copyright (c) 2023 oboshto and MKTTool contributors";
 const TRANSIENT_COMMIT_ERROR = "Unable to commit changes";
 const RETRY_DELAYS_MS = [250, 500, 1000];
+
+function windowsVersionInfo(version) {
+  return {
+    "file-version": version,
+    "product-version": version,
+    "version-string": {
+      CompanyName: "MKTTool",
+      FileDescription: PRODUCT_NAME,
+      InternalName: "MKTBrowser",
+      LegalCopyright: LEGAL_COPYRIGHT,
+      OriginalFilename: EXECUTABLE_NAME,
+      ProductName: PRODUCT_NAME,
+    },
+  };
+}
 
 function isTransientCommitError(error) {
   const message = error instanceof Error ? error.message : String(error);
@@ -53,18 +69,9 @@ module.exports = async function editWindowsExecutable(context) {
   const { rcedit } = await import("rcedit");
   const version = context.packager.appInfo.version;
 
-  await runRceditWithRetry(rcedit, executablePath, {
-    "file-version": version,
-    "product-version": version,
-    "version-string": {
-      CompanyName: "MKTTool",
-      FileDescription: PRODUCT_NAME,
-      InternalName: "MKTBrowser",
-      OriginalFilename: EXECUTABLE_NAME,
-      ProductName: PRODUCT_NAME,
-    },
-  });
+  await runRceditWithRetry(rcedit, executablePath, windowsVersionInfo(version));
 };
 
 module.exports.isTransientCommitError = isTransientCommitError;
 module.exports.runRceditWithRetry = runRceditWithRetry;
+module.exports.windowsVersionInfo = windowsVersionInfo;
