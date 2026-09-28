@@ -18,9 +18,9 @@ const {
 
 const repoRoot = path.resolve(__dirname, "..");
 
-test("retains Relay v19 as history and limits v20 eligibility to candidate packaging", () => {
+test("retains Relay v20 as history and pins v21 as the current candidate", () => {
   const relay = assertRelayPin(repoRoot);
-  assert.equal(HISTORICAL_RELAY.version, 19);
+  assert.equal(HISTORICAL_RELAY.version, 20);
   assert.equal(relay.version, CURRENT_RELAY.version);
   assert.equal(relay.promotionStatus, "eligible");
   assert.equal(relay.minimumProfileActionRelayVersion, PROFILE_ACTION_RELAY_FLOOR);
@@ -29,10 +29,10 @@ test("retains Relay v19 as history and limits v20 eligibility to candidate packa
   assert.ok(relay.version >= PROFILE_ACTION_RELAY_FLOOR);
   assert.doesNotThrow(() => assertRelayEligibleForCandidatePackaging(relay));
   assert.doesNotThrow(() => verifyReleaseCandidate({ repoRoot }));
-  assert.throws(
-    () => assertRelayEligibleForCandidatePackaging({ ...relay, version: HISTORICAL_RELAY.version }),
-    /eligible.*v20/i,
+  assert.doesNotThrow(() =>
+    assertRelayEligibleForCandidatePackaging({ ...relay, version: HISTORICAL_RELAY.version }),
   );
+  assert.throws(() => assertRelayEligibleForCandidatePackaging({ ...relay, version: 19 }), /v20/i);
 });
 
 test("rejects stale, future and altered Relay candidate fields", () => {
@@ -40,12 +40,12 @@ test("rejects stale, future and altered Relay candidate fields", () => {
   mkdirSync(path.join(root, "apps", "desktop"), { recursive: true });
   const file = path.join(root, "apps", "desktop", "relay-release.json");
   const pin = JSON.parse(readFileSync(path.join(repoRoot, "apps", "desktop", "relay-release.json"), "utf8"));
-  for (const mutation of [{ version: 19 }, { version: 21 }, { sizeBytes: 1 },
+  for (const mutation of [{ version: 20 }, { version: 22 }, { sizeBytes: 1 },
     { sha256: "0".repeat(64) }, { sha256: "9cc71eba405c8ea5ff9f288491ea0b827c7403b3c43541d1fa18c48a87126d69" },
     { executableSizeBytes: 1 }, { executableSha256: "0".repeat(64) },
-    { url: "https://example.test/api/relay/download/v19" }]) {
+    { url: "https://example.test/api/relay/download/v20" }]) {
     writeFileSync(file, JSON.stringify({ ...pin, ...mutation }));
-    assert.throws(() => assertRelayPin(root), /v20|candidate|archive\/executable/);
+    assert.throws(() => assertRelayPin(root), /v21|candidate|archive\/executable/);
   }
 });
 
@@ -74,7 +74,7 @@ test("rejects a known-bad Relay hash and quarantined installer version", () => {
       url: "https://example.test/api/relay/download/v15",
     }),
   );
-  assert.throws(() => assertRelayPin(root), /v20|candidate|bad Relay/i);
+  assert.throws(() => assertRelayPin(root), /v21|candidate|bad Relay/i);
 
   const candidate = path.join(root, "package.json");
   writeFileSync(candidate, JSON.stringify({ version: "0.3.12" }));

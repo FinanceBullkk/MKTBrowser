@@ -18,38 +18,38 @@ place.
 
 | | |
 |---|---|
-| Current source candidate | `20260925-browser-0.3.27-relay-20-cold-start-tls-profiles-cft`; Browser `0.3.27`, control contract `6`, profile schema `3` |
-| Current source | Replacement pins selected; final committed-source validation and artifact binding in progress |
+| Current source candidate | `20260928-browser-0.3.28-relay-21-self-service-onboarding-cft`; Browser `0.3.28`, control contract `6`, profile schema `3` |
+| Current source | Self-service onboarding tuple pinned; final committed-source validation and artifact binding in progress |
 | Source behavior | verified sequential admission, SDK shutdown and explicit capacity refresh |
-| Pinned Relay | production-origin v20 archive `c66a3935...5526b`; final commit-bound rebuild and acceptance remain required |
+| Pinned Relay | locally verified v21 archive `45f6e669...8d3ed0`; final commit-bound rebuild, publication, and acceptance remain required |
 | Pinned engine | CFT `152.0.7977.64` (`b0db25de…8004`), exact archive published in sequences 24 and 25 |
 | Packaged Cloak lifecycle | **PASS** — R27 completed `P1 -> P2 -> P1 -> P2`, 4/4 usable launches in 3.647-3.929 s with clean seat return |
 | Native fingerprint gate | **FAIL** — R28 completed 10/10 launches; criteria A/B/C all failed, so identity and real-account-safety claims remain prohibited |
-| Candidate status | **OPEN** — two isolated 0.3.27 builds and exact clean-VM acceptance are not complete |
-| Local gate | Candidate pin regressions 23/23; final frozen-source quality refresh remains required |
+| Candidate status | **OPEN** — two isolated 0.3.28 builds and exact second-PC onboarding acceptance are not complete |
+| Local gate | Relay v21 packaged smoke and TLS checks pass; final frozen-source Browser quality refresh remains required |
 | Prior two-build equivalence | PASS for 0.3.23 — 129 files; `app.asar` byte-identical (51,770,195 bytes) |
 | Prior clean-VM lifecycle | PASS (scope-limited) for exact 0.3.23 — clean `9/9`, repair `13/13`, uninstall `15/15` |
 | Clean-VM CFT activation | **OPEN** — signed first-run provisioning and real engine execution are not yet accepted |
 | Prior compatibility publication | PASS for 0.3.23 — sequences 23/24/25 immutable objects read back |
-| 0.3.27 published / promoted | **No / No** |
+| 0.3.28 published / promoted | **No / No** |
 
 Packaging test files now run serially to avoid measured PowerShell startup contention in the
 full local suite. Each wrapper test keeps its internal concurrency assertions and deadlines.
 The previous full Browser quality run failed on that contention; final committed-source local
 quality must be refreshed before the candidate can advance.
 
-Relay packaging now normalizes delivered Windows script line endings to CRLF while preserving
-the PowerShell BOM. The candidate pins clean-checkout archive `c66a3935...5526b`; the previous
-`e749be84...7439ff` archive remains historical evidence. Final source-bound rebuild and validation
-remain required.
+Relay packaging normalizes delivered Windows script line endings to CRLF while preserving the
+PowerShell BOM. The candidate pins Relay v21 archive `45f6e669...8d3ed0`, which carries local-only
+operator-key self-enrollment. Relay v20 `c66a3935...5526b` remains historical evidence. Final
+source-bound rebuild, immutable publication, and Browser acceptance remain required.
 
-Rollout remains NO-GO. The abandoned `0.3.26` candidate passed local quality and two-build
-comparison, but its retained Relay v20 archive failed terminal update handoff. Those receipts do
-not validate `0.3.27`; the release contract rejects the failed archive hash. Current checkpoint
-evidence is tracked in the workspace
-[repair plan](../plans/260924-0114-relay-cold-start-tls-profiles/plan.md).
+Rollout remains NO-GO until the replacement bytes and production approval binding are complete.
+The new tuple lets an allowlisted operator register their own PC and paste the team operator key
+only into local Relay; MKTTool Web receives a domain-separated fingerprint, never the key. Current
+checkpoint evidence is tracked in the workspace
+[self-service onboarding plan](../plans/260928-2219-full-team-self-service-onboarding/plan.md).
 
-No 0.3.27 installer has been accepted or published. The Windows package is
+No 0.3.28 installer has been accepted or published. The Windows package is
 still expected to be unsigned under the 12 August 2026 owner decision, so exact SmartScreen/UAC
 behavior must be re-observed on the retained candidate rather than inherited from 0.3.23.
 

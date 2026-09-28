@@ -8,18 +8,18 @@ const APPROVED_ENGINE = Object.freeze(require("../apps/desktop/windows-engine-re
 
 const PROFILE_ACTION_RELAY_FLOOR = 20;
 const HISTORICAL_RELAY = Object.freeze({
-  version: 19,
-  sizeBytes: 35118160,
-  sha256: "896fc47238a4da00a636eed2a77f6c93fe53f0e55a6af1ecfa94f4cea3ef6968",
-  urlSuffix: "/api/relay/download/v19",
-});
-const CURRENT_RELAY = Object.freeze({
   version: 20,
   sizeBytes: 35123164,
   sha256: "c66a39353252ffa7b6ad9b936f5aad02634c729560f3b49793f4cbfe5b55526b",
-  executableSizeBytes: 94620160,
-  executableSha256: "630c134f879b253fa4174905604042d0b1f7089624cf045c57e883c744666b88",
   urlSuffix: "/api/relay/download/v20",
+});
+const CURRENT_RELAY = Object.freeze({
+  version: 21,
+  sizeBytes: 35123253,
+  sha256: "45f6e669da892f002c63c58ffe92d8f05a17229797833b0c763efd4e088d3ed0",
+  executableSizeBytes: 94620672,
+  executableSha256: "b04e45bc3d8e0218916a4a9c1da8c525d79e9bec30b5aea4571aa41d053448bd",
+  urlSuffix: "/api/relay/download/v21",
 });
 const FORBIDDEN_RELAY_HASHES = Object.freeze([
   "cfeefc7f1284492a64f5cf8b29603b3e9a36e5d488ac676d2d109b2c4364b261",
@@ -64,7 +64,7 @@ function assertRelayPin(repoRoot) {
     throw new Error(`Relay tuple must record profile-action Relay floor v${PROFILE_ACTION_RELAY_FLOOR}.`);
   }
   if (relay.promotionStatus !== "eligible") {
-    throw new Error("The recorded v20 Relay tuple must be source-eligible.");
+    throw new Error(`The recorded v${CURRENT_RELAY.version} Relay tuple must be source-eligible.`);
   }
   if (FORBIDDEN_RELAY_HASHES.includes(String(relay.sha256).toLowerCase())) {
     throw new Error("Known-bad Relay payload hash is present in the candidate.");
