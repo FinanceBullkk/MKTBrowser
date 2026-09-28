@@ -314,6 +314,11 @@ test("the tokenized Windows wrapper requires and derives the receipt-bound toolc
   assert.match(wrapper.slice(revalidationAt, yarnInvocation), /^call :validate_toolchain\r?\nif errorlevel 1 goto :validation_failed\r?\npushd "%package_root%"\r?\n/i);
   assert.match(wrapper, /call :verify_sha256 "%validated_yarn%" "%MKT_BROWSER_YARN_SHA256%" "Yarn entrypoint"/i);
   assert.match(wrapper, /:verify_yarn_version[\s\S]*MKT_BROWSER_VALIDATED_NODE[\s\S]*MKT_BROWSER_VALIDATED_YARN[\s\S]*--version/i);
+  assert.doesNotMatch(
+    wrapper,
+    /^\s*set\s+"yarn_[^"]*=/im,
+    "batch locals named YARN_* become Yarn configuration and block the real package command",
+  );
   for (const name of unsafeEnvironmentNames) {
     assert.ok(
       wrapper.indexOf(`set "${name}="`) < fetcherInvocation,

@@ -234,8 +234,8 @@ if not exist "%MKT_BROWSER_YARN_ENTRYPOINT%" (
   exit /b 1
 )
 for %%I in ("%MKT_BROWSER_YARN_ENTRYPOINT%") do set "validated_yarn=%%~fI"
-for %%I in ("%validated_yarn%") do set "yarn_extension=%%~xI"
-if /I not "%yarn_extension%"==".js" if /I not "%yarn_extension%"==".cjs" (
+for %%I in ("%validated_yarn%") do set "entrypoint_extension=%%~xI"
+if /I not "%entrypoint_extension%"==".js" if /I not "%entrypoint_extension%"==".cjs" (
   >&2 echo The receipt-bound Yarn entrypoint must be a JavaScript file.
   exit /b 1
 )
@@ -253,10 +253,10 @@ exit /b 0
 set "MKT_BROWSER_VALIDATED_NODE=%validated_node%"
 set "MKT_BROWSER_VALIDATED_YARN=%validated_yarn%"
 "%powershell_exe%" -NoLogo -NoProfile -NonInteractive -Command "$actual = (& $env:MKT_BROWSER_VALIDATED_NODE $env:MKT_BROWSER_VALIDATED_YARN --version).Trim(); if ($actual -cne $env:MKT_BROWSER_YARN_VERSION) { exit 1 }" >nul 2>nul
-set "yarn_version_exit_code=%ERRORLEVEL%"
+set "version_check_exit_code=%ERRORLEVEL%"
 set "MKT_BROWSER_VALIDATED_NODE="
 set "MKT_BROWSER_VALIDATED_YARN="
-if not "%yarn_version_exit_code%"=="0" (
+if not "%version_check_exit_code%"=="0" (
   >&2 echo The receipt-bound Yarn entrypoint did not report version %MKT_BROWSER_YARN_VERSION%.
   exit /b 1
 )
