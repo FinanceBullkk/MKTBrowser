@@ -25,6 +25,7 @@ import {
   findLocaleIdByCountry,
   copyLegacyMultiZenData,
   findLegacyMultiZenImport,
+  reclaimStaleArchiveStaging,
 } from "@mktbrowser/profile-manager";
 import {
   HttpTransport,
@@ -336,6 +337,21 @@ app
       }
       return;
     }
+    const userData = app.getPath("userData");
+    const dataRoot = join(userData, "data");
+    if (normalWindowsSession) {
+      try {
+        const reclaimed = await reclaimStaleArchiveStaging(dataRoot);
+        if (reclaimed > 0) {
+          const unit = reclaimed === 1 ? "directory" : "directories";
+          process.stdout.write(
+            `[mkt-browser] archive staging sweep reclaimed ${reclaimed} ${unit}\n`,
+          );
+        }
+      } catch {
+        process.stderr.write("[mkt-browser] archive staging sweep failed\n");
+      }
+    }
     if (compatibilityActivationBlock) {
       // Only the exact pinned, owned Relay may attempt its existing startup recovery.
       // A mixed Relay/Browser payload remains blocked and requires installer repair.
@@ -370,7 +386,6 @@ app
       }
     }
 
-    const userData = app.getPath("userData");
     localInstallInspector = new WindowsLocalInstallInspector({
       scriptPath: join(
         process.resourcesPath,
@@ -391,7 +406,6 @@ app
       ),
     });
     const localInstallReadiness = () => localInstallInspector?.snapshot() ?? "unavailable";
-    const dataRoot = join(userData, "data");
     licenseLeaseJournal = await LicenseLeaseJournal.open(join(dataRoot, "license-leases.json"));
     if (process.platform === "win32" && !app.commandLine.hasSwitch("user-data-dir")) {
       const legacyImport = findLegacyMultiZenImport(app.getPath("appData"), dataRoot);
@@ -1060,7 +1074,9 @@ app
       async (
         _e,
         passphrase: string,
-      ): Promise<{ ok: true; id: string } | { ok: false; reason: string }> => {
+      ): Promise<
+        { ok: true; id: string; disabledExtensions: number } | { ok: false; reason: string }
+      > => {
         const result = await dialog.showOpenDialog(mainWindow ?? undefined!, {
           title: "Import profile",
           filters: [{ name: "MKT Browser archive", extensions: ["mzar"] }],
@@ -1085,13 +1101,18 @@ app
               idTaken: (id) => profileManager.list().some((profile) =>
                 profile.id.toLowerCase() === id.toLowerCase()) ||
                 existsSync(join(dataRoot, "profiles", id)),
-              // Restore bundled (v2) extensions into the shared store so they work
-              // on this machine without the user re-adding them.
+              // Restore bundled (v2) extension files into the shared store. Imported
+              // references stay disabled until the operator reviews them.
               extensionStoreRoot,
               persist: (profile) => profileManager.insertImported(profile),
             },
           );
-          return { ok: true, id: restored.id };
+          const disabledExtensions = restored.extensions?.length ?? 0;
+          return {
+            ok: true,
+            id: restored.id,
+            disabledExtensions,
+          };
         } catch (e) {
           return { ok: false, reason: (e as Error).message };
         }

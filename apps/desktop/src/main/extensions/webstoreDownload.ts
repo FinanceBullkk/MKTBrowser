@@ -1,6 +1,7 @@
 import { net } from "electron";
 import { createWriteStream } from "node:fs";
 import { rm } from "node:fs/promises";
+import { createNetworkRequestDeadlines } from "../network-request-deadlines.ts";
 import { tempCrxPath } from "./crxPipeline.ts";
 
 /**
@@ -46,17 +47,41 @@ export async function downloadCrxById(id: string, prodversion: string): Promise<
 
   await new Promise<void>((resolve, reject) => {
     let out: ReturnType<typeof createWriteStream> | null = null;
+    let settled = false;
+    let responseEnded = false;
+    let deadlines: ReturnType<typeof createNetworkRequestDeadlines> | null = null;
     const fail = (err: Error): void => {
+      if (settled) return;
+      settled = true;
+      deadlines?.complete();
       if (out) {
         out.destroy();
         out = null;
       }
       reject(err);
     };
+    const succeed = (): void => {
+      if (settled) return;
+      settled = true;
+      deadlines?.complete();
+      resolve();
+    };
 
     const request = net.request({ method: "GET", url, redirect: "follow" });
-    request.on("error", fail);
+    deadlines = createNetworkRequestDeadlines({
+      label: `Web Store extension ${id} download`,
+      abort: () => request.abort(),
+      onTimeout: fail,
+    });
+    request.on("error", (error) => {
+      if (!responseEnded) fail(error);
+    });
     request.on("response", (response) => {
+      if (settled) {
+        response.on("data", () => {});
+        return;
+      }
+      deadlines?.responseStarted();
       const status = response.statusCode;
       // 204 (and sometimes an empty 200) means the endpoint has no CRX for this
       // ID — delisted, geo-blocked, or never existed. Surface a clear message
@@ -77,16 +102,24 @@ export async function downloadCrxById(id: string, prodversion: string): Promise<
       stream.on("error", fail);
       const flow = response as unknown as { pause?: () => void; resume?: () => void };
       response.on("data", (chunk: Buffer) => {
+        if (settled) return;
+        deadlines?.bodyActivity();
         received += chunk.length;
         if (!stream.write(chunk) && flow.pause && flow.resume) {
           flow.pause();
-          stream.once("drain", () => flow.resume!());
+          stream.once("drain", () => {
+            if (settled) return;
+            deadlines?.bodyActivity();
+            flow.resume!();
+          });
         }
       });
       response.on("error", fail);
       response.on("end", () => {
-        out = null;
-        stream.end(() => {
+        responseEnded = true;
+        deadlines?.finalizationStarted();
+        stream.once("close", () => {
+          out = null;
           // An empty (or absurdly tiny) body means "no CRX" even on a 200.
           if (received < 16) {
             fail(
@@ -96,11 +129,20 @@ export async function downloadCrxById(id: string, prodversion: string): Promise<
             );
             return;
           }
-          resolve();
+          succeed();
         });
+        try {
+          stream.end();
+        } catch (error) {
+          fail(error instanceof Error ? error : new Error(String(error)));
+        }
       });
     });
-    request.end();
+    try {
+      request.end();
+    } catch (error) {
+      fail(error instanceof Error ? error : new Error(String(error)));
+    }
   }).catch(async (e) => {
     await rm(outPath, { force: true }).catch(() => {});
     throw e as Error;

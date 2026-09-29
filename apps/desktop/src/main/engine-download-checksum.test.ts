@@ -8,10 +8,137 @@ import {
   cloakBrowserArchiveName,
   resolveCloakBrowserProManifest,
 } from "./cloakbrowser-pro-channel.ts";
+import {
+  createNetworkRequestDeadlines,
+  type DeadlineClock,
+} from "./network-request-deadlines.ts";
 
 const VERSION = "151.0.7922.108.6";
 const HASH = "a".repeat(64);
 const ARCHIVE = cloakBrowserArchiveName();
+
+class ManualDeadlineClock implements DeadlineClock {
+  private nextId = 1;
+  private readonly callbacks = new Map<number, { callback: () => void; delayMs: number }>();
+
+  setTimeout(callback: () => void, delayMs: number): unknown {
+    const id = this.nextId++;
+    this.callbacks.set(id, { callback, delayMs });
+    return id;
+  }
+
+  clearTimeout(handle: unknown): void {
+    this.callbacks.delete(Number(handle));
+  }
+
+  delays(): number[] {
+    return [...this.callbacks.values()].map(({ delayMs }) => delayMs);
+  }
+
+  fireNext(): void {
+    const next = this.callbacks.entries().next().value as
+      | [number, { callback: () => void; delayMs: number }]
+      | undefined;
+    assert.ok(next, "expected a pending deadline");
+    this.callbacks.delete(next[0]);
+    next[1].callback();
+  }
+}
+
+test("stalled Electron requests abort on header, body-idle, and finalization deadlines", () => {
+  const headerClock = new ManualDeadlineClock();
+  const headerErrors: Error[] = [];
+  let headerAborts = 0;
+  const headerDeadline = createNetworkRequestDeadlines({
+    label: "browser engine download",
+    headerTimeoutMs: 101,
+    bodyIdleTimeoutMs: 202,
+    abort: () => {
+      headerAborts += 1;
+    },
+    onTimeout: (error) => headerErrors.push(error),
+    clock: headerClock,
+  });
+
+  assert.deepEqual(headerClock.delays(), [101]);
+  headerClock.fireNext();
+  assert.equal(headerAborts, 1);
+  assert.match(headerErrors[0]?.message ?? "", /response headers.*101ms/i);
+  headerDeadline.responseStarted();
+  assert.deepEqual(headerClock.delays(), []);
+
+  const bodyClock = new ManualDeadlineClock();
+  const bodyErrors: Error[] = [];
+  let bodyAborts = 0;
+  const bodyDeadline = createNetworkRequestDeadlines({
+    label: "browser engine download",
+    headerTimeoutMs: 303,
+    bodyIdleTimeoutMs: 404,
+    abort: () => {
+      bodyAborts += 1;
+    },
+    onTimeout: (error) => bodyErrors.push(error),
+    clock: bodyClock,
+  });
+
+  bodyDeadline.responseStarted();
+  assert.deepEqual(bodyClock.delays(), [404]);
+  bodyDeadline.bodyActivity();
+  assert.deepEqual(bodyClock.delays(), [404]);
+  bodyClock.fireNext();
+  assert.equal(bodyAborts, 1);
+  assert.match(bodyErrors[0]?.message ?? "", /response body.*404ms/i);
+  bodyDeadline.complete();
+  assert.deepEqual(bodyClock.delays(), []);
+
+  const finalizationClock = new ManualDeadlineClock();
+  const finalizationErrors: Error[] = [];
+  let finalizationAborts = 0;
+  const finalizationDeadline = createNetworkRequestDeadlines({
+    label: "browser engine download",
+    headerTimeoutMs: 505,
+    bodyIdleTimeoutMs: 606,
+    finalizationTimeoutMs: 707,
+    abort: () => {
+      finalizationAborts += 1;
+    },
+    onTimeout: (error) => finalizationErrors.push(error),
+    clock: finalizationClock,
+  });
+  finalizationDeadline.responseStarted();
+  finalizationDeadline.finalizationStarted();
+  assert.deepEqual(finalizationClock.delays(), [707]);
+  finalizationClock.fireNext();
+  assert.equal(finalizationAborts, 1);
+  assert.match(finalizationErrors[0]?.message ?? "", /download finalization.*707ms/i);
+
+  const throwingAbortClock = new ManualDeadlineClock();
+  const throwingAbortDeadline = createNetworkRequestDeadlines({
+    label: "completed request",
+    abort: () => {
+      throw new Error("already closed");
+    },
+    onTimeout: () => {},
+    clock: throwingAbortClock,
+  });
+  assert.doesNotThrow(() => throwingAbortClock.fireNext());
+  throwingAbortDeadline.complete();
+
+  const completedClock = new ManualDeadlineClock();
+  let completedAborts = 0;
+  const completedDeadline = createNetworkRequestDeadlines({
+    label: "completed request",
+    abort: () => {
+      completedAborts += 1;
+    },
+    onTimeout: () => assert.fail("a completed request must not time out"),
+    clock: completedClock,
+  });
+  completedDeadline.responseStarted();
+  completedDeadline.complete();
+  assert.deepEqual(completedClock.delays(), []);
+  assert.equal(completedAborts, 0);
+});
 
 test("Pro checksums fail closed before exchanging the licence key for an archive URL", async (t) => {
   const failures = [

@@ -69,6 +69,10 @@ import { isCachedEngineVersionAllowed } from "./compatibility-engine-pin.ts";
 import { resolveCloakBrowserProManifest } from "./cloakbrowser-pro-channel.ts";
 import { findActivatedWindowsEngine } from "./activated-windows-engine-cache.ts";
 import { fetchEngineArchiveSha256, requireEngineArchiveSha256 } from "./engine-archive-checksum.ts";
+import {
+  createNetworkRequestDeadlines,
+  ENGINE_METADATA_TIMEOUT_MS,
+} from "./network-request-deadlines.ts";
 
 const execFileP = promisify(execFile);
 
@@ -519,7 +523,9 @@ export class ChromiumBootstrap extends EventEmitter {
     if (this.engine === "cloakbrowser") {
       return this.fetchCloakBrowserManifest();
     }
-    const res = await fetch(this.manifestUrl);
+    const res = await fetch(this.manifestUrl, {
+      signal: AbortSignal.timeout(ENGINE_METADATA_TIMEOUT_MS),
+    });
     if (!res.ok) throw new Error(`HTTP ${res.status} fetching CFT manifest`);
     const data = (await res.json()) as CftRoot;
     const channel = data.channels[this.channel ?? "Stable"];
@@ -654,24 +660,43 @@ export class ChromiumBootstrap extends EventEmitter {
       // fd or flush a stray buffered chunk to outPath after we've rejected
       // (which would race the next attempt's stat()/rm() and desync resume).
       let out: ReturnType<typeof createWriteStream> | null = null;
+      let settled = false;
+      let responseEnded = false;
+      let deadlines: ReturnType<typeof createNetworkRequestDeadlines> | null = null;
       const fail = (err: Error): void => {
+        if (settled) return;
+        settled = true;
+        deadlines?.complete();
         if (out) {
           out.destroy();
           out = null;
         }
         reject(err);
       };
+      const succeed = (bytesTotal: number): void => {
+        if (settled) return;
+        settled = true;
+        deadlines?.complete();
+        resolve(bytesTotal);
+      };
 
       // `net.request` follows redirects (GitHub → release-assets CDN) by
       // default and runs on Chromium's stack — see download()'s rationale.
       const request = net.request({ method: "GET", url: manifest.url, redirect: "follow" });
-      for (const [name, value] of Object.entries(manifest.headers ?? {})) {
-        request.setHeader(name, value);
-      }
-      if (have > 0) request.setHeader("Range", `bytes=${have}-`);
-
-      request.on("error", fail);
+      deadlines = createNetworkRequestDeadlines({
+        label: `${this.engine} runtime download`,
+        abort: () => request.abort(),
+        onTimeout: fail,
+      });
+      request.on("error", (error) => {
+        if (!responseEnded) fail(error);
+      });
       request.on("response", (response) => {
+        if (settled) {
+          response.on("data", () => {});
+          return;
+        }
+        deadlines?.responseStarted();
         const status = response.statusCode;
         const header = (name: string): string => {
           const v = response.headers[name];
@@ -695,8 +720,11 @@ export class ChromiumBootstrap extends EventEmitter {
           // Range Not Satisfiable — we already hold the whole file (or more)
           // on disk. Don't re-download; let the size + SHA checks below
           // decide whether what we have is valid or needs a fresh pull.
-          response.on("data", () => {});
-          response.on("end", () => resolve(have));
+          response.on("data", () => deadlines?.bodyActivity());
+          response.on("end", () => {
+            responseEnded = true;
+            succeed(have);
+          });
           return;
         } else if (status >= 200 && status < 300) {
           total = Number(header("content-length")) || 0;
@@ -719,6 +747,8 @@ export class ChromiumBootstrap extends EventEmitter {
 
         let lastEmit = 0;
         response.on("data", (chunk: Buffer) => {
+          if (settled) return;
+          deadlines?.bodyActivity();
           received += chunk.length;
           const now = Date.now();
           if (now - lastEmit > 100) {
@@ -737,18 +767,37 @@ export class ChromiumBootstrap extends EventEmitter {
           // Manual backpressure: pause the response while the disk catches up.
           if (!stream.write(chunk) && flow.pause && flow.resume) {
             flow.pause();
-            stream.once("drain", () => flow.resume!());
+            stream.once("drain", () => {
+              if (settled) return;
+              deadlines?.bodyActivity();
+              flow.resume!();
+            });
           }
         });
         response.on("error", fail);
         response.on("end", () => {
-          // Hand off ownership: a late request-level 'error' must not destroy
-          // a stream we're already finalizing.
-          out = null;
-          stream.end(() => resolve(total));
+          responseEnded = true;
+          deadlines?.finalizationStarted();
+          stream.once("close", () => {
+            out = null;
+            succeed(total);
+          });
+          try {
+            stream.end();
+          } catch (error) {
+            fail(error instanceof Error ? error : new Error(String(error)));
+          }
         });
       });
-      request.end();
+      try {
+        for (const [name, value] of Object.entries(manifest.headers ?? {})) {
+          request.setHeader(name, value);
+        }
+        if (have > 0) request.setHeader("Range", `bytes=${have}-`);
+        request.end();
+      } catch (error) {
+        fail(error instanceof Error ? error : new Error(String(error)));
+      }
     });
 
     // Truncation guard. The transfer can end "successfully" with a short
@@ -842,6 +891,7 @@ export class ChromiumBootstrap extends EventEmitter {
   private async fetchKeylessCloakBrowserManifest(): Promise<BrowserDownloadManifest> {
     const res = await fetch(CLOAKBROWSER_API, {
       headers: { accept: "application/vnd.github+json" },
+      signal: AbortSignal.timeout(ENGINE_METADATA_TIMEOUT_MS),
     });
     if (!res.ok) {
       throw new Error(`HTTP ${res.status} fetching CloakBrowser releases`);

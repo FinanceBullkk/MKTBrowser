@@ -110,3 +110,30 @@ test("redacts signed download URLs from operator-facing bootstrap errors", () =>
   assert.match(bootstrap, /redacted download URL/);
   assert.doesNotMatch(bootstrap, /Last error: \$\{lastError\?\.message/);
 });
+
+test("bounds engine metadata, archive, range-probe, and Web Store requests", () => {
+  const bootstrap = source("ChromiumBootstrap.ts");
+  const descriptor = source("resolve-licensed-engine-descriptor.ts");
+  const webStore = source("extensions/webstoreDownload.ts");
+  const deadlines = source("network-request-deadlines.ts");
+
+  assert.match(bootstrap, /signal: AbortSignal\.timeout\(ENGINE_METADATA_TIMEOUT_MS\)/);
+  assert.equal(
+    bootstrap.match(/createNetworkRequestDeadlines\(/g)?.length,
+    1,
+    "the Electron engine transfer must own one header/body deadline controller",
+  );
+  assert.match(descriptor, /signal: AbortSignal\.timeout\(ENGINE_METADATA_TIMEOUT_MS\)/);
+  assert.match(descriptor, /Unable to measure the licensed archive before the request deadline/);
+  assert.match(webStore, /createNetworkRequestDeadlines\(/);
+  assert.match(webStore, /await rm\(outPath, \{ force: true \}\)/);
+  assert.match(bootstrap, /request\.end\(\);\s*\} catch \(error\) \{\s*fail\(/);
+  assert.match(webStore, /request\.end\(\);\s*\} catch \(error\) \{\s*fail\(/);
+  assert.match(bootstrap, /finalizationStarted\(\)/);
+  assert.match(webStore, /finalizationStarted\(\)/);
+  assert.match(bootstrap, /stream\.once\("close"/);
+  assert.match(webStore, /stream\.once\("close"/);
+  assert.match(deadlines, /expire\("response headers", headerTimeoutMs\)/);
+  assert.match(deadlines, /expire\("response body activity", bodyIdleTimeoutMs\)/);
+  assert.match(deadlines, /expire\("download finalization", finalizationTimeoutMs\)/);
+});

@@ -98,7 +98,9 @@ export function createMktBrowserApi(bridge: MktBrowserIpcBridge) {
         bridge.invoke(IPC.PROFILES_EXPORT, id, passphrase),
       importArchive: (
         passphrase: string,
-      ): Promise<{ ok: true; id: ProfileId } | { ok: false; reason: string }> =>
+      ): Promise<
+        { ok: true; id: ProfileId; disabledExtensions: number } | { ok: false; reason: string }
+      > =>
         bridge.invoke(IPC.PROFILES_IMPORT, passphrase),
       onRunningChanged: (cb: (change: RunningStateChange) => void): (() => void) =>
         bridge.subscribe(IPC_EVENTS.PROFILES_RUNNING_CHANGED, cb),

@@ -1,17 +1,22 @@
-import { createReadStream, statSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join, relative, resolve, sep } from "node:path";
-import {
-  createHash,
-  randomBytes,
-  randomUUID,
-  scrypt as scryptCb,
-  createCipheriv,
-  createDecipheriv,
-} from "node:crypto";
-import { promisify } from "node:util";
+import { createReadStream, existsSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, readdir, rename, rm, stat } from "node:fs/promises";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import type { Profile } from "@mktbrowser/types";
+import { ARCHIVE_LIMITS } from "./archive-limits.js";
 import { publishImportedProfile, type StagedExtension } from "./archive-publication.js";
+import {
+  EXTENSION_ARCHIVE_STAGING_PREFIX,
+  PROFILE_ARCHIVE_STAGING_PREFIX,
+} from "./archive-staging.js";
+import {
+  ArchiveAuthenticationError,
+  ARCHIVE_MAGIC,
+  ARCHIVE_VERSION,
+  openArchivePlaintext,
+  writeEncryptedArchive,
+  type ArchiveSourceFile,
+} from "./archive-streaming.js";
 import {
   archiveFilePath,
   isSafeSegment,
@@ -21,124 +26,52 @@ import {
   type FileMeta,
 } from "./archive-validation.js";
 
-const scrypt = promisify(scryptCb);
-
-const MAGIC = "MZAR";
-/** v1 = profile user-data-dir only. v2 = also bundles shared-store extension
- *  code so a fresh machine gets working extensions, not dangling references. */
-const VERSION = 2;
-/** Archive versions this build can read. */
-const SUPPORTED_VERSIONS = new Set([1, 2]);
-/** AES-256-GCM */
-const ALGO = "aes-256-gcm";
-const KEY_LEN = 32;
-const SALT_LEN = 16;
-const IV_LEN = 12;
-
 export interface ExportOptions {
-  /**
-   * Shared-store extension directories to bundle into the archive so importing
-   * on another machine restores the extension code too (not just a reference
-   * that dangles until the user re-adds it). Each entry's files are read from
-   * `dir` and stored under the extension's (id, version).
-   */
+  /** Shared-store extension directories to include; imports restore them disabled. */
   extensions?: Array<{ id: string; version: string; dir: string }>;
 }
 
-/**
- * Pack a profile (metadata + on-disk user-data-dir) into a single
- * encrypted archive file. Use a passphrase the user remembers; we don't
- * store passphrases on our servers.
- *
- * Format (v1):
- *   bytes 0..3      "MZAR" magic
- *   bytes 4..5      version (uint16 BE)
- *   bytes 6..21     salt (16 bytes)
- *   bytes 22..33    iv (12 bytes)
- *   bytes 34..N     ciphertext (manifest JSON + concatenated file contents)
- *   bytes N..N+15   GCM auth tag (16 bytes, last)
- */
+/** Pack a profile into MZAR v2 without buffering profile files or ciphertext. */
 export async function exportProfile(
   profile: Profile,
   passphrase: string,
   outPath: string,
   opts: ExportOptions = {},
 ): Promise<void> {
-  const files = await collectFiles(profile.dataDir);
-
-  // Collect bundled extensions (v2). Each extension's files are appended after
-  // the profile files, in the same [len][content] framing, so import can read
-  // them sequentially by walking manifest.files then manifest.extensions.
+  const profileFiles = await collectFiles(profile.dataDir);
   const bundled: BundledExtension[] = [];
-  const extChunks: Buffer[] = [];
+  const extensionFiles: ArchiveSourceFile[] = [];
+
   for (const ext of opts.extensions ?? []) {
-    const extFiles = await collectFiles(ext.dir);
-    if (extFiles.length === 0) continue; // nothing on disk to bundle
-    bundled.push({
-      id: ext.id,
-      version: ext.version,
-      files: extFiles.map((f) => ({ path: f.relPath, size: f.size, sha256: f.sha256 })),
-    });
-    for (const f of extFiles) {
-      const len = Buffer.alloc(4);
-      len.writeUInt32BE(f.size, 0);
-      extChunks.push(len);
-      extChunks.push(await readFile(f.absPath));
-    }
+    const files = await collectFiles(ext.dir);
+    if (files.length === 0) continue;
+    bundled.push({ id: ext.id, version: ext.version, files: files.map(fileMeta) });
+    extensionFiles.push(...files);
   }
 
   const manifest: ArchiveManifest = {
-    magic: MAGIC,
-    version: VERSION,
+    magic: ARCHIVE_MAGIC,
+    version: ARCHIVE_VERSION,
     profile,
-    files: files.map((f) => ({ path: f.relPath, size: f.size, sha256: f.sha256 })),
+    files: profileFiles.map(fileMeta),
     extensions: bundled.length > 0 ? bundled : undefined,
   };
-
+  validateManifest(manifest, ARCHIVE_VERSION);
   const manifestJson = Buffer.from(JSON.stringify(manifest), "utf8");
-  const manifestLen = Buffer.alloc(4);
-  manifestLen.writeUInt32BE(manifestJson.length, 0);
 
-  const fileChunks: Buffer[] = [];
-  for (const f of files) {
-    const len = Buffer.alloc(4);
-    len.writeUInt32BE(f.size, 0);
-    fileChunks.push(len);
-    fileChunks.push(await readFile(f.absPath));
-  }
-
-  const plaintext = Buffer.concat([manifestLen, manifestJson, ...fileChunks, ...extChunks]);
-
-  const salt = randomBytes(SALT_LEN);
-  const iv = randomBytes(IV_LEN);
-  const key = (await scrypt(passphrase, salt, KEY_LEN)) as Buffer;
-
-  const cipher = createCipheriv(ALGO, key, iv);
-  const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
-  const tag = cipher.getAuthTag();
-
-  const header = Buffer.alloc(6);
-  header.write(MAGIC, 0, 4, "ascii");
-  header.writeUInt16BE(VERSION, 4);
-
-  const out = Buffer.concat([header, salt, iv, ciphertext, tag]);
-  await writeFile(outPath, out);
+  await writeEncryptedArchive({
+    outPath,
+    passphrase,
+    version: ARCHIVE_VERSION,
+    manifestJson,
+    files: [...profileFiles, ...extensionFiles],
+  });
 }
 
 export interface ImportOptions {
-  /**
-   * Predicate telling whether a profile id already exists locally. When the
-   * archive's original id is taken (re-importing on the same machine), the
-   * restore gets a fresh id — so it lands in its OWN dataDir and never
-   * overwrites the existing profile's files.
-   */
+  /** Return true when a profile id is already committed in the local database. */
   idTaken?: (id: string) => boolean;
-  /**
-   * Shared extension store root (`<userData>/data/extension-store`). When set,
-   * v2 archives restore their bundled extensions here (under `<id>/<version>`)
-   * so a fresh machine has the extension code. An existing store entry is left
-   * untouched (never clobbered). When unset, bundled extensions are ignored.
-   */
+  /** Shared extension store root used for authenticated v2 extension publication. */
   extensionStoreRoot?: string;
   /** Commit the restored row synchronously. If insertion fails, extraction is rolled back. */
   persist?: (profile: Profile) => Profile;
@@ -168,205 +101,214 @@ async function restoreProfile(
   archivePath: string,
   passphrase: string,
   destProfilesRoot: string,
-  opts: ImportOptions = {},
+  opts: ImportOptions,
 ): Promise<Profile> {
-  const buf = await readFile(archivePath);
-  if (buf.length < 54 || buf.subarray(0, 4).toString("ascii") !== MAGIC) {
-    throw new Error("Not an MKT Browser archive");
-  }
-  const version = buf.readUInt16BE(4);
-  if (!SUPPORTED_VERSIONS.has(version)) {
-    throw new Error(`Unsupported archive version: ${version}`);
-  }
-
-  const salt = buf.subarray(6, 6 + SALT_LEN);
-  const iv = buf.subarray(6 + SALT_LEN, 6 + SALT_LEN + IV_LEN);
-  const tag = buf.subarray(buf.length - 16);
-  const ciphertext = buf.subarray(6 + SALT_LEN + IV_LEN, buf.length - 16);
-
-  const key = (await scrypt(passphrase, salt, KEY_LEN)) as Buffer;
-  const decipher = createDecipheriv(ALGO, key, iv);
-  decipher.setAuthTag(tag);
-  let plaintext: Buffer;
-  try {
-    plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
-  } catch {
-    // GCM auth failure ⇒ wrong passphrase (or a tampered/corrupt archive).
-    throw new Error("Wrong passphrase or corrupted archive.");
-  }
-
-  let cursor = 0;
-  if (plaintext.length < 4) throw new Error("Invalid archive manifest.");
-  const manifestLen = plaintext.readUInt32BE(cursor);
-  cursor += 4;
-  if (manifestLen > plaintext.length - cursor) throw new Error("Invalid archive manifest.");
-  const manifest: unknown = JSON.parse(
-    plaintext.subarray(cursor, cursor + manifestLen).toString("utf8"),
-  );
-  cursor += manifestLen;
-  validateManifest(manifest, version);
-
-  // Authenticate every frame before creating any destination, including skipped extensions.
-  const contents = new Map<FileMeta, Buffer>();
-  for (const meta of [
-    ...manifest.files,
-    ...(manifest.extensions ?? []).flatMap((ext) => ext.files),
-  ]) {
-    if (cursor + 4 > plaintext.length) throw new Error("Truncated archive frame.");
-    const length = plaintext.readUInt32BE(cursor);
-    cursor += 4;
-    if (length !== meta.size || length > plaintext.length - cursor) {
-      throw new Error("Invalid archive frame size.");
-    }
-    const content = plaintext.subarray(cursor, cursor + length);
-    verifyChecksum(meta, content);
-    contents.set(meta, content);
-    cursor += length;
-  }
-  if (cursor !== plaintext.length) throw new Error("Unexpected trailing archive data.");
-
-  // Preserve the original id when free (faithful move to another machine); mint
-  // a fresh one if it's already taken here (duplicate import), OR if the
-  // archive's id is not a safe path segment. The id becomes a directory name
-  // (`<profilesRoot>/<id>`), so an attacker-crafted id like "" or ".." could
-  // otherwise redirect the whole restore outside its own dataDir.
-  const original = manifest.profile.id;
-  await mkdir(destProfilesRoot, { recursive: true });
-  const existingIds = new Set((await readdir(destProfilesRoot)).map((id) => id.toLowerCase()));
-  let targetId = original;
-  while (true) {
-    if (
-      !isSafeSegment(targetId) ||
-      existingIds.has(targetId.toLowerCase()) ||
-      opts.idTaken?.(targetId)
-    ) {
-      targetId = randomUUID();
-      continue;
-    }
-    try {
-      await mkdir(join(destProfilesRoot, targetId));
-      break;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      targetId = randomUUID();
-    }
-  }
-  const restored: Profile = {
-    ...manifest.profile,
-    id: targetId,
-    dataDir: join(destProfilesRoot, targetId),
-  };
-
-  const createdDirectories = [restored.dataDir];
+  const { version, reader } = await openArchivePlaintext(archivePath, passphrase);
+  let manifest: ArchiveManifest | undefined;
+  let profileStagingRoot: string | undefined;
+  let extensionStagingRoot: string | undefined;
   const stagedExtensions: StagedExtension[] = [];
-  let stagingRoot: string | undefined;
+  let failure: unknown;
+
   try {
-    for (const meta of manifest.files) {
-      await writeGuarded(restored.dataDir, meta.path, contents.get(meta)!);
+    const manifestLength = await reader.readUInt32("Invalid archive manifest.");
+    if (manifestLength > ARCHIVE_LIMITS.maxManifestBytes) {
+      throw new Error("Archive manifest exceeds the allowed size.");
     }
+    const manifestBytes = await reader.readBuffer(manifestLength, "Invalid archive manifest.");
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(manifestBytes.toString("utf8"));
+    } catch {
+      throw new Error("Invalid archive manifest.");
+    }
+    validateManifest(parsed, version);
+    manifest = parsed;
+
+    const profileStagingParent = dirname(destProfilesRoot);
+    await mkdir(profileStagingParent, { recursive: true });
+    profileStagingRoot = await mkdtemp(join(profileStagingParent, PROFILE_ARCHIVE_STAGING_PREFIX));
+
     if (opts.extensionStoreRoot) {
-      await mkdir(opts.extensionStoreRoot, { recursive: true });
-      stagingRoot = await mkdtemp(join(opts.extensionStoreRoot, ".mzar-import-"));
-      createdDirectories.push(stagingRoot);
-      for (const ext of manifest.extensions ?? []) {
-        const stagingDir = join(stagingRoot, String(stagedExtensions.length));
+      const extensionStagingParent = dirname(opts.extensionStoreRoot);
+      await mkdir(extensionStagingParent, { recursive: true });
+      extensionStagingRoot = await mkdtemp(
+        join(extensionStagingParent, EXTENSION_ARCHIVE_STAGING_PREFIX),
+      );
+    }
+
+    for (const meta of manifest.files) {
+      await reader.consumeFrame(meta, guardedStagingPath(profileStagingRoot, meta.path));
+    }
+    for (const [index, ext] of (manifest.extensions ?? []).entries()) {
+      let stagingDir: string | undefined;
+      if (extensionStagingRoot && opts.extensionStoreRoot) {
+        stagingDir = join(extensionStagingRoot, String(index));
         await mkdir(stagingDir);
-        for (const meta of ext.files) {
-          await writeGuarded(stagingDir, meta.path, contents.get(meta)!);
-        }
+      }
+      for (const meta of ext.files) {
+        await reader.consumeFrame(
+          meta,
+          stagingDir ? guardedStagingPath(stagingDir, meta.path) : undefined,
+        );
+      }
+      if (stagingDir && opts.extensionStoreRoot) {
         stagedExtensions.push({
           source: stagingDir,
           destination: join(opts.extensionStoreRoot, ext.id, ext.version || "0"),
         });
       }
     }
-    return publishImportedProfile(restored, stagedExtensions, stagingRoot, opts.persist);
+    await reader.ensureNoTrailingData();
   } catch (error) {
-    const failed: unknown[] = [];
-    for (const dir of createdDirectories.reverse()) {
+    failure = error;
+    if (!(error instanceof ArchiveAuthenticationError)) {
       try {
-        await rm(dir, { recursive: true, force: true });
-      } catch (cleanupError) {
-        failed.push(cleanupError);
+        await reader.drain();
+      } catch (authenticationError) {
+        failure = authenticationError;
       }
     }
-    if (failed.length)
-      throw new AggregateError(
-        [error, ...failed],
-        "Profile import failed and cleanup was incomplete.",
-        { cause: error },
-      );
-    throw error;
+  }
+
+  if (failure || !manifest || !profileStagingRoot) {
+    const error =
+      failure instanceof ArchiveAuthenticationError
+        ? new Error("Wrong passphrase or corrupted archive.")
+        : (failure ?? new Error("Invalid archive manifest."));
+    return cleanupAndThrow(error, [profileStagingRoot, extensionStagingRoot]);
+  }
+
+  let finalDataDir: string | undefined;
+  try {
+    const published = await publishStagedProfileDirectory(
+      profileStagingRoot,
+      manifest.profile.id,
+      destProfilesRoot,
+      opts.idTaken,
+    );
+    profileStagingRoot = undefined;
+    finalDataDir = published.dataDir;
+
+    const importedExtensions = manifest.profile.extensions?.map((extension) => ({
+      ...extension,
+      enabled: false,
+    }));
+    const restored: Profile = {
+      ...manifest.profile,
+      ...(importedExtensions ? { extensions: importedExtensions } : {}),
+      id: published.id,
+      dataDir: published.dataDir,
+    };
+
+    if (opts.extensionStoreRoot) await mkdir(opts.extensionStoreRoot, { recursive: true });
+    return publishImportedProfile(
+      restored,
+      stagedExtensions,
+      extensionStagingRoot,
+      opts.persist,
+    );
+  } catch (error) {
+    return cleanupAndThrow(error, [profileStagingRoot, extensionStagingRoot, finalDataDir]);
   }
 }
 
-/** Throw if the content's SHA-256 doesn't match the manifest entry. */
-function verifyChecksum(fileMeta: FileMeta, content: Buffer): void {
-  const hash = createHash("sha256").update(content).digest("hex");
-  if (hash !== fileMeta.sha256) {
-    throw new Error(`Checksum mismatch for ${fileMeta.path}`);
+async function publishStagedProfileDirectory(
+  stagingRoot: string,
+  originalId: string,
+  destProfilesRoot: string,
+  idTaken?: (id: string) => boolean,
+): Promise<{ id: string; dataDir: string }> {
+  await mkdir(destProfilesRoot, { recursive: true });
+  const existingIds = new Set((await readdir(destProfilesRoot)).map((id) => id.toLowerCase()));
+  let targetId = originalId;
+
+  while (true) {
+    if (!isSafeSegment(targetId) || existingIds.has(targetId.toLowerCase()) || idTaken?.(targetId)) {
+      targetId = randomUUID();
+      continue;
+    }
+    const dataDir = join(destProfilesRoot, targetId);
+    try {
+      await rename(stagingRoot, dataDir);
+      return { id: targetId, dataDir };
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (existsSync(dataDir) || code === "EEXIST" || code === "ENOTEMPTY") {
+        existingIds.add(targetId.toLowerCase());
+        targetId = randomUUID();
+        continue;
+      }
+      throw error;
+    }
   }
 }
 
-/**
- * Write `content` to `relPath` inside `baseDir`, refusing any path that escapes
- * baseDir. Compare against `base + sep` so a sibling sharing the prefix can't
- * slip through, and reject the base itself as a file target.
- */
-async function writeGuarded(baseDir: string, relPath: string, content: Buffer): Promise<void> {
+function guardedStagingPath(baseDir: string, relPath: string): string {
   const base = resolve(baseDir);
   const absPath = resolve(base, archiveFilePath(relPath));
-  // Reject the base itself as a file target AND anything outside it. `base + sep`
-  // stops a sibling sharing the prefix (…/<id>-evil) from slipping through.
   if (absPath === base || !absPath.startsWith(base + sep)) {
     throw new Error(`Refusing path-traversal entry: ${relPath}`);
   }
-  await mkdir(join(absPath, ".."), { recursive: true });
-  await writeFile(absPath, content, { flag: "wx" });
+  return absPath;
 }
 
-interface CollectedFile {
-  absPath: string;
-  relPath: string;
-  size: number;
-  sha256: string;
+async function cleanupAndThrow(error: unknown, paths: Array<string | undefined>): Promise<never> {
+  const cleanupErrors: unknown[] = [];
+  for (const path of paths.filter((value): value is string => Boolean(value)).reverse()) {
+    try {
+      await rm(path, { recursive: true, force: true });
+    } catch (cleanupError) {
+      cleanupErrors.push(cleanupError);
+    }
+  }
+  if (cleanupErrors.length > 0) {
+    throw new AggregateError(
+      [error, ...cleanupErrors],
+      "Profile import failed and cleanup was incomplete.",
+      { cause: error },
+    );
+  }
+  throw error;
 }
 
-async function collectFiles(root: string): Promise<CollectedFile[]> {
-  const out: CollectedFile[] = [];
+function fileMeta(file: ArchiveSourceFile): FileMeta {
+  return { path: file.path, size: file.size, sha256: file.sha256 };
+}
+
+async function collectFiles(root: string): Promise<ArchiveSourceFile[]> {
+  const files: ArchiveSourceFile[] = [];
   async function walk(dir: string): Promise<void> {
     const entries = await readdir(dir, { withFileTypes: true });
-    for (const e of entries) {
-      const abs = join(dir, e.name);
-      if (e.isDirectory()) {
-        await walk(abs);
-      } else if (e.isFile()) {
-        const stat = statSync(abs);
-        const sha = await fileSha256(abs);
-        out.push({
-          absPath: abs,
-          relPath: relative(root, abs),
-          size: stat.size,
-          sha256: sha,
+    for (const entry of entries) {
+      const absPath = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(absPath);
+      } else if (entry.isFile()) {
+        const fileStat = await stat(absPath);
+        files.push({
+          absPath,
+          path: relative(root, absPath),
+          size: fileStat.size,
+          sha256: await fileSha256(absPath),
         });
       }
     }
   }
   try {
     await walk(root);
-  } catch (e) {
-    // Profile may not yet have a populated user-data-dir
-    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
-  return out;
+  return files;
 }
 
 function fileSha256(path: string): Promise<string> {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolveHash, reject) => {
     const hash = createHash("sha256");
     const stream = createReadStream(path);
     stream.on("data", (chunk) => hash.update(chunk));
-    stream.on("end", () => resolve(hash.digest("hex")));
+    stream.on("end", () => resolveHash(hash.digest("hex")));
     stream.on("error", reject);
   });
 }

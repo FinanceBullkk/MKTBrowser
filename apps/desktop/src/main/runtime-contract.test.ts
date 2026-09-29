@@ -695,6 +695,24 @@ test("does not send automatic fork events to jobs that carry repository secrets"
   assert.equal(push.includes("secrets: inherit"), false);
 });
 
+test("successful archive import reports that restored extensions are disabled", () => {
+  const app = source("apps/desktop/src/renderer/src/App.tsx");
+  const main = source("apps/desktop/src/main/index.ts");
+  const preload = source("apps/desktop/src/preload/create-mkt-browser-api.ts");
+
+  assert.match(main, /const disabledExtensions = restored\.extensions\?\.length \?\? 0/);
+  assert.match(preload, /disabledExtensions: number/);
+  assert.match(app, /result\.disabledExtensions/);
+  assert.match(app, /archived extension/);
+  assert.match(app, /review and re-enable only the ones you trust/);
+  assert.match(main, /await reclaimStaleArchiveStaging\(dataRoot\)/);
+  assert.ok(
+    main.indexOf("await reclaimStaleArchiveStaging(dataRoot)") <
+      main.indexOf("profileManager = new ProfileManager"),
+    "stale decrypted staging must be reclaimed before the profile store opens",
+  );
+});
+
 function source(relativePath: string): string {
   // Line endings are normalized because Windows CI checks these files out with CRLF while a Linux
   // checkout keeps LF. Without this, an assertion written with "\n" passes locally and fails on the

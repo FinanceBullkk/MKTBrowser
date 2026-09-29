@@ -9,6 +9,12 @@ import { join } from "node:path";
 import test from "node:test";
 import type { Profile } from "@mktbrowser/types";
 import { exportProfile, importProfile } from "./archive.js";
+import { ARCHIVE_LIMITS } from "./archive-limits.js";
+import {
+  EXTENSION_ARCHIVE_STAGING_PREFIX,
+  PROFILE_ARCHIVE_STAGING_PREFIX,
+  reclaimStaleArchiveStaging,
+} from "./archive-staging.js";
 import { defaultFingerprint } from "./fingerprint.js";
 
 function profile(root: string): Profile {
@@ -128,7 +134,126 @@ test("imports legacy v1 metadata without the later lifecycle fields", async () =
     assert.equal(restored.fingerprint.clientHints, undefined);
     assert.equal(restored.extensions?.[0]?.scope, "profile");
     assert.equal(restored.extensions?.[0]?.version, "");
+    assert.equal(restored.extensions?.[0]?.enabled, false);
     assert.deepEqual(await readFile(join(restored.dataDir, "Default", "Cookies")), bytes);
+  });
+});
+
+test("restores archived extension references disabled until the user reviews them", async () => {
+  await fixture(async (root, value) => {
+    const archive = await crafted(root, {
+      magic: "MZAR",
+      version: 2,
+      profile: {
+        ...value,
+        extensions: [
+          {
+            id: "archived-extension",
+            version: "1",
+            name: "Archived extension",
+            enabled: true,
+            scope: "shared",
+            dir: "",
+            source: "file",
+          },
+        ],
+      },
+      files: [file()],
+    });
+
+    const restored = await importProfile(archive, "test", join(root, "profiles"));
+
+    assert.equal(restored.extensions?.[0]?.enabled, false);
+  });
+});
+
+test("streams a large multi-file profile through export and import", async () => {
+  await fixture(async (root, value) => {
+    const expected = new Map<string, Buffer>();
+    for (let index = 0; index < 4; index += 1) {
+      const content = Buffer.alloc(3 * 1024 * 1024, index + 1);
+      const relativePath = join("Default", `large-${index}.bin`);
+      expected.set(relativePath, content);
+      await mkdir(join(value.dataDir, "Default"), { recursive: true });
+      await writeFile(join(value.dataDir, relativePath), content);
+    }
+    const archive = join(root, "large.mzar");
+
+    await exportProfile(value, "test", archive);
+    const restored = await importProfile(archive, "test", join(root, "profiles"));
+
+    for (const [relativePath, content] of expected) {
+      assert.deepEqual(await readFile(join(restored.dataDir, relativePath)), content);
+    }
+  });
+});
+
+test("removes all private staging data when GCM authentication fails", async () => {
+  await fixture(async (root, value) => {
+    await mkdir(join(value.dataDir, "Default"), { recursive: true });
+    await writeFile(join(value.dataDir, "Default", "Cookies"), bytes);
+    const archive = join(root, "tampered.mzar");
+    await exportProfile(value, "test", archive);
+    const tampered = await readFile(archive);
+    tampered[40] ^= 1;
+    await writeFile(archive, tampered);
+
+    await assert.rejects(
+      importProfile(archive, "test", join(root, "profiles"), {
+        extensionStoreRoot: join(root, "extensions"),
+      }),
+      /Wrong passphrase or corrupted archive/,
+    );
+    assert.equal(existsSync(join(root, "profiles")), false);
+    assert.equal(existsSync(join(root, "extensions")), false);
+    assert.equal((await readdir(root)).some((entry) => entry.startsWith(".mzar-")), false);
+  });
+});
+
+test("reclaims only stale archive staging directories after an interrupted import", async () => {
+  await fixture(async (root) => {
+    const profileStaging = join(root, `${PROFILE_ARCHIVE_STAGING_PREFIX}stale`);
+    const extensionStaging = join(root, `${EXTENSION_ARCHIVE_STAGING_PREFIX}stale`);
+    const retainedDirectory = join(root, "profiles");
+    const retainedFile = join(root, `${PROFILE_ARCHIVE_STAGING_PREFIX}note.txt`);
+    await mkdir(profileStaging);
+    await mkdir(extensionStaging);
+    await mkdir(retainedDirectory);
+    await writeFile(join(profileStaging, "Cookies"), bytes);
+    await writeFile(join(extensionStaging, "extension.js"), bytes);
+    await writeFile(retainedFile, bytes);
+
+    assert.equal(await reclaimStaleArchiveStaging(root), 2);
+    assert.equal(existsSync(profileStaging), false);
+    assert.equal(existsSync(extensionStaging), false);
+    assert.equal(existsSync(retainedDirectory), true);
+    assert.equal(existsSync(retainedFile), true);
+  });
+});
+
+test("rejects manifests and file frames above the explicit archive bounds", async () => {
+  await fixture(async (root, value) => {
+    const oversizedManifest = await crafted(root, {
+      magic: "MZAR",
+      version: 2,
+      profile: { ...value, notes: "x".repeat(ARCHIVE_LIMITS.maxManifestBytes) },
+      files: [file()],
+    });
+    await assert.rejects(
+      importProfile(oversizedManifest, "test", join(root, "profiles")),
+      /manifest exceeds the allowed size/i,
+    );
+
+    const oversizedFrame = await crafted(root, {
+      magic: "MZAR",
+      version: 2,
+      profile: value,
+      files: [{ ...file(), size: ARCHIVE_LIMITS.maxFrameBytes + 1 }],
+    });
+    await assert.rejects(
+      importProfile(oversizedFrame, "test", join(root, "profiles")),
+      /Invalid archive manifest/,
+    );
   });
 });
 
@@ -358,16 +483,17 @@ test("staging keeps incomplete extensions private and preserves a competing inst
     const released = new Promise<void>((resolve) => {
       resume = resolve;
     });
+    const originalOpen = fsPromises.open;
     const originalWrite = fsPromises.writeFile;
     context.mock.method(
       fsPromises,
-      "writeFile",
-      async (...args: Parameters<typeof originalWrite>) => {
+      "open",
+      async (...args: Parameters<typeof originalOpen>) => {
         if (String(args[0]).endsWith("manifest.json")) {
           entered();
           await released;
         }
-        return originalWrite(...args);
+        return originalOpen(...args);
       },
     );
     syncBuiltinESMExports();

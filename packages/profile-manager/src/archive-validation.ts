@@ -1,4 +1,5 @@
 import type { Profile } from "@mktbrowser/types";
+import { ARCHIVE_LIMITS } from "./archive-limits.js";
 
 export interface FileMeta {
   path: string;
@@ -62,10 +63,17 @@ export function archiveFilePath(value: string): string {
   return parts.join("/");
 }
 
-function validateFiles(value: unknown): asserts value is FileMeta[] {
+interface FileBudget {
+  count: number;
+  bytes: number;
+}
+
+function validateFiles(value: unknown): FileBudget {
   if (!Array.isArray(value)) invalid();
+  if (value.length > ARCHIVE_LIMITS.maxFileCount) invalid();
   const files = new Set<string>();
   const directories = new Set<string>();
+  let bytes = 0;
   for (const entry of value) {
     if (
       !object(entry) ||
@@ -73,10 +81,13 @@ function validateFiles(value: unknown): asserts value is FileMeta[] {
       typeof entry.size !== "number" ||
       !Number.isSafeInteger(entry.size) ||
       entry.size < 0 ||
+      entry.size > ARCHIVE_LIMITS.maxFrameBytes ||
       typeof entry.sha256 !== "string" ||
       !/^[0-9a-f]{64}$/.test(entry.sha256)
     )
       invalid();
+    bytes += entry.size;
+    if (bytes > ARCHIVE_LIMITS.maxTotalContentBytes) invalid();
     const key = archiveFilePath(entry.path).toLowerCase();
     if (files.has(key) || directories.has(key)) invalid();
     const parts = key.split("/");
@@ -89,6 +100,7 @@ function validateFiles(value: unknown): asserts value is FileMeta[] {
     }
     files.add(key);
   }
+  return { count: value.length, bytes };
 }
 
 function validateProfile(value: unknown): void {
@@ -196,9 +208,12 @@ export function validateManifest(
 ): asserts value is ArchiveManifest {
   if (!object(value) || value.magic !== "MZAR" || value.version !== version) invalid();
   validateProfile(value.profile);
-  validateFiles(value.files);
+  const profileBudget = validateFiles(value.files);
+  let fileCount = profileBudget.count;
+  let contentBytes = profileBudget.bytes;
   if (value.extensions === undefined) return;
   if (!Array.isArray(value.extensions)) invalid();
+  if (value.extensions.length > ARCHIVE_LIMITS.maxExtensionBundles) invalid();
   const destinations = new Set<string>();
   for (const ext of value.extensions) {
     if (
@@ -212,6 +227,13 @@ export function validateManifest(
     const key = `${ext.id}/${ext.version || "0"}`.toLowerCase();
     if (destinations.has(key)) invalid();
     destinations.add(key);
-    validateFiles(ext.files);
+    const budget = validateFiles(ext.files);
+    fileCount += budget.count;
+    contentBytes += budget.bytes;
+    if (
+      fileCount > ARCHIVE_LIMITS.maxFileCount ||
+      contentBytes > ARCHIVE_LIMITS.maxTotalContentBytes
+    )
+      invalid();
   }
 }

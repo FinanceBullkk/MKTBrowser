@@ -26,6 +26,7 @@ export {
   type LocaleCatalogEntry,
 } from "./fingerprint.js";
 export { exportProfile, importProfile } from "./archive.js";
+export { reclaimStaleArchiveStaging } from "./archive-staging.js";
 export {
   copyLegacyMultiZenData,
   findLegacyMultiZenImport,

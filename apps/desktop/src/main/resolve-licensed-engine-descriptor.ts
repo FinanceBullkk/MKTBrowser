@@ -10,6 +10,7 @@
  * artifact — so the shared part stops here.
  */
 import { resolveCloakBrowserProManifest } from "./cloakbrowser-pro-channel.ts";
+import { ENGINE_METADATA_TIMEOUT_MS } from "./network-request-deadlines.ts";
 
 export interface LicensedEngineDescriptor {
   version: string;
@@ -29,21 +30,32 @@ export interface LicensedEngineDescriptor {
  * deletion.
  */
 async function measureArchive(url: string): Promise<number> {
-  const res = await fetch(url, { headers: { range: "bytes=0-0" } });
-  if (res.status !== 206 && res.status !== 200) {
-    throw new Error(
-      `The licensed archive URL answered HTTP ${res.status}. Refusing to record an engine that cannot be fetched.`,
-    );
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: { range: "bytes=0-0" },
+      signal: AbortSignal.timeout(ENGINE_METADATA_TIMEOUT_MS),
+    });
+  } catch {
+    throw new Error("Unable to measure the licensed archive before the request deadline.");
   }
-  // A ranged response reports the full size in content-range's total; a plain
-  // 200 means the server ignored the range and content-length is the whole file.
-  const total = res.headers.get("content-range")?.split("/")[1];
-  const size = Number.parseInt(total ?? res.headers.get("content-length") ?? "", 10);
-  if (!Number.isSafeInteger(size) || size <= 0) {
-    throw new Error("The licensed archive URL reported no usable size.");
+  try {
+    if (res.status !== 206 && res.status !== 200) {
+      throw new Error(
+        `The licensed archive URL answered HTTP ${res.status}. Refusing to record an engine that cannot be fetched.`,
+      );
+    }
+    // A ranged response reports the full size in content-range's total; a plain
+    // 200 means the server ignored the range and content-length is the whole file.
+    const total = res.headers.get("content-range")?.split("/")[1];
+    const size = Number.parseInt(total ?? res.headers.get("content-length") ?? "", 10);
+    if (!Number.isSafeInteger(size) || size <= 0) {
+      throw new Error("The licensed archive URL reported no usable size.");
+    }
+    return size;
+  } finally {
+    void res.body?.cancel().catch(() => {});
   }
-  void res.body?.cancel();
-  return size;
 }
 
 export async function resolveLicensedEngineDescriptor(

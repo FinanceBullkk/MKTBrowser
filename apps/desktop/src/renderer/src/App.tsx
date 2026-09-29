@@ -265,6 +265,12 @@ export function App(): JSX.Element {
       return;
     }
     await refresh();
+    const disabledExtensions = result.disabledExtensions;
+    showToast(
+      disabledExtensions > 0
+        ? `Profile imported. ${disabledExtensions} archived extension${disabledExtensions === 1 ? "" : "s"} disabled; review and re-enable only the ones you trust.`
+        : "Profile imported",
+    );
   }
 
   async function exportProfile(profileId: string, passphrase: string): Promise<void> {
