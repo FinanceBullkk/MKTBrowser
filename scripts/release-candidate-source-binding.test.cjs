@@ -192,8 +192,8 @@ test("keeps the current MKTTool Relay source aligned with the Browser candidate"
     "utf8",
   ));
 
-  assert.equal(candidate.browserVersion, "0.3.29");
-  assert.equal(candidate.relay.version, 21);
+  assert.equal(candidate.browserVersion, "0.3.30");
+  assert.equal(candidate.relay.version, 22);
   assert.equal(parseRelaySourceVersion(mktToolRoot), candidate.relay.version);
 });
 

@@ -18,20 +18,20 @@ place.
 
 | | |
 |---|---|
-| Current source candidate | `20260929-browser-0.3.29-relay-21-self-service-onboarding-cft`; Browser `0.3.29`, control contract `6`, profile schema `3` |
-| Current source | Self-service onboarding plus first-party license and PE attribution fix; final committed-source validation and artifact binding in progress |
+| Current source candidate | `20260930-browser-0.3.30-relay-22-self-service-onboarding-cft`; Browser `0.3.30`, control contract `6`, profile schema `3` |
+| Current source | Self-service onboarding, first-party license/PE attribution, and archive/runtime-download hardening; final committed-source validation in progress |
 | Source behavior | verified sequential admission, SDK shutdown and explicit capacity refresh |
-| Pinned Relay | locally verified v21 archive `45f6e669...8d3ed0`; final commit-bound rebuild, publication, and acceptance remain required |
+| Pinned Relay | v22 archive `43a49411...b494c`; two local builds matched, packaged smoke passed, and immutable R2 bytes were full-read verified |
 | Pinned engine | CFT `152.0.7977.64` (`b0db25de…8004`), exact archive published in sequences 24 and 25 |
 | Packaged Cloak lifecycle | **PASS** — R27 completed `P1 -> P2 -> P1 -> P2`, 4/4 usable launches in 3.647-3.929 s with clean seat return |
 | Native fingerprint gate | **FAIL** — R28 completed 10/10 launches; criteria A/B/C all failed, so identity and real-account-safety claims remain prohibited |
-| Candidate status | **OPEN** — two isolated 0.3.29 builds and exact second-PC onboarding acceptance are not complete |
-| Local gate | Relay v21 packaged smoke and TLS checks pass; final frozen-source Browser quality refresh remains required |
+| Candidate status | **OPEN** — two isolated 0.3.30 Browser builds and exact second-PC onboarding acceptance are not complete |
+| Local gate | Relay v22 packaged smoke passes; final source binding, Browser quality, TLS, and installer gates remain required |
 | Prior two-build equivalence | PASS for 0.3.23 — 129 files; `app.asar` byte-identical (51,770,195 bytes) |
 | Prior clean-VM lifecycle | PASS (scope-limited) for exact 0.3.23 — clean `9/9`, repair `13/13`, uninstall `15/15` |
 | Clean-VM CFT activation | **OPEN** — signed first-run provisioning and real engine execution are not yet accepted |
 | Prior compatibility publication | PASS for 0.3.23 — sequences 23/24/25 immutable objects read back |
-| 0.3.29 published / promoted | **No / No** |
+| 0.3.30 published / promoted | **No / No** |
 
 Packaging test files now run serially to avoid measured PowerShell startup contention in the
 full local suite. Each wrapper test keeps its internal concurrency assertions and deadlines.
@@ -39,9 +39,10 @@ The previous full Browser quality run failed on that contention; final committed
 quality must be refreshed before the candidate can advance.
 
 Relay packaging normalizes delivered Windows script line endings to CRLF while preserving the
-PowerShell BOM. The candidate pins Relay v21 archive `45f6e669...8d3ed0`, which carries local-only
-operator-key self-enrollment. Relay v20 `c66a3935...5526b` remains historical evidence. Final
-source-bound rebuild, immutable publication, and Browser acceptance remain required.
+PowerShell BOM. The candidate pins Relay v22 archive `43a49411...b494c`, which carries local-only
+operator-key self-enrollment plus bootstrap and account-ticket hardening. Relay v21
+`45f6e669...8d3ed0` remains historical evidence. Final source binding and Browser acceptance remain
+required.
 
 Rollout remains NO-GO until the replacement bytes and production approval binding are complete.
 The new tuple lets an allowlisted operator register their own PC and paste the team operator key
@@ -52,7 +53,7 @@ checkpoint evidence is tracked in the workspace
 The independently built 0.3.28 payloads matched, but that candidate was rejected before
 publication because it omitted the fork MIT license from the installed payload and retained
 Electron's GitHub copyright in the PE metadata. Those bytes are negative evidence and must not be
-published. No 0.3.29 installer has been accepted or published. The Windows package is
+published. No 0.3.30 installer has been accepted or published. The Windows package is
 still expected to be unsigned under the 12 August 2026 owner decision, so exact SmartScreen/UAC
 behavior must be re-observed on the retained candidate rather than inherited from 0.3.23.
 
@@ -438,6 +439,6 @@ history and attribution when syncing changes.
 
 The application source remains under the upstream MIT license; see [LICENSE](LICENSE). The MIT
 license for the application does not grant redistribution rights for a downloaded browser engine.
-The 0.3.29 packaging contract copies this license beside the executable and replaces inherited
+The 0.3.30 packaging contract copies this license beside the executable and replaces inherited
 Electron PE attribution with the fork identity. Exact packaged bytes must still prove both fields
 before distribution.

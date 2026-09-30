@@ -1,10 +1,10 @@
 {
-  "version": 21,
-  "sizeBytes": 35123253,
-  "sha256": "45f6e669da892f002c63c58ffe92d8f05a17229797833b0c763efd4e088d3ed0",
-  "executableSizeBytes": 94620672,
-  "executableSha256": "b04e45bc3d8e0218916a4a9c1da8c525d79e9bec30b5aea4571aa41d053448bd",
+  "version": 22,
+  "sizeBytes": 35123331,
+  "sha256": "43a494110cf9d3004b26079c521b8579ad97fdaaa3ed71deb5932d0d0e4b494c",
+  "executableSizeBytes": 94621184,
+  "executableSha256": "55cc1b51cd559e73fcead09a8dd38954ab787f1ef8035d3b31524cc6bf40d78d",
   "minimumProfileActionRelayVersion": 20,
   "promotionStatus": "eligible",
-  "url": "https://mkttool-web-production.up.railway.app/api/relay/download/v21"
+  "url": "https://mkttool-web-production.up.railway.app/api/relay/download/v22"
 }

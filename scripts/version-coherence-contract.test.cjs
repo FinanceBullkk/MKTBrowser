@@ -89,9 +89,9 @@ test("keeps the Windows candidate version and pinned Relay coherent", () => {
   // phép kiểm này thành phép tự soi gương: nâng `package.json` một mình là đủ để nó xanh, trong
   // khi thứ nó canh chính là "không ai được nâng phiên bản ở đúng một chỗ". Nâng bộ tuple nghĩa
   // là sửa hai dòng ngay dưới đây, chạy lại, rồi để từng assert chỉ ra chỗ nào chưa theo kịp.
-  const expectedVersion = "0.3.29";
-  const expectedRelayVersion = "21";
-  const expectedCandidateId = "20260929-browser-0.3.29-relay-21-self-service-onboarding-cft";
+  const expectedVersion = "0.3.30";
+  const expectedRelayVersion = "22";
+  const expectedCandidateId = "20260930-browser-0.3.30-relay-22-self-service-onboarding-cft";
 
   // Mỏ neo phải tự nhất quán trước khi có tư cách phán xử chỗ khác.
   assert.ok(
@@ -102,8 +102,8 @@ test("keeps the Windows candidate version and pinned Relay coherent", () => {
   assert.equal(root.version, expectedVersion, "root package version drifted");
   assert.equal(desktop.version, expectedVersion, "desktop package version drifted");
   assert.equal(String(relay.version), expectedRelayVersion, "the candidate Relay version drifted");
-  assert.equal(relay.sizeBytes, 35123253);
-  assert.equal(relay.sha256, "45f6e669da892f002c63c58ffe92d8f05a17229797833b0c763efd4e088d3ed0");
+  assert.equal(relay.sizeBytes, 35123331);
+  assert.equal(relay.sha256, "43a494110cf9d3004b26079c521b8579ad97fdaaa3ed71deb5932d0d0e4b494c");
   assert.match(relay.url, new RegExp(`/api/relay/download/v${expectedRelayVersion}$`));
 
   const proxyGeo = readFileSync(path.join(repoRoot, "apps/desktop/src/main/proxyGeo.ts"), "utf8");

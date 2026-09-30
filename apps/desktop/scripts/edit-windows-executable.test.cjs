@@ -8,9 +8,9 @@ const {
 } = require("./edit-windows-executable.cjs");
 
 test("replaces inherited Electron version metadata with the fork identity", () => {
-  assert.deepEqual(windowsVersionInfo("0.3.29"), {
-    "file-version": "0.3.29",
-    "product-version": "0.3.29",
+  assert.deepEqual(windowsVersionInfo("0.3.30"), {
+    "file-version": "0.3.30",
+    "product-version": "0.3.30",
     "version-string": {
       CompanyName: "MKTTool",
       FileDescription: "MKT Browser",
