@@ -19,33 +19,36 @@ place.
 | | |
 |---|---|
 | Current source candidate | `20260930-browser-0.3.30-relay-22-self-service-onboarding-cft`; Browser `0.3.30`, control contract `6`, profile schema `3` |
-| Current source | Self-service onboarding, first-party license/PE attribution, and archive/runtime-download hardening; final committed-source validation in progress |
+| Current source | `52325793fc564ffcfffe7bfb10c8139363eb56b2` on `main`; self-service onboarding, first-party license/PE attribution, and archive/runtime-download hardening |
 | Source behavior | verified sequential admission, SDK shutdown and explicit capacity refresh |
 | Pinned Relay | v22 archive `43a49411...b494c`; two local builds matched, packaged smoke passed, and immutable R2 bytes were full-read verified |
-| Pinned engine | CFT `152.0.7977.64` (`b0db25de…8004`), exact archive published in sequences 24 and 25 |
+| Pinned engine | CFT `152.0.7977.64` (`b0db25de…8004`), exact archive published in prior sequences 24/25 and candidate sequence 33 |
 | Packaged Cloak lifecycle | **PASS** — R27 completed `P1 -> P2 -> P1 -> P2`, 4/4 usable launches in 3.647-3.929 s with clean seat return |
 | Native fingerprint gate | **FAIL** — R28 completed 10/10 launches; criteria A/B/C all failed, so identity and real-account-safety claims remain prohibited |
-| Candidate status | **OPEN** — two isolated 0.3.30 Browser builds and exact second-PC onboarding acceptance are not complete |
-| Local gate | Relay v22 packaged smoke passes; final source binding, Browser quality, TLS, and installer gates remain required |
+| Candidate status | **HOLD** — retained 0.3.30 Build A is published only at an immutable candidate key; signed v22 compatibility sequence 33 is published and read back; neither is operator-promoted |
+| Local gate | Browser source/quality, two-build normalized payload comparison (130/130), Relay v22 packaging, and exact-source binding pass at their measured scopes |
+| Retained 0.3.30 installer | 148,993,705 bytes; SHA-256 `2144a3c2472a7ac746561200cd7d172f2937e00f1207491a0dabc86c0615c34f` |
 | Prior two-build equivalence | PASS for 0.3.23 — 129 files; `app.asar` byte-identical (51,770,195 bytes) |
 | Prior clean-VM lifecycle | PASS (scope-limited) for exact 0.3.23 — clean `9/9`, repair `13/13`, uninstall `15/15` |
-| Clean-VM CFT activation | **OPEN** — signed first-run provisioning and real engine execution are not yet accepted |
+| 0.3.30 clean-VM lifecycle | **PASS** — exact Build A clean install 9/9, installed-state repair 13/13, and terminal uninstall rerun 15/15 on the MSI-hosted snapshot clone; preceding harness/Defender-check FAIL receipts remain recorded |
+| Clean-VM CFT activation | **OPEN** — signed provisioning and real engine execution were not attempted; the VM clock drifted roughly 30-40 seconds under VirtualBox NEM |
 | Prior compatibility publication | PASS for 0.3.23 — sequences 23/24/25 immutable objects read back |
-| 0.3.30 published / promoted | **No / No** |
+| 0.3.30 candidate published / operator-promoted | **Yes / No** — production's approved download remains Browser 0.3.29 / Relay v21 |
 
-Packaging test files now run serially to avoid measured PowerShell startup contention in the
+Packaging test files run serially to avoid measured PowerShell startup contention in the
 full local suite. Each wrapper test keeps its internal concurrency assertions and deadlines.
-The previous full Browser quality run failed on that contention; final committed-source local
-quality must be refreshed before the candidate can advance.
+The earlier contention failure remains historical; the committed 0.3.30 source quality gate
+passed before Build A was frozen.
 
 Relay packaging normalizes delivered Windows script line endings to CRLF while preserving the
 PowerShell BOM. The candidate pins Relay v22 archive `43a49411...b494c`, which carries local-only
 operator-key self-enrollment plus bootstrap and account-ticket hardening. Relay v21
-`45f6e669...8d3ed0` remains historical evidence. Final source binding and Browser acceptance remain
-required.
+`45f6e669...8d3ed0` remains historical evidence. Source binding passed; real Browser
+activation and operator acceptance remain open.
 
-Rollout remains NO-GO until the replacement bytes and production approval binding are complete.
-The new tuple lets an allowlisted operator register their own PC and paste the team operator key
+Rollout remains NO-GO until signed CFT activation, managed profile/proxy recovery,
+non-admin onboarding, physical second-PC acceptance, and the elapsed canary pass.
+The new tuple lets an allowlisted operator register their own PC and paste their own operator key
 only into local Relay; MKTTool Web receives a domain-separated fingerprint, never the key. Current
 checkpoint evidence is tracked in the workspace
 [self-service onboarding plan](../plans/260928-2219-full-team-self-service-onboarding/plan.md).
@@ -53,12 +56,13 @@ checkpoint evidence is tracked in the workspace
 The independently built 0.3.28 payloads matched, but that candidate was rejected before
 publication because it omitted the fork MIT license from the installed payload and retained
 Electron's GitHub copyright in the PE metadata. Those bytes are negative evidence and must not be
-published. No 0.3.30 installer has been accepted or published. The Windows package is
+published. The 0.3.30 installer is published for candidate testing only. The Windows package is
 still expected to be unsigned under the 12 August 2026 owner decision, so exact SmartScreen/UAC
-behavior must be re-observed on the retained candidate rather than inherited from 0.3.23.
+behavior and unfamiliar-operator reactions remain open on the retained candidate.
 
-Current evidence of record lives in the workspace fast-switch and local-VM release plans, not in
-this file. The 0.3.23 report remains historical evidence only.
+Current evidence of record is the workspace
+[MSI team-readiness report](../plans/reports/audit-261002-2008-msi-team-readiness.md).
+The 0.3.23 report remains historical evidence only.
 
 ## Fast sequential profile reuse live checkpoint - 22 September 2026
 
