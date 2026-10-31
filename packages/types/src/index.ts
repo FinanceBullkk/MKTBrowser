@@ -109,9 +109,10 @@ export type MktBrowserErrorCode = (typeof MKT_BROWSER_ERROR_CODES)[number];
 
 /**
  * Mirrors `BrowserEngine` in `@mktbrowser/settings-store`, restated here because `types` must not
- * depend on a package that depends on it. Adding a family is a deliberate contract change.
+ * depend on a package that depends on it. Adding or removing a family is a deliberate contract
+ * change. `unknown` covers standalone runs where no engine has been configured yet.
  */
-export type MktBrowserEngineKind = "cft" | "cloakbrowser" | "unknown";
+export type MktBrowserEngineKind = "cloakbrowser" | "unknown";
 
 export interface MktBrowserEngineInfo {
   /** Which engine family this device is configured to run. */
@@ -452,7 +453,7 @@ export type ChromiumStatus =
   | { kind: "fetching-manifest" }
   | {
       kind: "downloading";
-      engine: "cft" | "cloakbrowser";
+      engine: "cloakbrowser";
       bytesReceived: number;
       bytesTotal: number;
       version: string;
@@ -462,7 +463,7 @@ export type ChromiumStatus =
     }
   | { kind: "verifying"; version: string }
   | { kind: "extracting"; version: string }
-  | { kind: "error"; engine: "cft" | "cloakbrowser"; message: string }
+  | { kind: "error"; engine: "cloakbrowser"; message: string }
   | { kind: "dev-system"; binaryPath: string };
 
 export interface ChromiumManifest {

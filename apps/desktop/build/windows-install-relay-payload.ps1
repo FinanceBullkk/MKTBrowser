@@ -23,9 +23,9 @@ if (-not ($staging + "\").StartsWith($tempRoot, [StringComparison]::OrdinalIgnor
 
   Every earlier link in this chain is hash-pinned: `fetch-pinned-relay.cjs` checks the download,
   `verify-relay-executable-pin.cjs` hashes MKTTool-Relay.exe inside the archive without extracting
-  it, `package-windows.cjs` re-hashes the staged copy, and `release-candidate-contract.cjs` hashes
-  the archive again inside the packaged tree. This script is the last link and the only one that
-  runs on the operator's machine, and it used to trust whatever bytes sat at $ArchivePath.
+  it, and `package-windows.cjs` re-hashes the staged copy. This script is the last link and the
+  only one that runs on the operator's machine, and it used to trust whatever bytes sat at
+  $ArchivePath.
 
   The install directory is per-user and ordinarily writable, so anything running as that user could
   swap the archive and have `& install-relay.ps1` below execute its replacement. That is not a

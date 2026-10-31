@@ -73,7 +73,7 @@ async function describeFile(filePath) {
 function readEngineRelease(filePath) {
   const value = JSON.parse(readFileSync(filePath, "utf8"));
   const identityIsSound =
-    (value.engineKind === "cft" || value.engineKind === "cloakbrowser") &&
+    value.engineKind === "cloakbrowser" &&
     typeof value.version === "string" &&
     value.version &&
     Number.isSafeInteger(value.sizeBytes) &&

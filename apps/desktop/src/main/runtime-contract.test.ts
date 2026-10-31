@@ -162,26 +162,26 @@ test("reports an engine version only when one is actually installed", () => {
   // A stage that knows its target version still reports it, so a caller can distinguish "preparing
   // the approved version" from "preparing something unexpected".
   assert.deepEqual(
-    describeEngineStatus("cft", {
+    describeEngineStatus("cloakbrowser", {
       kind: "downloading",
       bytesReceived: 1,
       bytesTotal: 2,
-      version: "148.0.0.0",
-      engine: "cft",
+      version: "151.0.7922.108.2",
+      engine: "cloakbrowser",
       attempt: 1,
       maxAttempts: 5,
       resuming: false,
     }),
-    { kind: "cft", version: "148.0.0.0", status: "downloading" },
+    { kind: "cloakbrowser", version: "151.0.7922.108.2", status: "downloading" },
   );
 
   for (const status of [
     { kind: "missing" } as const,
     { kind: "fetching-manifest" } as const,
-    { kind: "error", engine: "cft", message: "checksum mismatch" } as const,
+    { kind: "error", engine: "cloakbrowser", message: "checksum mismatch" } as const,
     { kind: "dev-system", binaryPath: "C:/chrome.exe" } as const,
   ]) {
-    const described = describeEngineStatus("cft", status);
+    const described = describeEngineStatus("cloakbrowser", status);
     assert.equal(described.version, null, status.kind);
     assert.equal(described.status, status.kind);
   }
@@ -318,247 +318,6 @@ test("lets Chromium assign the DevTools port instead of consuming fixed ports", 
   assert.doesNotMatch(processDiscovery, /LocalAddress -in @\('127\.0\.0\.1','0\.0\.0\.0'\)/);
 });
 
-test("builds one hashed package and verifies that artifact in a fresh CI job", () => {
-  const workflow = source(".github/workflows/windows-pipeline.yml");
-
-  assert.match(workflow, /quality:/);
-  assert.match(workflow, /package:\s*\n\s+needs: quality/);
-  assert.match(workflow, /packaged-contract:\s*\n\s+needs: package/);
-  assert.match(workflow, /actions\/upload-artifact@v6/);
-  assert.match(workflow, /actions\/download-artifact@v7/);
-  assert.match(workflow, /Get-FileHash[^\n]+SHA256/);
-  assert.match(workflow, /verify-packaged-runtime-contract\.cjs --repeat/);
-
-  // Repeated stability runs are dispatched by hand, so the iteration count is an input. It must
-  // reach the verifier through the environment; interpolating it into the command line would let
-  // a dispatch input become shell syntax on the runner.
-  assert.match(workflow, /MKT_CONTRACT_ITERATIONS: \$\{\{.*inputs\.contract_iterations/);
-  assert.match(workflow, /--repeat "\$env:MKT_CONTRACT_ITERATIONS"/);
-
-  // A stability streak is a claim about one engine, and the verifier links whichever Chrome the
-  // runner image ships. The declared version travels with the dispatch so drift fails the run.
-  assert.ok(
-    workflow.includes("MKT_BROWSER_EXPECTED_ENGINE_VERSION: ${{ inputs.expected_engine_version }}"),
-    "the stability dispatch must declare the engine version it expects",
-  );
-});
-
-test("prepares a pinned verifier engine on Windows jobs", () => {
-  const workflow = source(".github/workflows/windows-pipeline.yml");
-  const release = source(".github/workflows/release-candidate.yml");
-  const fixture = source("scripts/system-chrome-engine-fixture.cjs");
-  const preparation = source(".github/scripts/prepare-windows-packaged-verifier.ps1");
-
-  assert.match(
-    workflow,
-    /Prepare pinned packaged verifier engine[\s\S]+prepare-windows-packaged-verifier\.ps1/,
-  );
-  assert.match(preparation, /chromeVersion = "152\.0\.7977\.64"/);
-  assert.match(
-    preparation,
-    /chromeSha256 = "b0db25dea445822429d8ebd36d53344cadcd63127308759456964029bbe18004"/,
-  );
-  assert.match(
-    preparation,
-    /chromeExecutableSha256 = "79832d1e60cbad9323c07339f9608bc0ce93cb9242b9b5481c04a0c536720980"/,
-  );
-  assert.ok(
-    preparation.indexOf("Get-FileHash") < preparation.indexOf("Expand-Archive"),
-    "the verifier must authenticate the archive before extraction",
-  );
-  assert.match(
-    preparation,
-    /extracted = Join-Path \$env:RUNNER_TEMP [^\n]+[\s\S]+Remove-Item[^\n]+\$extracted[\s\S]+Expand-Archive/,
-  );
-  assert.match(preparation, /MKT_BROWSER_SYSTEM_CHROME=\$executable/);
-  assert.match(fixture, /process\.env\.MKT_BROWSER_SYSTEM_CHROME/);
-  assert.ok(
-    release.indexOf("Prepare pinned packaged verifier engine") <
-      release.indexOf("Verify the runtime contract against the installed application"),
-    "the installed-contract job must prepare its engine before running the verifier",
-  );
-});
-
-test("keeps optional hosted diagnostics manual and refuses skipped pipeline evidence", () => {
-  const gate = source(".github/workflows/pr-release-gate.yml");
-  const push = source(".github/workflows/release.yml");
-  const pipeline = source(".github/workflows/windows-pipeline.yml");
-
-  assert.ok(
-    gate.includes("mktbrowser-pr-release-gate:"),
-    "the required status check must exist under a stable name",
-  );
-  for (const workflow of [gate, push]) {
-    assert.ok(workflow.includes("  workflow_dispatch:"), "hosted diagnostics require explicit dispatch");
-    assert.doesNotMatch(workflow, /^ {2}(?:push|pull_request|schedule):/m);
-  }
-  assert.match(source("scripts/local-release-quality-contract.cjs"), /test:critical-coverage/);
-  assert.match(source("scripts/local-release-quality.cjs"), /releaseReady: false/);
-
-  // Measured on 22 August, after the first attempt at this gate shipped. An `if:` condition stops a
-  // job from running but not from publishing a check run under its name, and GitHub counts a
-  // skipped required check as satisfied. The push workflow therefore reported
-  // `mktbrowser-pr-release-gate: skipped` on the same head commit as the real result, which would
-  // have let a failing pipeline merge. The name must not exist outside the pull-request workflow.
-  assert.ok(
-    !push.includes("mktbrowser-pr-release-gate"),
-    "the push workflow must never publish a check under the required name, not even skipped",
-  );
-  assert.ok(
-    !pipeline.includes("mktbrowser-pr-release-gate"),
-    "the reusable pipeline must not publish a check under the required name",
-  );
-  assert.ok(
-    !push.includes("pull_request"),
-    "the push workflow must not run on pull_request, or it would republish pipeline check names",
-  );
-
-  // The gate must run even when the pipeline fails, and must inspect the result rather than merely
-  // depending on it. A gate skipped alongside a failing pipeline reports satisfied.
-  assert.ok(gate.includes("if: always()"), "the gate must run even when the pipeline fails");
-  assert.ok(gate.includes("needs: [windows]"));
-  assert.ok(gate.includes("PIPELINE: ${{ needs.windows.result }}"));
-  assert.ok(
-    gate.includes('if [ "$PIPELINE" != "success" ]; then'),
-    "the gate must fail unless the pipeline reported success",
-  );
-
-  // The coverage floor only exists if the required pipeline runs it. A contract that lives in a
-  // script nobody invokes is the same shape of mistake as a check that never ran on the artifact.
-  assert.match(
-    pipeline,
-    /- name: Critical coverage contract[\s\S]*?shell: pwsh[\s\S]*?yarn test:critical-coverage/,
-    "the required pipeline must run the critical coverage contract through its pinned Windows shell",
-  );
-
-  // Phase 4 builds exactly one installer, from a frozen tree, in one place. With an unsigned release
-  // two installers are indistinguishable by inspection, so a second way to produce one is not a
-  // convenience but a way to lose track of which file is the release.
-  const surfaces: Array<{ name: string; contents: string }> = [
-    { name: "the reusable pipeline", contents: pipeline },
-    { name: "the push workflow", contents: push },
-    { name: "the gate workflow", contents: gate },
-  ];
-  for (const surface of surfaces) {
-    assert.ok(
-      !surface.contents.includes("build:win"),
-      `${surface.name} must not build an installer`,
-    );
-  }
-});
-
-test("builds the release candidate once, from a named commit, and never rebuilds it", () => {
-  const candidate = source(".github/workflows/release-candidate.yml");
-
-  // Manual only. A release that can start from a push starts from whatever the branch happened to
-  // be, and the artifact does not record which that was.
-  assert.ok(candidate.includes("on:\n  workflow_dispatch:"));
-  assert.ok(!candidate.includes("\n  push:"));
-  assert.ok(!candidate.includes("\n  pull_request:"));
-
-  // The operator names the commit being frozen and the run refuses a different one.
-  assert.ok(candidate.includes("confirm_commit:"));
-  assert.ok(candidate.includes('case "$GITHUB_SHA" in'));
-
-  // Two builds of one tree, compared on the payload rather than on the compressed installer.
-  assert.ok(candidate.includes("attempt: [a, b]"));
-  assert.ok(candidate.includes("normalized-payload-manifest.cjs --compare"));
-
-  // Only build A's installer is kept, and attestation consumes that uploaded file rather than
-  // building again. A rebuild between verification and attestation attests a different file.
-  assert.ok(candidate.includes("if: matrix.attempt == 'a'"));
-  assert.ok(candidate.includes("name: Download the verified candidate installer"));
-  assert.ok(candidate.includes("emit-release-provenance.cjs"));
-  const attestSection = candidate.slice(candidate.indexOf("  attest:"));
-  assert.ok(!attestSection.includes("build:win"), "attestation must not rebuild the installer");
-
-  // Provenance refuses to attest a dirty working tree, so nothing may be unpacked into the
-  // checkout. On 23 August the artifacts were downloaded into it, git reported untracked files, and
-  // the guard rejected a build that was in fact attestable. The guard was right; the download path
-  // was wrong, and a false alarm from a correct rule still teaches people to route around it.
-  // Only download destinations matter here. Upload steps name paths inside the checkout by
-  // definition, since that is where the build wrote them.
-  const downloadSections = candidate.split("uses: actions/download-artifact@").slice(1);
-  assert.ok(downloadSections.length >= 2, "the attest and compare jobs both download artifacts");
-  for (const section of downloadSections) {
-    const destination = section.match(/^\s+path: (\S.*)$/m)?.[1];
-    assert.ok(destination, "every artifact download must name where it lands");
-    assert.ok(
-      destination.startsWith("${{ runner.temp }}"),
-      `artifact downloads must land outside the checkout, found ${destination}`,
-    );
-  }
-});
-
-test("accounts for every setup-node cache and permits only the exact Node 24 Relay npm cache", () => {
-  // The action probes for a cache using its bundled Yarn 1, which refuses to run against a project
-  // pinned to yarn@4.5.0 through `packageManager`. On 23 August this took down the comparison and
-  // attestation jobs of the first real release-candidate run, before either had done any work, and
-  // the run read as a reproducibility failure when nothing had been compared at all.
-  const releaseCandidateWorkflow = ".github/workflows/release-candidate.yml";
-  const workflows = [
-    ".github/workflows/windows-pipeline.yml",
-    releaseCandidateWorkflow,
-    ".github/workflows/release.yml",
-    ".github/workflows/pr-release-gate.yml",
-  ];
-  for (const workflow of workflows) {
-    const contents = source(workflow);
-    const setupSteps = contents
-      .split(/(?=^ {6}- name:)/m)
-      .filter((step) => step.includes("uses: actions/setup-node@"));
-    const npmCacheSteps = setupSteps.filter((step) => /^[ \t]+cache:[ \t]*npm[ \t]*\r?$/m.test(step));
-    const explicitNpmCaches = contents.match(/^[ \t]+cache:[ \t]*npm[ \t]*\r?$/gm) ?? [];
-
-    assert.equal(
-      explicitNpmCaches.length,
-      npmCacheSteps.length,
-      `${workflow} may use npm caching only in a setup-node step`,
-    );
-    assert.equal(
-      npmCacheSteps.length,
-      workflow === releaseCandidateWorkflow ? 1 : 0,
-      `${workflow} may not add an unreviewed setup-node npm cache`,
-    );
-    for (const step of setupSteps) {
-      const disabled = /^[ \t]+package-manager-cache:[ \t]*false[ \t]*\r?$/m.test(step);
-      const npmCache = /^[ \t]+cache:[ \t]*npm[ \t]*\r?$/m.test(step);
-      assert.notEqual(disabled, npmCache, "each setup-node step must select exactly one cache mode");
-      assert.ok(disabled || npmCache, "every setup-node step must disable caching or use the reviewed npm cache");
-    }
-  }
-
-  const releaseCandidate = source(releaseCandidateWorkflow);
-  const node24CacheAt = releaseCandidate.indexOf("- name: Setup Node.js 24 for the exact Relay candidate");
-  const relayBuildAt = releaseCandidate.indexOf("- name: Build and verify the exact Relay candidate archive");
-  assert.ok(node24CacheAt >= 0 && node24CacheAt < relayBuildAt, "the Node 24 cache must precede the Relay build");
-  const node24CacheStep = releaseCandidate.slice(node24CacheAt, relayBuildAt);
-  assert.match(node24CacheStep, /node-version: 24\.21\.0/);
-  assert.match(node24CacheStep, /^[ \t]+cache:[ \t]*npm[ \t]*\r?$/m);
-  assert.match(
-    node24CacheStep,
-    /cache-dependency-path: \$\{\{ steps\.mkttool_location\.outputs\.root \}\}\/package-lock\.json/,
-  );
-  const relayBuildStep = releaseCandidate.slice(
-    relayBuildAt,
-    releaseCandidate.indexOf("\n      - name:", relayBuildAt + 1),
-  );
-  assert.match(relayBuildStep, /working-directory: \$\{\{ steps\.mkttool_location\.outputs\.root \}\}/);
-  assert.match(
-    relayBuildStep,
-    /\$nodeExecutable = "\$\{\{ steps\.relay_build_toolchain\.outputs\.node_executable \}\}"/,
-  );
-  assert.match(
-    relayBuildStep,
-    /\$npmCli = "\$\{\{ steps\.relay_build_toolchain\.outputs\.npm_cli \}\}"/,
-  );
-  assert.match(relayBuildStep, /& \$nodeExecutable \$npmCli ci/);
-  assert.match(
-    relayBuildStep,
-    /emit-relay-build-toolchain-receipt\.cjs[\s\S]*--node \$nodeExecutable[\s\S]*--package-lock "\$env:MKTTOOL_ROOT\/package-lock\.json"[\s\S]*--verify "\$env:RUNNER_TEMP\/relay-build-toolchain-\$\{\{ matrix\.attempt \}\}\.json"/,
-  );
-});
-
 test("keeps browser ownership until failed launches and shutdown sweeps finish", () => {
   const driver = source("apps/desktop/src/main/ChromiumBrowserDriver.ts");
 
@@ -632,9 +391,9 @@ test("reports a licence refusal as a refusal, not as a crash", () => {
 test("uses the SDK only for enabled Windows Cloak and retains fallback orphan recovery", () => {
   const driver = source("apps/desktop/src/main/ChromiumBrowserDriver.ts");
   const policy = source("apps/desktop/src/main/license-lifecycle-policy.ts");
-  assert.match(driver, /shouldUseCloakBrowserSdkLifecycle\(engine, this\.fastLicenseReuse\)/);
-  assert.match(driver, /detached: shouldDetachBrowserProcess\(engine, this\.fastLicenseReuse\)/);
-  assert.match(policy, /engine === "cloakbrowser" && fastReuseEnabled && platform === "win32"/);
+  assert.match(driver, /shouldUseCloakBrowserSdkLifecycle\(this\.fastLicenseReuse\)/);
+  assert.match(driver, /detached: shouldDetachBrowserProcess\(this\.fastLicenseReuse\)/);
+  assert.match(policy, /fastReuseEnabled && platform === "win32"/);
 
   // Detached fallback modes still depend on the orphan sweep for conservative recovery.
   const index = source("apps/desktop/src/main/index.ts");
@@ -647,52 +406,6 @@ test("ships the exact SDK runtime dependencies in packaged builds", () => {
   const builder = source("apps/desktop/electron-builder.yml");
   assert.match(builder, /cloakbrowser: "0\.5\.10"/);
   assert.match(builder, /playwright-core: "1\.62\.0"/);
-});
-
-test("routes every GitHub Actions job through a GitHub-hosted runner", () => {
-  // The pipeline left the self-hosted `mktbrowser` pool on 1 September 2026. A hosted runner hands
-  // every job a fresh VM that is discarded afterwards, which is what the clean-machine gates
-  // actually need, and it removes the persistent-runner failure that skipped the package jobs when
-  // a PowerShell shell lost the action-managed PATH.
-  //
-  // This reads runner routing rather than whole-file text: `self-hosted` still appears in
-  // windows-pipeline.yml as a fallback image label, and that is not a routing target.
-  const workflowPaths = [
-    ".github/workflows/pr-release-gate.yml",
-    ".github/workflows/release-candidate.yml",
-    ".github/workflows/release.yml",
-    ".github/workflows/windows-pipeline.yml",
-  ];
-  let runsOnCount = 0;
-
-  for (const workflowPath of workflowPaths) {
-    const workflow = source(workflowPath);
-
-    for (const match of workflow.matchAll(/^\s*runs-on:\s*(.+)$/gm)) {
-      runsOnCount += 1;
-      assert.match(
-        match[1]!.trim(),
-        /^(?:ubuntu|windows)-latest$/,
-        `${workflowPath} routes a job somewhere other than a GitHub-hosted runner`,
-      );
-    }
-  }
-
-  assert.equal(runsOnCount, 9);
-  const windowsPipeline = source(".github/workflows/windows-pipeline.yml");
-  assert.equal(windowsPipeline.match(/runs-on: windows-latest/g)?.length, 3);
-});
-
-test("does not send automatic fork events to jobs that carry repository secrets", () => {
-  const gate = source(".github/workflows/pr-release-gate.yml");
-  const push = source(".github/workflows/release.yml");
-
-  assert.match(
-    gate,
-    /windows:[\s\S]+if: github\.event_name == 'workflow_dispatch'[\s\S]+uses: \.\/\.github\/workflows\/windows-pipeline\.yml/,
-  );
-  assert.equal(gate.includes("secrets: inherit"), false);
-  assert.equal(push.includes("secrets: inherit"), false);
 });
 
 test("successful archive import reports that restored extensions are disabled", () => {

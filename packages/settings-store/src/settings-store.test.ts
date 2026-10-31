@@ -20,11 +20,11 @@ test("an interrupted temporary write preserves the previous settings file", asyn
     syncBuiltinESMExports();
     try {
       await assert.rejects(
-        store.update({ browserEngine: "cloakbrowser" }),
+        store.update({ startupOrphanSweep: false }),
         /simulated disk failure/,
       );
       assert.equal(await readFile(path, "utf8"), original);
-      assert.equal((await store.load()).browserEngine, "cft");
+      assert.equal((await store.load()).mcpHttpEnabled, false);
     } finally {
       context.mock.restoreAll();
       syncBuiltinESMExports();
@@ -39,12 +39,12 @@ test("concurrent setting changes preserve both patches in memory and on disk", a
     const store = new SettingsStore(path);
     await Promise.all([
       store.update({ mcpHttpEnabled: false }),
-      store.update({ browserEngine: "cloakbrowser" }),
+      store.update({ cloakBrowserLicenseKey: "cb_concurrent" }),
       store.update({ startupOrphanSweep: false }),
     ]);
     for (const value of [await store.load(), await new SettingsStore(path).load()]) {
       assert.equal(value.mcpHttpEnabled, false);
-      assert.equal(value.browserEngine, "cloakbrowser");
+      assert.equal(value.cloakBrowserLicenseKey, "cb_concurrent");
       assert.equal(value.startupOrphanSweep, false);
     }
   });
@@ -59,8 +59,8 @@ test("failed atomic replacement leaves cache unchanged, removes its temp file an
     const original = await readFile(path, "utf8");
     await rename(path, join(root, "original.json"));
     await mkdir(path);
-    await assert.rejects(store.update({ browserEngine: "cloakbrowser" }));
-    assert.equal((await store.load()).browserEngine, "cft");
+    await assert.rejects(store.update({ startupOrphanSweep: false }));
+    assert.equal((await store.load()).mcpHttpEnabled, false);
     assert.deepEqual((await readdir(root)).sort(), ["original.json", "settings.json"]);
     assert.equal(await readFile(join(root, "original.json"), "utf8"), original);
     await rm(path, { recursive: true });
@@ -69,7 +69,6 @@ test("failed atomic replacement leaves cache unchanged, removes its temp file an
     const loaded = await new SettingsStore(path).load();
     assert.equal(loaded.mcpHttpEnabled, false);
     assert.equal(loaded.startupOrphanSweep, false);
-    assert.equal(loaded.browserEngine, "cft");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -79,8 +78,8 @@ test("does not publish settings to memory when persistence fails", async () => {
   const root = await mkdtemp(join(tmpdir(), "mkt-browser-settings-store-"));
   try {
     const store = new SettingsStore(root);
-    await assert.rejects(store.update({ browserEngine: "cloakbrowser" }));
-    assert.equal((await store.load()).browserEngine, "cft");
+    await assert.rejects(store.update({ startupOrphanSweep: false }));
+    assert.equal((await store.load()).mcpHttpEnabled, true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -100,34 +99,43 @@ async function withSettingsFile(fn: (path: string) => Promise<void>): Promise<vo
   }
 }
 
-test("fresh installations use the unlicensed compatibility engine", async () => {
+test("fresh installations default to the only engine", async () => {
   await withSettingsFile(async (path) => {
     const loaded = await new SettingsStore(path).load();
-    assert.equal(loaded.browserEngine, "cft");
+    assert.equal(loaded.browserEngine, "cloakbrowser");
     assert.equal(loaded.cloakBrowserLicenseKey, "");
     assert.deepEqual(loaded.cloakBrowserLicenseKeys, []);
   });
 });
 
-for (const browserEngine of ["cft", "cloakbrowser"] as const) {
-  test(`preserves an explicit saved ${browserEngine} selection without rewriting settings`, async () => {
-    await withSettingsFile(async (path) => {
-      const original = JSON.stringify({ browserEngine, startupOrphanSweep: false });
-      await writeFile(path, original, "utf8");
-      const loaded = await new SettingsStore(path).load();
-      assert.equal(loaded.browserEngine, browserEngine);
-      assert.equal(loaded.startupOrphanSweep, false);
-      assert.equal(await readFile(path, "utf8"), original);
-    });
+test("preserves an explicit saved cloakbrowser selection without rewriting settings", async () => {
+  await withSettingsFile(async (path) => {
+    const original = JSON.stringify({ browserEngine: "cloakbrowser", startupOrphanSweep: false });
+    await writeFile(path, original, "utf8");
+    const loaded = await new SettingsStore(path).load();
+    assert.equal(loaded.browserEngine, "cloakbrowser");
+    assert.equal(loaded.startupOrphanSweep, false);
+    assert.equal(await readFile(path, "utf8"), original);
   });
-}
+});
 
-test("missing or unsupported saved engine falls back to CFT without rewriting settings", async () => {
+test("a stored cft selection from an older build loads as cloakbrowser without crashing or rewriting", async () => {
+  await withSettingsFile(async (path) => {
+    const original = JSON.stringify({ browserEngine: "cft", startupOrphanSweep: false });
+    await writeFile(path, original, "utf8");
+    const loaded = await new SettingsStore(path).load();
+    assert.equal(loaded.browserEngine, "cloakbrowser");
+    assert.equal(loaded.startupOrphanSweep, false);
+    assert.equal(await readFile(path, "utf8"), original);
+  });
+});
+
+test("missing or unsupported saved engine falls back to cloakbrowser without rewriting settings", async () => {
   await withSettingsFile(async (path) => {
     for (const saved of [{}, { browserEngine: "unsupported" }]) {
       const original = JSON.stringify(saved);
       await writeFile(path, original, "utf8");
-      assert.equal((await new SettingsStore(path).load()).browserEngine, "cft");
+      assert.equal((await new SettingsStore(path).load()).browserEngine, "cloakbrowser");
       assert.equal(await readFile(path, "utf8"), original);
     }
   });

@@ -62,7 +62,7 @@ export interface SystemInfo {
   platform: NodeJS.Platform;
   compatibilityEnginePin: {
     sequence: number;
-    engineKind: "cft" | "cloakbrowser";
+    engineKind: "cloakbrowser";
     version: string;
   } | null;
 }
@@ -128,7 +128,6 @@ export function createMktBrowserApi(bridge: MktBrowserIpcBridge) {
     chromium: {
       status: (): Promise<ChromiumStatus> => bridge.invoke(IPC.CHROMIUM_STATUS),
       retry: (): Promise<ChromiumStatus> => bridge.invoke(IPC.CHROMIUM_RETRY),
-      switchToCft: (): Promise<ChromiumStatus> => bridge.invoke(IPC.CHROMIUM_SWITCH_TO_CFT),
       /** Pins the newest licensed build and converges on it. Rotates every
        *  profile's hardware identity — see the Settings copy. */
       activateLatest: (): Promise<ChromiumStatus> => bridge.invoke(IPC.CHROMIUM_ACTIVATE_LATEST),

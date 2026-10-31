@@ -1,31 +1,13 @@
-name: Windows Pipeline
+name: Windows Diagnostics
 
-# The Windows build, package, and packaged-contract verification, defined once and called by both
-# the push workflow and the pull-request gate workflow.
-#
-# It lives in its own file for a reason that is easy to get wrong. A job carrying the required check
-# name cannot simply be disabled on push with an `if:` condition, because GitHub still publishes a
-# check run for the skipped job, and a skipped required check counts as satisfied. A push would then
-# report the required name and a failing pipeline could merge. Keeping the gate in the pull-request
-# workflow means push never produces that name at all.
+# Optional hosted diagnostics for the internal Windows runtime. Release readiness is decided
+# locally per the workspace release gate; this pipeline only re-runs the local check chain on a
+# clean hosted runner so failures are visible outside the dev machine.
 
 on:
-  workflow_call:
-    inputs:
-      contract_iterations:
-        description: "Packaged runtime contract cold-launch iterations"
-        required: false
-        type: string
-        default: "5"
-      expected_engine_version:
-        description: "Packaged-verifier engine version to require"
-        required: false
-        type: string
-        default: ""
-    secrets:
-      MKTTOOL_DEPLOY_KEY:
-        description: "Optional read-only deploy key for the private MKTTool sibling repository"
-        required: false
+  workflow_dispatch:
+  push:
+    branches: [main]
 
 permissions:
   contents: read
@@ -33,31 +15,9 @@ permissions:
 jobs:
   quality:
     runs-on: windows-latest
-    env:
-      # Version coherence uses this explicit checkout first, then falls back to a local sibling for
-      # developer runs. Keeping the path in one environment variable avoids runner-layout drift.
-      MKTTOOL_ROOT: ${{ github.workspace }}/mkttool
     steps:
       - name: Checkout
         uses: actions/checkout@v5
-
-      - name: Checkout MKTTool sibling for cross-repository contracts
-        id: mkttool_checkout
-        uses: actions/checkout@v5
-        continue-on-error: true
-        with:
-          repository: Techieslab-app/MKTTool
-          # A read-only deploy key registered on MKTTool. The key belongs to that repository
-          # rather than to a person, so it needs no organisation approval and does not expire.
-          # The built-in GITHUB_TOKEN is scoped to this repository alone and can never read the
-          # sibling. With no key configured the checkout fails and the gate below records OPEN,
-          # which is the intended fail-closed behaviour.
-          ssh-key: ${{ secrets.MKTTOOL_DEPLOY_KEY }}
-          # Pin the ref explicitly rather than letting checkout ask the GitHub API for the
-          # default branch, which a deploy key has no way to resolve.
-          ref: master
-          path: mkttool
-          fetch-depth: 1
 
       - name: Setup Node.js 22
         uses: actions/setup-node@v5
@@ -69,20 +29,6 @@ jobs:
         id: node22
         shell: pwsh
         run: ./.github/scripts/prepare-windows-node22.ps1
-
-      - name: Record MKTTool checkout status
-        if: always()
-        shell: pwsh
-        env:
-          OUTCOME: ${{ steps.mkttool_checkout.outcome }}
-        run: |
-          $status = 'OPEN'
-          $reason = 'The MKTTool sibling checkout is unavailable for version coherence.'
-          if (($env:OUTCOME -eq 'success') -and (Test-Path "$env:MKTTOOL_ROOT/src/lib/setup/windows-installer-release.ts") -and (Test-Path "$env:MKTTOOL_ROOT/src/lib/setup/windows-installer-release-metadata.ts")) {
-            $status = 'PASS'
-            $reason = 'The explicit MKTTool sibling checkout is available.'
-          }
-          & "${{ steps.node22.outputs.node22_exe }}" scripts/ci-gate-status.cjs --gate mkttool-sibling-checkout --status $status --reason $reason --owner release-engineering --required
 
       - name: Enable Corepack
         shell: pwsh
@@ -106,15 +52,6 @@ jobs:
         shell: pwsh
         run: '& "${{ steps.node22.outputs.node22_exe }}" "${{ steps.node22.outputs.corepack22_entrypoint }}" yarn verify:node'
 
-      - name: Workspace quality contract
-        shell: pwsh
-        run: '& "${{ steps.node22.outputs.node22_exe }}" "${{ steps.node22.outputs.corepack22_entrypoint }}" yarn verify:workspace-quality'
-
-      - name: Relay pin and engine candidate contract
-        working-directory: .
-        shell: pwsh
-        run: '& "${{ steps.node22.outputs.node22_exe }}" scripts/ci-gate-status.cjs --gate relay-and-engine-candidate --reason "The pinned Relay archive and engine metadata are hash-bound to the candidate." --owner browser-release --required -- "${{ steps.node22.outputs.node22_exe }}" scripts/release-candidate-contract.cjs'
-
       - name: Lint
         shell: pwsh
         run: '& "${{ steps.node22.outputs.node22_exe }}" "${{ steps.node22.outputs.corepack22_entrypoint }}" yarn lint'
@@ -123,8 +60,6 @@ jobs:
         shell: pwsh
         run: '& "${{ steps.node22.outputs.node22_exe }}" "${{ steps.node22.outputs.corepack22_entrypoint }}" yarn test:installer'
 
-      # Critical-path coverage, not a whole-repository percentage. See
-      # scripts/critical-coverage-contract.cjs for which modules are protected and why.
       - name: Critical coverage contract
         shell: pwsh
         run: '& "${{ steps.node22.outputs.node22_exe }}" "${{ steps.node22.outputs.corepack22_entrypoint }}" yarn test:critical-coverage'
@@ -132,218 +67,3 @@ jobs:
       - name: Typecheck
         shell: pwsh
         run: '& "${{ steps.node22.outputs.node22_exe }}" "${{ steps.node22.outputs.corepack22_entrypoint }}" yarn typecheck'
-
-      - name: Record Windows quality job status
-        if: always()
-        shell: pwsh
-        env:
-          JOB_STATUS: ${{ job.status }}
-        run: |
-          $status = 'FAIL'
-          $reason = 'One or more Windows quality contracts failed.'
-          if ($env:JOB_STATUS -eq 'success') {
-            $status = 'PASS'
-            $reason = 'All Windows quality contracts passed.'
-          }
-          & "${{ steps.node22.outputs.node22_exe }}" scripts/ci-gate-status.cjs --gate windows-quality --status $status --reason $reason --owner browser-release --required
-
-  package:
-    needs: quality
-    runs-on: windows-latest
-    env:
-      MKTTOOL_ROOT: ${{ github.workspace }}/mkttool
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Checkout MKTTool sibling for packaging contracts
-        id: mkttool_checkout
-        uses: actions/checkout@v5
-        continue-on-error: true
-        with:
-          repository: Techieslab-app/MKTTool
-          ssh-key: ${{ secrets.MKTTOOL_DEPLOY_KEY }}
-          ref: master
-          path: mkttool
-          fetch-depth: 1
-
-      - name: Setup Node.js 22
-        uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          package-manager-cache: false
-
-      - name: Pin Node.js 22 executable
-        id: node22
-        shell: pwsh
-        run: ./.github/scripts/prepare-windows-node22.ps1
-
-      - name: Record MKTTool packaging checkout status
-        if: always()
-        shell: pwsh
-        env:
-          OUTCOME: ${{ steps.mkttool_checkout.outcome }}
-        run: |
-          $status = 'OPEN'
-          $reason = 'The MKTTool sibling checkout is unavailable for packaging version coherence.'
-          if (($env:OUTCOME -eq 'success') -and (Test-Path "$env:MKTTOOL_ROOT/src/lib/setup/windows-installer-release.ts") -and (Test-Path "$env:MKTTOOL_ROOT/src/lib/setup/windows-installer-release-metadata.ts")) {
-            $status = 'PASS'
-            $reason = 'The explicit MKTTool sibling checkout is available for packaging.'
-          }
-          & "${{ steps.node22.outputs.node22_exe }}" scripts/ci-gate-status.cjs --gate mkttool-packaging-checkout --status $status --reason $reason --owner release-engineering --required
-
-      - name: Enable Corepack
-        shell: pwsh
-        run: |
-          & "${{ steps.node22.outputs.node22_exe }}" "${{ steps.node22.outputs.corepack22_entrypoint }}" enable
-          & "${{ steps.node22.outputs.node22_exe }}" "${{ steps.node22.outputs.corepack22_entrypoint }}" prepare yarn@4.5.0 --activate
-
-      - name: Prepare Windows native dependencies
-        shell: pwsh
-        run: ./.github/scripts/prepare-windows-native-dependencies.ps1 -NodeExecutable "${{ steps.node22.outputs.node22_exe }}" -NodeSha256 "${{ steps.node22.outputs.node22_sha256 }}"
-
-      - name: Install dependencies
-        shell: pwsh
-        run: '& "${{ steps.node22.outputs.node22_exe }}" "${{ steps.node22.outputs.corepack22_entrypoint }}" yarn install --immutable'
-
-      - name: Build Windows directory package once
-        shell: pwsh
-        run: '& "${{ steps.node22.outputs.node22_exe }}" "${{ steps.node22.outputs.corepack22_entrypoint }}" yarn workspace @mktbrowser/desktop build'
-
-      - name: Archive and hash directory package
-        shell: pwsh
-        run: |
-          $artifactRoot = Join-Path $env:RUNNER_TEMP "mktbrowser-package"
-          New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
-          $archive = Join-Path $artifactRoot "mktbrowser-win-unpacked.zip"
-          Compress-Archive -Path "apps/desktop/release/win-unpacked/*" -DestinationPath $archive -CompressionLevel Optimal
-          $sha256 = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-          $manifest = [ordered]@{
-            sourceSha = $env:GITHUB_SHA
-            archive = "mktbrowser-win-unpacked.zip"
-            sha256 = $sha256
-            node = (& "${{ steps.node22.outputs.node22_exe }}" --version)
-            runnerImage = if ($env:ImageOS) { $env:ImageOS } else { "self-hosted-$env:RUNNER_OS" }
-            runnerImageVersion = if ($env:ImageVersion) { $env:ImageVersion } else { $env:RUNNER_ARCH }
-          }
-          $manifest | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $artifactRoot "artifact-manifest.json") -Encoding utf8NoBOM
-
-      - name: Upload exact directory package
-        uses: actions/upload-artifact@v6
-        with:
-          name: mktbrowser-win-unpacked
-          path: ${{ runner.temp }}/mktbrowser-package/*
-          if-no-files-found: error
-          retention-days: 7
-
-      - name: Record Windows package job status
-        if: always()
-        shell: pwsh
-        env:
-          JOB_STATUS: ${{ job.status }}
-        run: |
-          $status = 'FAIL'
-          $reason = 'The Windows directory package or artifact hash failed.'
-          if ($env:JOB_STATUS -eq 'success') {
-            $status = 'PASS'
-            $reason = 'The Windows directory package was built once and hash-bound.'
-          }
-          & "${{ steps.node22.outputs.node22_exe }}" scripts/ci-gate-status.cjs --gate windows-package --status $status --reason $reason --owner browser-release --required
-
-  packaged-contract:
-    needs: package
-    runs-on: windows-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Setup Node.js 22
-        uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          package-manager-cache: false
-
-      - name: Pin Node.js 22 executable
-        id: node22
-        shell: pwsh
-        run: ./.github/scripts/prepare-windows-node22.ps1
-
-      - name: Enable Corepack
-        shell: pwsh
-        run: |
-          & "${{ steps.node22.outputs.node22_exe }}" "${{ steps.node22.outputs.corepack22_entrypoint }}" enable
-          & "${{ steps.node22.outputs.node22_exe }}" "${{ steps.node22.outputs.corepack22_entrypoint }}" prepare yarn@4.5.0 --activate
-
-      - name: Prepare Windows native dependencies
-        shell: pwsh
-        run: ./.github/scripts/prepare-windows-native-dependencies.ps1 -NodeExecutable "${{ steps.node22.outputs.node22_exe }}" -NodeSha256 "${{ steps.node22.outputs.node22_sha256 }}"
-
-      - name: Install dependencies without rebuilding the package
-        shell: pwsh
-        run: '& "${{ steps.node22.outputs.node22_exe }}" "${{ steps.node22.outputs.corepack22_entrypoint }}" yarn install --immutable'
-
-      - name: Prepare pinned packaged verifier engine
-        shell: pwsh
-        run: ./.github/scripts/prepare-windows-packaged-verifier.ps1
-
-      - name: Download exact directory package
-        uses: actions/download-artifact@v7
-        with:
-          name: mktbrowser-win-unpacked
-          path: ${{ runner.temp }}/mktbrowser-artifact
-
-      - name: Verify artifact manifest and extract
-        shell: pwsh
-        run: |
-          $artifactRoot = Join-Path $env:RUNNER_TEMP "mktbrowser-artifact"
-          $manifestPath = Join-Path $artifactRoot "artifact-manifest.json"
-          $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
-          if ($manifest.sourceSha -ne $env:GITHUB_SHA) { throw "Artifact source SHA does not match the checked-out merge tree." }
-          $archive = Join-Path $artifactRoot $manifest.archive
-          $actualSha = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($actualSha -ne $manifest.sha256) { throw "Downloaded directory package hash does not match its manifest." }
-          $unpacked = Join-Path $env:RUNNER_TEMP "mktbrowser-contract-package"
-          Expand-Archive -LiteralPath $archive -DestinationPath $unpacked -Force
-          $evidence = Join-Path $env:RUNNER_TEMP "mktbrowser-contract-evidence"
-          New-Item -ItemType Directory -Force -Path $evidence | Out-Null
-          Add-Content -LiteralPath $env:GITHUB_ENV -Value "MKT_BROWSER_EXECUTABLE=$(Join-Path $unpacked 'MKTBrowser.exe')"
-          Add-Content -LiteralPath $env:GITHUB_ENV -Value "MKT_BROWSER_ARTIFACT_MANIFEST=$manifestPath"
-          Add-Content -LiteralPath $env:GITHUB_ENV -Value "MKT_BROWSER_TIMINGS_OUTPUT=$(Join-Path $evidence 'timings.json')"
-          Add-Content -LiteralPath $env:GITHUB_ENV -Value "MKT_BROWSER_DIAGNOSTICS_DIR=$(Join-Path $evidence 'diagnostics')"
-
-      # The iteration count reaches the verifier through the environment, never through string
-      # interpolation into the command line, so a dispatch input cannot become shell syntax.
-      # The verifier itself rejects anything that is not an integer from 1 to 100.
-      - name: Verify packaged runtime contract repeatedly
-        env:
-          MKT_CONTRACT_ITERATIONS: ${{ inputs.contract_iterations }}
-          # The engine archive is pinned by the preparation script. A manual streak may repeat the
-          # version assertion so the declaration is recorded beside its dispatch inputs.
-          MKT_BROWSER_EXPECTED_ENGINE_VERSION: ${{ inputs.expected_engine_version }}
-        shell: pwsh
-        run: '& "${{ steps.node22.outputs.node22_exe }}" scripts/verify-packaged-runtime-contract.cjs --repeat "$env:MKT_CONTRACT_ITERATIONS"'
-
-      - name: Upload packaged contract evidence
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: packaged-contract-evidence
-          path: |
-            ${{ runner.temp }}/mktbrowser-contract-evidence/**
-            ${{ runner.temp }}/mktbrowser-artifact/artifact-manifest.json
-          if-no-files-found: error
-          retention-days: 7
-
-      - name: Record packaged runtime-contract job status
-        if: always()
-        shell: pwsh
-        env:
-          JOB_STATUS: ${{ job.status }}
-        run: |
-          $status = 'FAIL'
-          $reason = 'The fresh-job packaged runtime contract failed.'
-          if ($env:JOB_STATUS -eq 'success') {
-            $status = 'PASS'
-            $reason = 'The exact hashed package passed the fresh-job runtime contract.'
-          }
-          & "${{ steps.node22.outputs.node22_exe }}" scripts/ci-gate-status.cjs --gate packaged-runtime-contract --status $status --reason $reason --owner browser-release --required

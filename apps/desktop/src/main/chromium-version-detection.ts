@@ -1,10 +1,8 @@
 /**
- * Asking the engine binary which version it is, and keeping the profile's fingerprint in step.
+ * Keeping the profile's fingerprint in step with the engine version.
  *
  * Extracted from `ChromiumBrowserDriver.ts` on 18 September 2026 without changing behaviour.
  */
-import { spawn } from "node:child_process";
-import type { BrowserEngine } from "@mktbrowser/settings-store";
 import type { FingerprintConfig } from "@mktbrowser/types";
 
 export interface ChromiumVersion {
@@ -19,61 +17,6 @@ export function parseChromiumVersion(value: string): ChromiumVersion | null {
     major: Number(match[1]),
     full: `${match[1]}.${match[2]}.${match[3]}.${match[4]}`,
   };
-}
-
-/**
- * CloakBrowser's `--version` path enters its licensed runtime and can consume the only seat without
- * an SDK context to close. Its verified bootstrap version is authoritative, so only CFT is probed.
- */
-export async function resolveChromiumVersionForLaunch(
-  options: {
-    engine: BrowserEngine;
-    binaryPath: string;
-    verifiedVersion: string | null;
-  },
-  detector: (binaryPath: string) => Promise<ChromiumVersion | null> = detectChromiumVersion,
-): Promise<ChromiumVersion | null> {
-  if (options.engine === "cloakbrowser") {
-    return options.verifiedVersion ? parseChromiumVersion(options.verifiedVersion) : null;
-  }
-  return detector(options.binaryPath);
-}
-
-/**
- * Run `chromium --version` and parse the version triple. Returns null
- * if the probe fails — the caller should then trust whatever version is
- * baked into the profile.
- */
-export async function detectChromiumVersion(
-  binaryPath: string,
-): Promise<ChromiumVersion | null> {
-  return new Promise((resolve) => {
-    let resolved = false;
-    const done = (v: ChromiumVersion | null): void => {
-      if (resolved) return;
-      resolved = true;
-      resolve(v);
-    };
-    try {
-      const p = spawn(binaryPath, ["--version"], {
-        stdio: ["ignore", "pipe", "ignore"],
-      });
-      let out = "";
-      p.stdout?.on("data", (c: Buffer) => {
-        out += c.toString("utf8");
-      });
-      p.on("close", () => {
-        done(parseChromiumVersion(out));
-      });
-      p.on("error", () => done(null));
-      setTimeout(() => {
-        p.kill();
-        done(null);
-      }, 2000);
-    } catch {
-      done(null);
-    }
-  });
 }
 
 /**

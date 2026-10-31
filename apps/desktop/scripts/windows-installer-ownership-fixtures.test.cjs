@@ -153,17 +153,13 @@ test("rejects firewall rules owned by another Windows user without mutation", wi
   const root = mkdtempSync(join(tmpdir(), "mktbrowser-firewall-owner-fixture-"));
   try {
     const inventoryPath = join(root, "firewall-rules.json");
-    const enginePath = (user, engine) =>
-      join(root, user, "MKTTool", "MKTBrowser", "chromium", engine, "runtime", "chrome.exe");
-    const userACft = enginePath("user-a", "cft");
-    const userACloak = enginePath("user-a", "cloakbrowser");
+    const enginePath = (user) =>
+      join(root, user, "MKTTool", "MKTBrowser", "chromium", "cloakbrowser", "runtime", "chrome.exe");
+    const userACloak = enginePath("user-a");
     writeFileSync(
       inventoryPath,
       JSON.stringify({
-        Rules: [
-          { ApplicationName: userACft },
-          { ApplicationName: userACloak },
-        ],
+        Rules: [{ ApplicationName: userACloak }],
       }),
       "utf8",
     );
@@ -179,10 +175,8 @@ test("rejects firewall rules owned by another Windows user without mutation", wi
         firewall,
         "-Mode",
         "CheckOwner",
-        "-CftPath",
-        enginePath("user-b", "cft"),
         "-CloakBrowserPath",
-        enginePath("user-b", "cloakbrowser"),
+        enginePath("user-b"),
         "-OwnedRuleInventoryPath",
         inventoryPath,
       ],
@@ -201,8 +195,6 @@ test("rejects firewall rules owned by another Windows user without mutation", wi
         firewall,
         "-Mode",
         "CheckOwner",
-        "-CftPath",
-        userACft,
         "-CloakBrowserPath",
         userACloak,
         "-OwnedRuleInventoryPath",

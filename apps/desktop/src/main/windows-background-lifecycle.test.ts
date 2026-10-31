@@ -68,20 +68,14 @@ function fixture(trayFails = false) {
   return { controller, calls, close, click, tray, window, menu: () => menu };
 }
 
-test("normal Windows session excludes development, disposable roots, and smoke", () => {
+test("normal Windows session excludes development and disposable roots", () => {
   const normal = {
     platform: "win32",
     isPackaged: true,
     explicitUserData: false,
-    compatibilitySmoke: false,
   };
   assert.equal(usesNormalWindowsSession(normal), true);
-  for (const change of [
-    { platform: "darwin" },
-    { isPackaged: false },
-    { explicitUserData: true },
-    { compatibilitySmoke: true },
-  ]) {
+  for (const change of [{ platform: "darwin" }, { isPackaged: false }, { explicitUserData: true }]) {
     assert.equal(usesNormalWindowsSession({ ...normal, ...change }), false);
   }
 });
@@ -91,7 +85,6 @@ test("explicit canonical Windows root cannot bypass the normal instance lock", (
     platform: "win32",
     isPackaged: true,
     explicitUserData: true,
-    compatibilitySmoke: false,
     canonicalUserDataPath: "C:\\Users\\operator\\MKTBrowser",
   };
   for (const userDataPath of [

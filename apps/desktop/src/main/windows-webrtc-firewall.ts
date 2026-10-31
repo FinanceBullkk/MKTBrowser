@@ -12,8 +12,8 @@ type ExecFile = (
   options: { env: NodeJS.ProcessEnv; encoding: "utf8" },
 ) => Promise<{ stdout: string; stderr: string }>;
 
-export function firewallRuleNameForEngine(engine: BrowserEngine): string {
-  return `${RULE_PREFIX} (${engine === "cft" ? "Chrome for Testing" : "CloakBrowser"})`;
+export function firewallRuleNameForEngine(): string {
+  return `${RULE_PREFIX} (CloakBrowser)`;
 }
 
 export async function assertWindowsWebRtcFirewallProtection(options: {
@@ -46,7 +46,7 @@ export async function assertWindowsWebRtcFirewallProtection(options: {
     ProgramFiles: process.env.ProgramFiles,
     ProgramData: process.env.ProgramData,
     SystemDrive: process.env.SystemDrive,
-    MKT_BROWSER_FIREWALL_RULE: firewallRuleNameForEngine(options.engine),
+    MKT_BROWSER_FIREWALL_RULE: firewallRuleNameForEngine(),
     MKT_BROWSER_FIREWALL_PROGRAM: binaryPath,
   };
   const script = [
@@ -82,10 +82,9 @@ export async function assertWindowsWebRtcFirewallProtection(options: {
   }
 }
 
-function protectionError(engine: BrowserEngine, reason = "unknown", cause?: unknown): Error {
-  const label = engine === "cft" ? "Chrome for Testing" : "CloakBrowser";
+function protectionError(_engine: BrowserEngine, reason = "unknown", cause?: unknown): Error {
   return new Error(
-    `WebRTC protection is not active for ${label} (${reason}). ` +
+    `WebRTC protection is not active for CloakBrowser (${reason}). ` +
       "The proxied profile was not launched. Rerun the current MKT Browser installer as Administrator, then retry.",
     cause === undefined ? undefined : { cause },
   );

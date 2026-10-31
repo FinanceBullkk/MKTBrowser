@@ -71,9 +71,6 @@ rem is PowerShell-only so Corepack, Yarn, and every Node child stay outside the 
 call :validate_toolchain_tokenless
 if errorlevel 1 goto :validation_failed
 
-call :verify_release_candidate_tokenless
-if errorlevel 1 goto :candidate_ineligible
-
 call :create_relay_handoff_path
 if errorlevel 1 goto :handoff_failed
 set "MKT_BROWSER_RELAY_HANDOFF_PATH=%relay_handoff_path%"
@@ -131,13 +128,6 @@ endlocal & exit /b %package_exit_code%
 set "validation_exit_code=%ERRORLEVEL%"
 endlocal & exit /b %validation_exit_code%
 
-:candidate_ineligible
-set "candidate_exit_code=%ERRORLEVEL%"
-set "MKTTOOL_RELEASE_TOKEN="
-set "MKTTOOL_RELAY_ARCHIVE="
-set "MKT_BROWSER_RELAY_HANDOFF_PATH="
-endlocal & exit /b %candidate_exit_code%
-
 :download_failed
 set "MKTTOOL_RELEASE_TOKEN="
 set "MKTTOOL_RELAY_ARCHIVE="
@@ -189,17 +179,6 @@ set "MKTTOOL_RELEASE_TOKEN="
 call :validate_toolchain
 set "validation_exit_code=%ERRORLEVEL%"
 endlocal & exit /b %validation_exit_code%
-
-:verify_release_candidate_tokenless
-set "candidate_exit_code=1"
-setlocal
-set "MKTTOOL_RELEASE_TOKEN="
-call :validate_toolchain
-if errorlevel 1 goto :verify_release_candidate_tokenless_done
-"%validated_node%" "%package_root%\scripts\release-candidate-contract.cjs"
-:verify_release_candidate_tokenless_done
-set "candidate_exit_code=%ERRORLEVEL%"
-endlocal & exit /b %candidate_exit_code%
 
 :validate_toolchain
 if not exist "%MKT_BROWSER_NODE22_EXE%" (

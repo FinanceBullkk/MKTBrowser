@@ -188,7 +188,7 @@ test("packaged verification exercises the profile lifecycle", () => {
   const fixture = source("scripts/system-chrome-engine-fixture.cjs");
   assert.match(fixture, /MKT_BROWSER_SYSTEM_CHROME/);
   assert.match(fixture, /current\.json/);
-  assert.match(fixture, /browserEngine:\s*"cft"/);
+  assert.match(fixture, /browserEngine:\s*"cloakbrowser"/);
   assert.match(fixture, /symlink\([^\n]+"junction"\)/);
   assert.match(fixture, /unlink\(fixture\.junctionPath\)/);
 
@@ -203,13 +203,6 @@ test("packaged verification exercises the profile lifecycle", () => {
     driver,
     /stableWindowsRuntime\(join\(app\.getPath\("userData"\), "chromium", engine\)\)/,
   );
-});
-
-test("fingerprint measurement reports cleanup failures", () => {
-  const measurement = source("scripts/measure-mkb01e-packaged-fingerprint.cjs");
-  assert.doesNotMatch(measurement, /\.catch\(\(\) => \{\}\)/);
-  assert.match(measurement, /Fingerprint cleanup failed/);
-  assert.match(measurement, /cleanupErrors/);
 });
 
 function uniqueMatches(contents: string, pattern: RegExp): string[] {

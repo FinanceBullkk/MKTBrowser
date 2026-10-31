@@ -15,7 +15,6 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@mktbrowser/types": "workspace:*",
     "chrome-remote-interface": "^0.33.3",
     "ws": "^8.18.0"
   },

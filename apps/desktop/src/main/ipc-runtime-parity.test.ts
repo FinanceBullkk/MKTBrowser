@@ -36,7 +36,6 @@ test("H39: the executable preload API reaches every classified invoke and event 
     api.system.openLicenceSignup(),
     api.chromium.status(),
     api.chromium.retry(),
-    api.chromium.switchToCft(),
     api.chromium.activateLatest(),
     api.extensions.list("profile-1"),
     api.extensions.addFromFile("profile-1"),

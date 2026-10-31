@@ -53,12 +53,9 @@ test("runs installer PowerShell from explicit script files instead of a staged c
     assert.match(installer, new RegExp(`windows-webrtc-firewall\\.ps1[^\\r\\n]*-Mode ${mode}`));
   }
   assert.doesNotMatch(installer, /SetEnvironmentVariable/);
-  for (const engine of ["cft", "cloakbrowser"]) {
-    assert.match(
-      installer,
-      new RegExp(`chromium\\\\${engine}\\\\runtime\\\\chrome\\.exe`, "i"),
-    );
-  }
+  // CloakBrowser is the only engine; the retired cft path must not come back.
+  assert.doesNotMatch(installer, /chromium\\cft\\runtime\\chrome\.exe/i);
+  assert.match(installer, /chromium\\cloakbrowser\\runtime\\chrome\.exe/i);
   assert.match(firewall, /New-NetFirewallRule/);
   assert.match(firewall, /Direction Outbound/);
   assert.match(firewall, /Action Block/);
@@ -146,7 +143,7 @@ test("keeps the engine cache when the uninstaller is running as part of an upgra
 });
 
 test("rejects another Windows user's firewall ownership before any mutation", () => {
-  const ownerCheckAt = firewall.indexOf("Assert-FirewallOwnership $cft $cloak");
+  const ownerCheckAt = firewall.indexOf("Assert-FirewallOwnership $cloak");
   const firstMutationAt = Math.min(
     firewall.indexOf("Remove-NetFirewallRule"),
     firewall.indexOf("New-NetFirewallRule"),

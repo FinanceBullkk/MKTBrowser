@@ -225,35 +225,33 @@ test("bootstrap refuses absent or invalid digests before download or extraction"
   });
   t.after(() => hooks.deregister());
   const { ChromiumBootstrap } = await import("./ChromiumBootstrap.ts");
-  for (const engine of ["cloakbrowser", "cft"] as const) {
-    for (const sha256 of [undefined, "", "not-a-sha256"]) {
-      await t.test(`${engine}: ${sha256 ?? "absent"}`, async (context) => {
-        const cacheDir = mkdtempSync(join(tmpdir(), "mkt-engine-checksum-"));
-        context.after(() => rmSync(cacheDir, { recursive: true, force: true }));
-        const bootstrap = new ChromiumBootstrap({
-          cacheDir,
-          engine,
-          pinnedManifest: {
-            version: VERSION,
-            url: "https://archive.example/engine.zip",
-            sha256,
-          },
-        });
-        const states: string[] = [];
-        bootstrap.on("status", (status) => states.push(status.kind));
-        let transfers = 0;
-        Object.defineProperty(bootstrap, "downloadAttempt", {
-          value: async () => {
-            transfers += 1;
-            return HASH;
-          },
-        });
-        await assert.rejects(bootstrap.ensure(), /checksum.*missing or invalid/i);
-        assert.equal(transfers, 0);
-        assert.ok(!states.includes("extracting"));
-        assert.ok(!states.includes("ready"));
+  for (const sha256 of [undefined, "", "not-a-sha256"]) {
+    await t.test(`cloakbrowser: ${sha256 ?? "absent"}`, async (context) => {
+      const cacheDir = mkdtempSync(join(tmpdir(), "mkt-engine-checksum-"));
+      context.after(() => rmSync(cacheDir, { recursive: true, force: true }));
+      const bootstrap = new ChromiumBootstrap({
+        cacheDir,
+        engine: "cloakbrowser",
+        pinnedManifest: {
+          version: VERSION,
+          url: "https://archive.example/engine.zip",
+          sha256,
+        },
       });
-    }
+      const states: string[] = [];
+      bootstrap.on("status", (status) => states.push(status.kind));
+      let transfers = 0;
+      Object.defineProperty(bootstrap, "downloadAttempt", {
+        value: async () => {
+          transfers += 1;
+          return HASH;
+        },
+      });
+      await assert.rejects(bootstrap.ensure(), /checksum.*missing or invalid/i);
+      assert.equal(transfers, 0);
+      assert.ok(!states.includes("extracting"));
+      assert.ok(!states.includes("ready"));
+    });
   }
 });
 
@@ -335,38 +333,4 @@ test("keyless CloakBrowser also refuses absent sums instead of selecting an olde
     Reflect.get(bootstrap, "fetchKeylessCloakBrowserManifest").call(bootstrap),
     /no SHA256SUMS/,
   );
-});
-
-test("unpinned CFT retains its explicitly limited development checksum behavior", async (t) => {
-  const hooks = registerHooks({
-    resolve(specifier, context, nextResolve) {
-      if (specifier === "electron")
-        return {
-          url: "data:text/javascript,export const app = {}; export const net = {};",
-          shortCircuit: true,
-        };
-      return nextResolve(specifier, context);
-    },
-  });
-  t.after(() => hooks.deregister());
-  const { ChromiumBootstrap } = await import("./ChromiumBootstrap.ts");
-  const cacheDir = mkdtempSync(join(tmpdir(), "mkt-cft-checksum-"));
-  t.after(() => rmSync(cacheDir, { recursive: true, force: true }));
-  const bootstrap = new ChromiumBootstrap({ cacheDir, engine: "cft", allowUnpinnedManifest: true });
-  let transfers = 0;
-  Object.defineProperty(bootstrap, "downloadAttempt", {
-    value: async () => {
-      transfers += 1;
-      return HASH;
-    },
-  });
-  assert.equal(
-    await Reflect.get(bootstrap, "download").call(
-      bootstrap,
-      { version: "152.0.7977.64", url: "https://archive.example/engine.zip" },
-      join(cacheDir, "engine.partial"),
-    ),
-    HASH,
-  );
-  assert.equal(transfers, 1);
 });

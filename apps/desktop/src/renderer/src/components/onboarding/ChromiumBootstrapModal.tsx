@@ -2,7 +2,7 @@ import { useEffect, useState, type JSX } from "react";
 import { AlertTriangle, Download, Loader2 } from "lucide-react";
 import { Button } from "../atoms/Button";
 import { Cube } from "../atoms/Cube";
-import type { ChromiumStatus, SystemInfo } from "../../types";
+import type { ChromiumStatus } from "../../types";
 
 /**
  * Blocks the UI until the pinned Chromium runtime is present. Shown:
@@ -15,12 +15,10 @@ import type { ChromiumStatus, SystemInfo } from "../../types";
  */
 export function ChromiumBootstrapModal(): JSX.Element | null {
   const [status, setStatus] = useState<ChromiumStatus | null>(null);
-  const [info, setInfo] = useState<SystemInfo | null>(null);
 
   useEffect(() => {
     if (!window.mktBrowser) return;
     void window.mktBrowser.chromium.status().then(setStatus);
-    void window.mktBrowser.system.info().then(setInfo);
     return window.mktBrowser.chromium.onStatus(setStatus);
   }, []);
 
@@ -47,7 +45,7 @@ export function ChromiumBootstrapModal(): JSX.Element | null {
           </div>
         </div>
 
-        <Body status={status} enginePinned={Boolean(info?.compatibilityEnginePin)} />
+        <Body status={status} />
       </div>
     </div>
   );
@@ -94,13 +92,7 @@ function subtitleFor(status: ChromiumStatus): string {
   }
 }
 
-function Body({
-  status,
-  enginePinned,
-}: {
-  status: ChromiumStatus;
-  enginePinned: boolean;
-}): JSX.Element {
+function Body({ status }: { status: ChromiumStatus }): JSX.Element {
   if (status.kind === "missing") {
     return (
       <div className="flex items-center gap-2 text-[12px] text-slate-400">
@@ -211,21 +203,6 @@ function Body({
           >
             Retry download
           </Button>
-          {status.engine === "cloakbrowser" && !enginePinned ? (
-            <>
-              <Button
-                variant="secondary"
-                fullWidth
-                onClick={() => void window.mktBrowser.chromium.switchToCft()}
-              >
-                Switch to Chrome for Testing
-              </Button>
-              <p className="text-[11px] text-slate-500 text-center">
-                Compatibility fallback only. This does not provide identity-isolation evidence or
-                change the one-profile, human-input internal-beta boundary.
-              </p>
-            </>
-          ) : null}
         </div>
       </>
     );

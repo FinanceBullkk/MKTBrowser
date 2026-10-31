@@ -27,12 +27,12 @@ test("ships a valid pinned engine release beside the pinned Relay release", () =
   // here rather than discovering it again at the end of a Windows build.
   const record = readEngineRelease(path.join(__dirname, "..", "windows-engine-release.json"));
   assert.equal(record.type, "mktbrowser.windows-engine-release");
-  assert.equal(record.engineKind, "cft");
-  assert.equal(record.source, "chrome-for-testing");
-  assert.equal(record.version, "152.0.7977.64");
-  assert.equal(record.sha256, "b0db25dea445822429d8ebd36d53344cadcd63127308759456964029bbe18004");
-  assert.equal(record.sizeBytes, 202713690);
-  assert.equal(record.url, "https://storage.googleapis.com/chrome-for-testing-public/152.0.7977.64/win64/chrome-win64.zip");
+  assert.equal(record.engineKind, "cloakbrowser");
+  assert.equal(record.source, "licensed-channel");
+  assert.equal(record.version, "151.0.7922.108.2");
+  assert.equal(record.sha256, "7b16ae3070bfcbed9cd381d03d1a8d57a8baf8f4540650397d620eb8dbe89561");
+  assert.equal(record.sizeBytes, 537518332);
+  assert.equal(record.url, undefined);
 });
 
 function writeRecord(record) {
@@ -70,10 +70,12 @@ test("rejects a licensed engine that carries a URL", () => {
   );
 });
 
-test("rejects a licensed marker on a Chrome for Testing record", () => {
+test("rejects an engine release naming a retired engine family", () => {
+  // "cft" is the removed Chrome for Testing path; a record naming it can no
+  // longer describe this product's engine and must fail closed.
   assert.throws(
     () => readEngineRelease(writeRecord({ ...licensed, engineKind: "cft" })),
-    /Only a CloakBrowser engine release/,
+    /pinned Windows engine release file is invalid/,
   );
 });
 

@@ -61,12 +61,10 @@ function stageLocalAppData(t, { withCache = true } = {}) {
 
   const engineCache = join(productRoot, "chromium");
   if (withCache) {
-    // Both engines, nested, so the recursive removal is actually exercised.
-    for (const engine of ["cft", "cloakbrowser"]) {
-      const runtime = join(engineCache, engine, "runtime");
-      mkdirSync(runtime, { recursive: true });
-      writeFileSync(join(runtime, "chrome.exe"), "not-a-real-engine", "utf8");
-    }
+    // CloakBrowser is the only engine; nested dirs so the recursive removal is actually exercised.
+    const runtime = join(engineCache, "cloakbrowser", "runtime");
+    mkdirSync(runtime, { recursive: true });
+    writeFileSync(join(runtime, "chrome.exe"), "not-a-real-engine", "utf8");
   }
 
   return { localAppData, productRoot, engineCache, preserved };

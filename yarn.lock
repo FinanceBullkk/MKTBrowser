@@ -1156,7 +1156,6 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@mktbrowser/cdp-driver@workspace:packages/cdp-driver"
   dependencies:
-    "@mktbrowser/types": "workspace:*"
     "@types/chrome-remote-interface": "npm:^0.31.14"
     "@types/ws": "npm:^8.5.13"
     chrome-remote-interface: "npm:^0.33.3"

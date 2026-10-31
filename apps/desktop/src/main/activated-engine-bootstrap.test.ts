@@ -31,7 +31,7 @@ test(
     const { ChromiumBootstrap } = await import("./ChromiumBootstrap.ts");
     const bootstrap = new ChromiumBootstrap({
       cacheDir,
-      engine: "cft",
+      engine: "cloakbrowser",
       pinnedManifest: {
         version,
         url: "https://candidate.example/authenticated-engine.artifact",

@@ -31,7 +31,7 @@ function sanitizedPin(pin) {
       pin?.schemaVersion !== 1 ||
       !Number.isSafeInteger(pin.sequence) ||
       pin.sequence <= 0 ||
-      !["cloakbrowser", "cft"].includes(pin.engineKind) ||
+      pin.engineKind !== "cloakbrowser" ||
       typeof pin.version !== "string" ||
       !VERSION.test(pin.version) ||
       typeof pin.sha256 !== "string" ||
@@ -88,11 +88,7 @@ async function inspectFingerprintEnginePin(args, { localAppData = process.env.LO
       "active-engine.json",
     ),
   );
-  if (authority.engineKind !== "cloakbrowser") {
-    throw new Error(
-      "The active compatibility pin is not CloakBrowser; measurement stopped before any browser launch.",
-    );
-  }
+  // sanitizedPin already fails closed on any engine other than CloakBrowser.
   if (authority.version !== expected.version || authority.sha256 !== expected.sha256) {
     throw new Error(
       `Fingerprint engine pin drift: ${expected.explicit ? "requested" : "historical default"} ` +

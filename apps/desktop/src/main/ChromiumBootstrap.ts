@@ -21,7 +21,7 @@ const ENGINE_ZIP_POLICY: SafeArchivePolicy = {
 /** ZIPs use the owned fail-closed boundary; native tar handles Unix engine tarballs. */
 async function extractArchive(archivePath: string, destDir: string): Promise<void> {
   // Match .tar.gz / .tgz with optional .partial suffix from in-flight
-  // downloads (CloakBrowser ships tarballs; CFT ships zip).
+  // downloads (CloakBrowser ships tarballs on Mac/Linux and zip on Windows).
   const isTar = /\.(tar\.gz|tgz)(\.partial)?$/i.test(archivePath);
   if (isTar) {
     await mkdir(destDir, { recursive: true });
@@ -80,24 +80,12 @@ interface BootstrapOptions {
   /** Override the cache directory (default: userData/chromium). */
   cacheDir?: string;
   /**
-   * Which Chromium binary to download. Defaults to "cft" (Chrome for
-   * Testing — Google's official automation channel). "cloakbrowser"
-   * pulls from the CloakBrowser GitHub releases — Chromium with 50+
-   * source-level anti-detect patches baked in, drop-in compatible with
-   * our CDP driver.
+   * Which Chromium binary to download. CloakBrowser is the only engine —
+   * Chromium with 50+ source-level anti-detect patches baked in, drop-in
+   * compatible with our CDP driver. The kind survives as a setting so older
+   * installs keep loading; it always resolves to "cloakbrowser".
    */
   engine?: BrowserEngine;
-  /**
-   * Force a specific Chrome for Testing channel. Defaults to "Stable".
-   * "Beta" / "Dev" / "Canary" are also valid. Only applies when
-   * engine === "cft".
-   */
-  channel?: "Stable" | "Beta" | "Dev" | "Canary";
-  /**
-   * Override the CFT manifest URL — useful if Google ever changes paths
-   * or for offline tests.
-   */
-  manifestUrl?: string;
   /** Release-authority-verified engine artifact. Packaged team builds require this pin. */
   pinnedManifest?: BrowserDownloadManifest;
   /** Development-only escape hatch for technical builds that intentionally inspect upstream. */
@@ -115,9 +103,6 @@ interface BootstrapEvents {
   status: (status: ChromiumStatus) => void;
 }
 
-const CFT_LATEST =
-  "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json";
-
 // /releases (not /releases/latest) — CloakBrowser ships per-platform
 // builds at different cadences (Linux/Win on 146.x, macOS still on 145.x).
 // We walk newest → oldest looking for the first release that has an
@@ -133,52 +118,28 @@ interface CloakBrowserRelease {
   assets: CloakBrowserAsset[];
 }
 
-interface CftPlatformDownload {
-  platform: string;
-  url: string;
-}
-interface CftChannelManifest {
-  channel: string;
-  version: string;
-  revision: string;
-  downloads: { chrome?: CftPlatformDownload[] };
-}
-interface CftRoot {
-  channels: Record<string, CftChannelManifest>;
-}
-
 interface BrowserDownloadManifest {
   version: string;
   url: string;
   sha256?: string;
   sizeBytes?: number;
   /** Extra request headers. The CloakBrowser Pro channel gates the archive
-   *  behind `Authorization: Bearer <licence key>`; the CFT and keyless-GitHub
-   *  paths leave this undefined. */
+   *  behind `Authorization: Bearer <licence key>`; the keyless-GitHub
+   *  path leaves this undefined. */
   headers?: Record<string, string>;
 }
 
 /**
  * Chromium binary lifecycle. We don't ship the binary inside the app
- * installer — it's ~280 MB. Instead we download it from Google's
- * official Chrome for Testing CDN on first launch, verify it, cache it
- * under `userData/chromium/<version>/`, and reuse on every subsequent
- * launch. A daily check picks up new stable releases.
- *
- * Why Chrome for Testing (not random Chromium snapshots):
- *   - Official Google distribution (storage.googleapis.com/chrome-for-testing-public)
- *   - 1:1 versioned with Chrome stable releases — no "snapshot rev #N"
- *     guesswork
- *   - Same binary used by Puppeteer / Playwright / Selenium under the
- *     hood, so it's well-trodden ground
- *   - Code-signed by Google on macOS — we can verify the signature post-
- *     extract and refuse to launch if it's been tampered with on disk
+ * installer — it's ~560 MB. Instead we download CloakBrowser on first
+ * launch (licensed channel when a licence key is configured, otherwise the
+ * keyless GitHub releases), verify its published SHA-256, cache it under
+ * `userData/chromium/cloakbrowser/`, and reuse it on every subsequent
+ * launch.
  */
 export class ChromiumBootstrap extends EventEmitter {
   private status: ChromiumStatus = { kind: "missing" };
   private readonly cacheDir: string;
-  private readonly channel: BootstrapOptions["channel"];
-  private readonly manifestUrl: string;
   private readonly engine: BrowserEngine;
   private readonly pinnedManifest: BrowserDownloadManifest | null;
   private readonly allowUnpinnedManifest: boolean;
@@ -186,9 +147,9 @@ export class ChromiumBootstrap extends EventEmitter {
 
   constructor(opts: BootstrapOptions = {}) {
     super();
-    this.engine = opts.engine ?? "cft";
-    // Per-engine subdir so switching doesn't trip on cross-engine cached
-    // metadata. Each engine gets its own current.json.
+    this.engine = opts.engine ?? "cloakbrowser";
+    // Per-engine subdir keeps the layout stable for installs that predate the
+    // single-engine contract; with one engine it is always "cloakbrowser".
     this.cacheDir = opts.cacheDir ?? join(app.getPath("userData"), "chromium", this.engine);
     // `||`, not `??`: settings supply "" when no key is configured, and `??`
     // only falls through on null/undefined — so the env fallback never fired and
@@ -196,8 +157,6 @@ export class ChromiumBootstrap extends EventEmitter {
     // end-to-end run against an empty cache, not by typecheck.
     this.cloakBrowserLicenseKey =
       opts.cloakBrowserLicenseKey?.trim() || process.env.CLOAKBROWSER_LICENSE_KEY?.trim() || "";
-    this.channel = opts.channel ?? "Stable";
-    this.manifestUrl = opts.manifestUrl ?? CFT_LATEST;
     this.pinnedManifest = opts.pinnedManifest ?? null;
     this.allowUnpinnedManifest = opts.allowUnpinnedManifest ?? false;
   }
@@ -217,15 +176,15 @@ export class ChromiumBootstrap extends EventEmitter {
   }
 
   /**
-   * Which engine the bootstrap is configured for. Useful for the driver
-   * to gate engine-specific spoof scripts — e.g. CloakBrowser already
-   * patches WebRTC and WebGL at C++ level, so injecting our weaker JS
-   * versions on top would create double-spoof anomalies.
+   * The CloakBrowser licence key this bootstrap was constructed with. The
+   * engine re-verifies it at every launch, so it is a runtime dependency,
+   * not just a download credential.
    */
   getCloakBrowserLicenseKey(): string {
     return this.cloakBrowserLicenseKey;
   }
 
+  /** The engine kind. CloakBrowser is the only engine this build runs. */
   getEngine(): BrowserEngine {
     return this.engine;
   }
@@ -266,17 +225,16 @@ export class ChromiumBootstrap extends EventEmitter {
 
       const versionDir = join(this.cacheDir, manifest.version);
       // Preserve the original archive extension (zip / tar.gz) so the
-      // extractor can dispatch on it. CFT ships zip; CloakBrowser ships
-      // tar.gz on Mac/Linux + zip on Windows.
+      // extractor can dispatch on it. CloakBrowser ships tar.gz on
+      // Mac/Linux + zip on Windows.
       const archiveExt = /\.tar\.gz$|\.tgz$/i.test(manifest.url) ? "tar.gz" : "zip";
       const zipPath = join(this.cacheDir, `${manifest.version}.${archiveExt}.partial`);
 
       // download() now owns the full integrity story: resumable transfer,
       // truncation detection, SHA-256 verification against the engine's
-      // published checksum, and automatic retries. CloakBrowser and all
-      // compatibility-pinned downloads require a valid expected digest.
-      // Unpinned development CFT has no published hash: its digest is recorded
-      // only, with HTTPS + (macOS) codesign. It cannot establish a signed pin.
+      // published checksum, and automatic retries. Every CloakBrowser
+      // download — licensed, keyless or compatibility-pinned — requires a
+      // valid expected digest.
       const sha256 = await this.download(manifest, zipPath);
 
       this.setStatus({ kind: "verifying", version: manifest.version });
@@ -298,8 +256,8 @@ export class ChromiumBootstrap extends EventEmitter {
         throw new Error(
           `Failed to extract the browser archive — the download was likely ` +
             `corrupted or truncated. It has been cleared; please retry. If it ` +
-            `keeps failing, add MKT Browser to your antivirus exclusions or switch ` +
-            `the engine to Chrome for Testing in Settings. (${(e as Error).message})`,
+            `keeps failing, add MKT Browser to your antivirus exclusions. ` +
+            `(${(e as Error).message})`,
           { cause: e },
         );
       }
@@ -308,20 +266,19 @@ export class ChromiumBootstrap extends EventEmitter {
       const binaryPath = await this.locateBinary(tmpExtract);
       if (!binaryPath) {
         throw new Error(
-          "Could not locate Chromium binary in extracted bundle — CFT zip layout changed?",
+          "Could not locate the Chromium binary in the extracted CloakBrowser bundle.",
         );
       }
-      // Make executable on POSIX. Chrome for Testing usually preserves
-      // perms in its zip but not always.
+      // Make executable on POSIX. Archives do not always preserve perms.
       if (process.platform !== "win32") {
         await chmod(binaryPath, 0o755);
       }
 
-      // macOS: verify the bundle is signed by Apple Developer ID
-      // belonging to Google. Refuse to launch if the signature is
-      // missing or invalid (someone replaced the .app on disk).
+      // macOS: best-effort codesign check on the extracted bundle. Refuse
+      // to launch if the signature is missing or invalid (someone replaced
+      // the .app on disk).
       if (process.platform === "darwin") {
-        const appBundle = await this.findAppBundle(tmpExtract);
+        const appBundle = await this.findCloakBrowserAppBundle(tmpExtract);
         if (appBundle) {
           await this.verifyMacCodesign(appBundle);
           // Strip the quarantine xattr so launching doesn't trigger
@@ -356,7 +313,6 @@ export class ChromiumBootstrap extends EventEmitter {
             binaryRelative,
             sha256,
             installedAt: new Date().toISOString(),
-            channel: this.channel,
           },
           null,
           2,
@@ -520,24 +476,7 @@ export class ChromiumBootstrap extends EventEmitter {
         "This MKT Browser build has no verified compatibility-set engine pin, so it will not resolve an upstream latest version. The pin is created by a verified compatibility activation through the paired Relay; installer repair does not create one.",
       );
     }
-    if (this.engine === "cloakbrowser") {
-      return this.fetchCloakBrowserManifest();
-    }
-    const res = await fetch(this.manifestUrl, {
-      signal: AbortSignal.timeout(ENGINE_METADATA_TIMEOUT_MS),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status} fetching CFT manifest`);
-    const data = (await res.json()) as CftRoot;
-    const channel = data.channels[this.channel ?? "Stable"];
-    if (!channel) {
-      throw new Error(`Chrome for Testing has no ${this.channel} channel right now`);
-    }
-    const platformKey = cftPlatformKey();
-    const dl = channel.downloads.chrome?.find((d) => d.platform === platformKey);
-    if (!dl) {
-      throw new Error(`Chrome for Testing has no ${platformKey} build for ${channel.version}`);
-    }
-    return { version: channel.version, url: dl.url };
+    return this.fetchCloakBrowserManifest();
   }
 
   /**
@@ -569,13 +508,10 @@ export class ChromiumBootstrap extends EventEmitter {
    *     means the bytes were mangled in transit — resuming can't fix wrong
    *     bytes, so we scrub and re-pull from scratch on the next attempt.
    *   - Bounded-retry. Up to MAX_ATTEMPTS with backoff before giving up
-   *     with an actionable message (switch engine / change network).
+   *     with an actionable message (change network / refresh the pin).
    */
   private async download(manifest: BrowserDownloadManifest, outPath: string): Promise<string> {
-    const expectedSha256 =
-      this.engine === "cloakbrowser" || this.pinnedManifest || manifest.sha256 !== undefined
-        ? requireEngineArchiveSha256(manifest.sha256)
-        : undefined;
+    const expectedSha256 = requireEngineArchiveSha256(manifest.sha256);
     const MAX_ATTEMPTS = 5;
     let lastError: Error | null = null;
 
@@ -618,7 +554,7 @@ export class ChromiumBootstrap extends EventEmitter {
       `Could not download a complete, valid Chromium archive after ${MAX_ATTEMPTS} attempts. ` +
         `Last error: ${redactDownloadError(lastError?.message ?? "unknown")}. ` +
         `The download link may be expired or blocked. Ask an administrator to refresh the ` +
-        `compatibility set, or switch to "Chrome for Testing" in Settings when that option is available.`,
+        `compatibility set, or retry on a different network.`,
     );
   }
 
@@ -832,45 +768,15 @@ export class ChromiumBootstrap extends EventEmitter {
   }
 
   /**
-   * Locate the executable inside the extracted archive. Layout depends
-   * on the engine:
-   *   CFT:           chrome-{platform}/Google Chrome for Testing.app/...
-   *   CloakBrowser:  Chromium.app (Mac) / chrome.exe (Win) / chrome (Linux)
+   * Locate the executable inside the extracted archive. CloakBrowser
+   * layout: Chromium.app (Mac) / chrome.exe (Win) / chrome (Linux), at
+   * varying depths across releases.
    */
   private async locateBinary(rootDir: string): Promise<string | null> {
-    if (this.engine === "cloakbrowser") {
-      return this.locateCloakBrowserBinary(rootDir);
-    }
-    if (process.platform === "darwin") {
-      const app = await this.findAppBundle(rootDir);
-      if (!app) return null;
-      const name = "Google Chrome for Testing";
-      return join(app, "Contents", "MacOS", name);
-    }
-    if (process.platform === "win32") {
-      const subdir = "chrome-win64";
-      const path = join(rootDir, subdir, "chrome.exe");
-      return existsSync(path) ? path : null;
-    }
-    const subdir = "chrome-linux64";
-    const path = join(rootDir, subdir, "chrome");
-    return existsSync(path) ? path : null;
+    return this.locateCloakBrowserBinary(rootDir);
   }
 
-  private async findAppBundle(rootDir: string): Promise<string | null> {
-    if (this.engine === "cloakbrowser") {
-      return this.findCloakBrowserAppBundle(rootDir);
-    }
-    const platformKey = cftPlatformKey();
-    const subdir = `chrome-${platformKey}`;
-    const candidates = [join(rootDir, subdir, "Google Chrome for Testing.app")];
-    for (const c of candidates) {
-      if (existsSync(c)) return c;
-    }
-    return null;
-  }
-
-  // ─── CloakBrowser-specific resolvers ────────────────────────────────
+  // ─── CloakBrowser resolvers ──────────────────────────────────────────
 
   private async fetchCloakBrowserManifest(): Promise<BrowserDownloadManifest> {
     // Licensed channel when we hold a key. Deliberately no catch-and-fall-back:
@@ -979,13 +885,11 @@ export class ChromiumBootstrap extends EventEmitter {
   /**
    * Best-effort signature check on the extracted .app bundle.
    *
-   * Chrome for Testing ships an ad-hoc-signed bundle with looser sealing
-   * than retail Chrome — the strict + deep variant of `codesign --verify`
-   * fails with "code has no resources but signature indicates they must
-   * be present". That's a known CFT property, not tampering. We fall
-   * back to a basic verify; if THAT fails we log and continue —
-   * downloads come from `storage.googleapis.com` over HTTPS (Google's
-   * cert) and we already computed a SHA-256 on the stream. Treat this
+   * The strict + deep variant of `codesign --verify` can fail on
+   * Chromium-derived bundles whose sealing differs from retail Chrome.
+   * We fall back to a basic verify; if THAT fails we log and continue —
+   * the archive came over HTTPS from the licensed channel or GitHub and
+   * we already verified its published SHA-256 from disk. Treat this
    * as defense-in-depth only.
    */
   private async verifyMacCodesign(appBundle: string): Promise<void> {
@@ -1005,7 +909,7 @@ export class ChromiumBootstrap extends EventEmitter {
     for (const e of entries) {
       if (!e.isDirectory()) continue;
       if (e.name === keep) continue;
-      // Conservative: only delete directories that look like a CFT
+      // Conservative: only delete directories that look like an engine
       // version (\d+\.\d+\.\d+\.\d+). Don't nuke arbitrary dirs.
       if (!/^\d+(?:\.\d+){3,4}$/.test(e.name)) continue;
       await rm(join(this.cacheDir, e.name), {
@@ -1014,16 +918,6 @@ export class ChromiumBootstrap extends EventEmitter {
       }).catch(() => {});
     }
   }
-}
-
-function cftPlatformKey(): "mac-arm64" | "mac-x64" | "linux64" | "win64" | "win32" {
-  if (process.platform === "darwin") {
-    return process.arch === "arm64" ? "mac-arm64" : "mac-x64";
-  }
-  if (process.platform === "win32") {
-    return process.arch === "ia32" ? "win32" : "win64";
-  }
-  return "linux64";
 }
 
 /**

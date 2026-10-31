@@ -72,8 +72,6 @@ import {
   readCompatibilityActivationBlock,
   readCompatibilityEnginePin,
 } from "./compatibility-engine-pin.ts";
-import { COMPATIBILITY_SMOKE_SWITCH } from "./compatibility-smoke-authorization.ts";
-import { runPackagedCompatibilitySmoke } from "./compatibility-smoke-cli.ts";
 import { CdpSession } from "@mktbrowser/cdp-driver";
 import { appendProfileLifecycleLine } from "./profile-lifecycle-log.ts";
 import { LICENSE_SEAT_COOLDOWN_MS, LicenseKeyPool } from "./license-key-pool.ts";
@@ -135,8 +133,6 @@ let cachedSettings: AppSettings | null = null;
 let licenseKeyPool: LicenseKeyPool | null = null;
 let licenseSeatCoordinator: LicenseSeatCoordinator | null = null;
 let licenseLeaseJournal: LicenseLeaseJournal;
-let browserDriverReady = false;
-let switchToCftInFlight: Promise<ChromiumStatus> | null = null;
 let activeCompatibilityEnginePin: CompatibilityEnginePin | null = null;
 let backgroundLifecycle: WindowsBackgroundLifecycle | null = null;
 let relayCompanion: WindowsRelayCompanion | null = null;
@@ -219,7 +215,7 @@ function createChromiumBootstrap(engine: AppSettings["browserEngine"]): Chromium
       hasExplicitUserDataDir: app.commandLine.hasSwitch("user-data-dir"),
     }),
     // Read at construction: switching the key requires a restart, same as
-    // switching the engine. Ignored by CFT, which has no licensed channel.
+    // any engine change.
     cloakBrowserLicenseKey: resolvePrimaryLicenseKey(cachedSettings),
   });
   bootstrap.on("status", (status: ChromiumStatus) => {
@@ -285,14 +281,10 @@ const compatibilityActivationBlock =
   process.platform === "win32"
     ? readCompatibilityActivationBlock(process.env.LOCALAPPDATA ?? "")
     : null;
-const compatibilitySmokeAuthorizationId = app.commandLine.getSwitchValue(
-  COMPATIBILITY_SMOKE_SWITCH,
-);
 const normalWindowsSession = usesNormalWindowsSession({
   platform: process.platform,
   isPackaged: app.isPackaged,
   explicitUserData: app.commandLine.hasSwitch("user-data-dir"),
-  compatibilitySmoke: Boolean(compatibilitySmokeAuthorizationId),
   userDataPath: app.getPath("userData"),
   canonicalUserDataPath: resolveProductUserDataPath({
     platform: process.platform,
@@ -323,20 +315,6 @@ app.setAboutPanelOptions({
 app
   .whenReady()
   .then(async () => {
-    if (compatibilitySmokeAuthorizationId) {
-      try {
-        await runPackagedCompatibilitySmoke({
-          authorizationId: compatibilitySmokeAuthorizationId,
-          localAppData: process.env.LOCALAPPDATA ?? "",
-          userData: app.getPath("userData"),
-        });
-        app.exit(0);
-      } catch (error) {
-        process.stderr.write(`Compatibility smoke failed: ${(error as Error).message}\n`);
-        app.exit(1);
-      }
-      return;
-    }
     const userData = app.getPath("userData");
     const dataRoot = join(userData, "data");
     if (normalWindowsSession) {
@@ -547,9 +525,9 @@ app
       });
     }
 
-    // Chromium bootstrap — picks the engine from user settings (CFT default,
-    // CloakBrowser opt-in for stronger anti-detect), downloads it on first
-    // run, and reports progress to the renderer.
+    // Chromium bootstrap — the engine is CloakBrowser (the only kind), resolved from user
+    // settings for installs that predate the single-engine contract. It is downloaded on first
+    // run, and progress is reported to the renderer.
     chromiumBootstrap = createChromiumBootstrap(cachedSettings.browserEngine);
     // Kick off the ensure() in the background so the UI can render immediately
     // and show download progress. Profile launches will wait until ready.
@@ -613,15 +591,11 @@ app
         // Reclaiming a seat is best-effort; failing to must never stop the app from starting.
       },
     );
-    const licenseCapacity = () =>
-      chromiumBootstrap.getEngine() === "cloakbrowser"
-        ? (licenseSeatCoordinator?.snapshot() ?? null)
-        : null;
+    const licenseCapacity = () => licenseSeatCoordinator?.snapshot() ?? null;
     const refreshLicenseCapacity = async () => {
       // This callback is reached only by an explicit Web "Check again" action. Refreshing its
       // unrelated capacity observation must not leave a just-stale install verdict actionable.
       localInstallInspector?.invalidate();
-      if (chromiumBootstrap.getEngine() !== "cloakbrowser") return null;
       // Startup reconciliation may invalidate an observation after it has begun. Wait for that
       // one-time state transition so the first operator refresh reflects a stable local snapshot.
       await startupOrphanSweep;
@@ -690,7 +664,6 @@ app
         })();
       },
     });
-    browserDriverReady = true;
 
     const mcp = createMktBrowserMcpServer({
       profileManager,
@@ -829,39 +802,6 @@ app
       });
       activeCompatibilityEnginePin = readCompatibilityEnginePin(process.env.LOCALAPPDATA ?? "");
       return chromiumBootstrap.retry();
-    });
-    handleIpc(IPC.CHROMIUM_SWITCH_TO_CFT, async () => {
-      if (switchToCftInFlight) return switchToCftInFlight;
-      if (activeCompatibilityEnginePin && activeCompatibilityEnginePin.engineKind !== "cft") {
-        throw new Error(
-          `Compatibility set ${activeCompatibilityEnginePin.sequence} pins ${activeCompatibilityEnginePin.engineKind}; the fallback engine is locked until another signed set is installed.`,
-        );
-      }
-      if (chromiumBootstrap.getEngine() !== "cloakbrowser") {
-        return chromiumBootstrap.getStatus();
-      }
-
-      const operation = (async (): Promise<ChromiumStatus> => {
-        const previous = chromiumBootstrap;
-        const fallback = createChromiumBootstrap("cft");
-        if (browserDriverReady) browserDriver.setChromiumBootstrap(fallback);
-        try {
-          cachedSettings = await settingsStore.update({ browserEngine: "cft" });
-          chromiumBootstrap = fallback;
-        } catch (cause) {
-          if (browserDriverReady) browserDriver.setChromiumBootstrap(previous);
-          throw cause;
-        }
-        sendToRenderer(IPC_EVENTS.CHROMIUM_STATUS, fallback.getStatus());
-        startChromiumBootstrap(fallback);
-        return fallback.getStatus();
-      })();
-      switchToCftInFlight = operation;
-      try {
-        return await operation;
-      } finally {
-        if (switchToCftInFlight === operation) switchToCftInFlight = null;
-      }
     });
 
     // Extensions IPC (per-profile)

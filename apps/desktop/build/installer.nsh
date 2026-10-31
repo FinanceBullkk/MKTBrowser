@@ -53,7 +53,7 @@ Function MktBrowserInspectInstallConflicts
     Return
   ${EndIf}
   !insertmacro stageFirewallScript
-  nsExec::ExecToStack 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File "$PLUGINSDIR\windows-webrtc-firewall.ps1" -Mode CheckOwner -CftPath "$LOCALAPPDATA\MKTTool\MKTBrowser\chromium\cft\runtime\chrome.exe" -CloakBrowserPath "$LOCALAPPDATA\MKTTool\MKTBrowser\chromium\cloakbrowser\runtime\chrome.exe"'
+  nsExec::ExecToStack 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File "$PLUGINSDIR\windows-webrtc-firewall.ps1" -Mode CheckOwner -CloakBrowserPath "$LOCALAPPDATA\MKTTool\MKTBrowser\chromium\cloakbrowser\runtime\chrome.exe"'
   Pop $0
   Pop $1
   ${If} $0 == 17
@@ -143,7 +143,7 @@ FunctionEnd
   ${EndIf}
 
   ClearErrors
-  ExecShellWait "runas" "powershell.exe" '-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File "$PLUGINSDIR\windows-webrtc-firewall.ps1" -Mode Install -CftPath "$LOCALAPPDATA\MKTTool\MKTBrowser\chromium\cft\runtime\chrome.exe" -CloakBrowserPath "$LOCALAPPDATA\MKTTool\MKTBrowser\chromium\cloakbrowser\runtime\chrome.exe"' SW_HIDE $0
+  ExecShellWait "runas" "powershell.exe" '-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File "$PLUGINSDIR\windows-webrtc-firewall.ps1" -Mode Install -CloakBrowserPath "$LOCALAPPDATA\MKTTool\MKTBrowser\chromium\cloakbrowser\runtime\chrome.exe"' SW_HIDE $0
   ${If} ${Errors}
     MessageBox MB_ICONSTOP "Administrator approval is required to install WebRTC protection. MKT Browser was not installed."
     Abort
@@ -154,7 +154,7 @@ FunctionEnd
     MessageBox MB_ICONSTOP "WebRTC protection installation failed (code $0). MKT Browser was not installed."
     Abort
   ${EndIf}
-  nsExec::ExecToStack 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File "$PLUGINSDIR\windows-webrtc-firewall.ps1" -Mode Verify -CftPath "$LOCALAPPDATA\MKTTool\MKTBrowser\chromium\cft\runtime\chrome.exe" -CloakBrowserPath "$LOCALAPPDATA\MKTTool\MKTBrowser\chromium\cloakbrowser\runtime\chrome.exe"'
+  nsExec::ExecToStack 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File "$PLUGINSDIR\windows-webrtc-firewall.ps1" -Mode Verify -CloakBrowserPath "$LOCALAPPDATA\MKTTool\MKTBrowser\chromium\cloakbrowser\runtime\chrome.exe"'
   Pop $0
   Pop $1
   ${If} $0 != 0
@@ -210,7 +210,7 @@ FunctionEnd
   DetailPrint "Removing MKT Browser WebRTC containment rules"
   !insertmacro stageFirewallScript
   ClearErrors
-  ExecShellWait "runas" "powershell.exe" '-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File "$PLUGINSDIR\windows-webrtc-firewall.ps1" -Mode Uninstall -CftPath "$LOCALAPPDATA\MKTTool\MKTBrowser\chromium\cft\runtime\chrome.exe" -CloakBrowserPath "$LOCALAPPDATA\MKTTool\MKTBrowser\chromium\cloakbrowser\runtime\chrome.exe"' SW_HIDE $0
+  ExecShellWait "runas" "powershell.exe" '-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File "$PLUGINSDIR\windows-webrtc-firewall.ps1" -Mode Uninstall -CloakBrowserPath "$LOCALAPPDATA\MKTTool\MKTBrowser\chromium\cloakbrowser\runtime\chrome.exe"' SW_HIDE $0
   ${If} ${Errors}
     MessageBox MB_ICONSTOP "Administrator approval is required to remove MKT Browser WebRTC protection. Uninstall was stopped."
     Abort
