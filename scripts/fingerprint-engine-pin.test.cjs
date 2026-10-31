@@ -107,7 +107,7 @@ test("explicit pin and cache must agree before any measurement", async (t) => {
       args: { ...ARGS, "engine-version": "151.0.7922.108.2" },
       message: /pin drift/,
     },
-    { name: "wrong engine", pin: { engineKind: "cft" }, message: /not CloakBrowser/ },
+    { name: "wrong engine", pin: { engineKind: "cft" }, message: /active-engine\.json.*invalid/ },
     { name: "cache digest", cache: { sha256: "b".repeat(64) }, message: /cache does not match/ },
     {
       name: "cache version",

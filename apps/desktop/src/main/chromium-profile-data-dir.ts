@@ -3,22 +3,19 @@
  *
  * Extracted from `ChromiumBrowserDriver.ts` on 18 September 2026 without changing behaviour. The
  * doc comment on `ensureSessionRestore` came back with it: in the driver it had drifted about three
- * hundred lines from the function it describes and sat above `detectChromiumVersion` instead.
+ * hundred lines from the function it describes.
  */
 import { existsSync, promises as fsp } from "node:fs";
 import { join } from "node:path";
-import type { BrowserEngine } from "@mktbrowser/settings-store";
 import { isPidAlive } from "./browser-process-tracking.ts";
 
-export function browserDataDirForEngine(profileDataDir: string, engine: BrowserEngine): string {
+export function browserDataDirForEngine(profileDataDir: string): string {
   // Chrome profile data is not safely reusable across different Chromium
-  // forks/major versions. CloakBrowser 145 SIGTRAPs on profile roots that
-  // were previously opened by CFT 147/148, so keep its browser state in a
-  // separate user-data-dir while preserving the logical MKT Browser profile.
-  if (engine === "cloakbrowser") {
-    return join(profileDataDir, "engines", "cloakbrowser");
-  }
-  return profileDataDir;
+  // forks/major versions. Keep each engine's browser state in its own
+  // user-data-dir while preserving the logical MKT Browser profile. The
+  // engine subdir stays namespaced so an install that once ran a different
+  // fork does not feed it this build's profile state.
+  return join(profileDataDir, "engines", "cloakbrowser");
 }
 
 /**

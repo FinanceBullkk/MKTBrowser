@@ -204,7 +204,7 @@ test("reports an empty sweep without pretending it failed", async () => {
 });
 
 test("does not create licence recovery evidence for a non-CloakBrowser layout", async () => {
-  const cft = {
+  const foreignEngine = {
     pid: 401,
     commandLine: `chrome.exe --user-data-dir="${ROOT}/p401" --remote-debugging-port=9222`,
   };
@@ -215,7 +215,7 @@ test("does not create licence recovery evidence for a non-CloakBrowser layout", 
       " --remote-debugging-port=9223",
   };
   const h = harness({
-    enumerate: async () => ({ processes: [cft, nested], enumerated: true }),
+    enumerate: async () => ({ processes: [foreignEngine, nested], enumerated: true }),
   });
   h.alive.add(401);
   h.alive.add(402);

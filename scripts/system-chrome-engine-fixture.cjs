@@ -31,7 +31,7 @@ function locateSystemChrome() {
 async function installSystemChromeEngineFixture(userData) {
   const chromeExecutable = locateSystemChrome();
   const evidence = await inspectChromeEvidence(chromeExecutable);
-  const cacheDir = path.join(userData, "chromium", "cft");
+  const cacheDir = path.join(userData, "chromium", "cloakbrowser");
   const version = "system-chrome";
   const junctionPath = path.join(cacheDir, "runtime");
 
@@ -59,7 +59,7 @@ async function installSystemChromeEngineFixture(userData) {
         {
           theme: "dark",
           mcpHttpEnabled: true,
-          browserEngine: "cft",
+          browserEngine: "cloakbrowser",
         },
         null,
         2,

@@ -54,7 +54,7 @@ test("packaged verification isolates disposable engine state from the installed 
   assert.match(verifier, /MKT_BROWSER_ALLOW_UNPINNED_ENGINE:\s*"1"/);
 });
 
-test("locks engine selection while a signed compatibility set is active", () => {
+test("runs the one engine and offers no engine-switch surface", () => {
   const main = source("index.ts");
   const settings = readFileSync(
     new URL("../renderer/src/components/screens/Settings.tsx", ROOT),
@@ -64,33 +64,26 @@ test("locks engine selection while a signed compatibility set is active", () => 
     new URL("../renderer/src/components/onboarding/ChromiumBootstrapModal.tsx", ROOT),
     "utf8",
   );
-  assert.match(main, /activeCompatibilityEnginePin/);
-  assert.match(main, /switching engines independently/);
-  assert.match(settings, /Locked by compatibility set/);
-  assert.match(settings, /disabled=\{Boolean\(info\?\.compatibilityEnginePin\)\}/);
-  assert.match(modal, /!enginePinned/);
-});
-
-test("switches a failed CloakBrowser bootstrap to CFT through the settings boundary", () => {
-  const main = source("index.ts");
-  const modal = readFileSync(
-    new URL("../renderer/src/components/onboarding/ChromiumBootstrapModal.tsx", ROOT),
-    "utf8",
-  );
-  assert.match(main, /CHROMIUM_SWITCH_TO_CFT/);
-  assert.match(main, /settingsStore\.update\(\{ browserEngine: "cft" \}\)/);
-  assert.match(main, /switchToCftInFlight/);
-  const settings = readFileSync(
+  const policy = source("../shared/ipc-exposure-policy.ts");
+  const preload = source("../preload/create-mkt-browser-api.ts");
+  const store = readFileSync(
     new URL("../../../../packages/settings-store/src/index.ts", ROOT),
     "utf8",
   );
+  assert.match(main, /activeCompatibilityEnginePin/);
+  assert.match(main, /switching engines independently/);
+  // CloakBrowser is the only engine: no switch channel may exist and the UI must not offer one.
+  assert.doesNotMatch(policy, /switch-to-cft/);
+  assert.doesNotMatch(preload, /switchToCft/);
+  assert.doesNotMatch(main, /CHROMIUM_SWITCH_TO_CFT/);
+  assert.doesNotMatch(settings, /engineOptions/);
+  assert.doesNotMatch(modal, /Switch to Chrome for Testing/);
+  assert.match(settings, /CloakBrowser is the only engine/);
+  // Settings must still be persisted before the in-memory cache is replaced on update.
   assert.ok(
-    settings.indexOf("writeFileSync") < settings.lastIndexOf("this.cache = next"),
-    "Settings must be persisted before the in-memory engine changes.",
+    store.indexOf("writeFileSync") < store.lastIndexOf("this.cache = next"),
+    "Settings must be persisted before the in-memory cache changes.",
   );
-  assert.match(modal, /Switch to Chrome for Testing/);
-  assert.match(modal, /compatibility fallback/i);
-  assert.match(modal, /engine === "cloakbrowser"/);
 });
 
 test("renders unknown download totals as an indeterminate connecting state", () => {

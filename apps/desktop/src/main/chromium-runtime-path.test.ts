@@ -4,8 +4,10 @@ import { stableWindowsRuntime, win32PathEquals } from "./chromium-runtime-path.t
 
 test("keeps the Windows executable path stable across runtime versions", () => {
   assert.equal(
-    stableWindowsRuntime("C:\\Users\\operator\\AppData\\Local\\MKTTool\\MKTBrowser\\chromium\\cft"),
-    "C:\\Users\\operator\\AppData\\Local\\MKTTool\\MKTBrowser\\chromium\\cft\\runtime\\chrome.exe",
+    stableWindowsRuntime(
+      "C:\\Users\\operator\\AppData\\Local\\MKTTool\\MKTBrowser\\chromium\\cloakbrowser",
+    ),
+    "C:\\Users\\operator\\AppData\\Local\\MKTTool\\MKTBrowser\\chromium\\cloakbrowser\\runtime\\chrome.exe",
   );
 });
 

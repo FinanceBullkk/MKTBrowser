@@ -162,26 +162,26 @@ test("reports an engine version only when one is actually installed", () => {
   // A stage that knows its target version still reports it, so a caller can distinguish "preparing
   // the approved version" from "preparing something unexpected".
   assert.deepEqual(
-    describeEngineStatus("cft", {
+    describeEngineStatus("cloakbrowser", {
       kind: "downloading",
       bytesReceived: 1,
       bytesTotal: 2,
-      version: "148.0.0.0",
-      engine: "cft",
+      version: "151.0.7922.108.2",
+      engine: "cloakbrowser",
       attempt: 1,
       maxAttempts: 5,
       resuming: false,
     }),
-    { kind: "cft", version: "148.0.0.0", status: "downloading" },
+    { kind: "cloakbrowser", version: "151.0.7922.108.2", status: "downloading" },
   );
 
   for (const status of [
     { kind: "missing" } as const,
     { kind: "fetching-manifest" } as const,
-    { kind: "error", engine: "cft", message: "checksum mismatch" } as const,
+    { kind: "error", engine: "cloakbrowser", message: "checksum mismatch" } as const,
     { kind: "dev-system", binaryPath: "C:/chrome.exe" } as const,
   ]) {
-    const described = describeEngineStatus("cft", status);
+    const described = describeEngineStatus("cloakbrowser", status);
     assert.equal(described.version, null, status.kind);
     assert.equal(described.status, status.kind);
   }
@@ -391,9 +391,9 @@ test("reports a licence refusal as a refusal, not as a crash", () => {
 test("uses the SDK only for enabled Windows Cloak and retains fallback orphan recovery", () => {
   const driver = source("apps/desktop/src/main/ChromiumBrowserDriver.ts");
   const policy = source("apps/desktop/src/main/license-lifecycle-policy.ts");
-  assert.match(driver, /shouldUseCloakBrowserSdkLifecycle\(engine, this\.fastLicenseReuse\)/);
-  assert.match(driver, /detached: shouldDetachBrowserProcess\(engine, this\.fastLicenseReuse\)/);
-  assert.match(policy, /engine === "cloakbrowser" && fastReuseEnabled && platform === "win32"/);
+  assert.match(driver, /shouldUseCloakBrowserSdkLifecycle\(this\.fastLicenseReuse\)/);
+  assert.match(driver, /detached: shouldDetachBrowserProcess\(this\.fastLicenseReuse\)/);
+  assert.match(policy, /fastReuseEnabled && platform === "win32"/);
 
   // Detached fallback modes still depend on the orphan sweep for conservative recovery.
   const index = source("apps/desktop/src/main/index.ts");

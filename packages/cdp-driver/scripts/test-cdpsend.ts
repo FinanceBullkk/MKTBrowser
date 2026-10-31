@@ -85,7 +85,7 @@ test("safe cdpSend pairs an allowlisted *.enable with a *.disable (Accessibility
 
 test("safe cdpSend pairs Runtime.enable with Runtime.disable on a non-anti-detect engine", async () => {
   const fake = makeFakeClient();
-  const s = sessionWith(fake, "cft");
+  const s = sessionWith(fake, "unknown");
   await s.cdpSend("Runtime.enable");
   assert.deepEqual(fake.methods(), ["Runtime.enable", "Runtime.disable"]);
 });
@@ -202,7 +202,7 @@ test("an exception after increment still decrements the refcount (domain not pin
   const fake = makeFakeClient({
     throwOn: (method, idx) => method === "Runtime.enable" && idx === 0,
   });
-  const s = sessionWith(fake, "cft");
+  const s = sessionWith(fake, "unknown");
   await assert.rejects(s.cdpSend("Runtime.enable"), /fake CDP failure/);
   assert.equal(refcount(s).size, 0, "refcount must be cleared even when the enable throws");
   await s.cdpSend("Runtime.enable");

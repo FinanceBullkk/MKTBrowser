@@ -153,7 +153,7 @@ export async function sweepOrphanedProfileBrowsers(
   return { closed, killed, enumerated: true, recoveries };
 }
 
-/** Resolve only the owned CloakBrowser layout; CFT has no licence seat to reconcile. */
+/** Resolve only the owned CloakBrowser layout; it is the only engine with a licence seat to reconcile. */
 function licensedProfileId(profilesRoot: string, commandLine: string): string | null {
   const dataDir = dataDirFromCommandLine(commandLine);
   if (!dataDir) return null;

@@ -210,37 +210,24 @@ export function Settings({ onImport }: Props): JSX.Element {
           title="Browser engine"
           desc={
             info?.compatibilityEnginePin
-              ? `Locked by compatibility set ${info.compatibilityEnginePin.sequence} at runtime ${info.compatibilityEnginePin.version}.`
-              : "Applied on next app launch."
+              ? `Pinned by compatibility set ${info.compatibilityEnginePin.sequence} at runtime ${info.compatibilityEnginePin.version}.`
+              : "CloakBrowser is the only engine. Applied on next app launch."
           }
         >
-          <div className="grid gap-2 sm:grid-cols-2">
-            {engineOptions.map((option) => {
-              const selected = settings.browserEngine === option.value;
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  disabled={Boolean(info?.compatibilityEnginePin)}
-                  onClick={() => void patch({ browserEngine: option.value })}
-                  className="text-left p-3 rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-60"
-                  style={{
-                    boxShadow: selected
-                      ? "inset 0 0 0 1px rgba(168,85,247,0.45)"
-                      : "inset 0 0 0 1px rgba(255,255,255,0.07)",
-                    background: selected ? "rgba(168,85,247,0.08)" : "rgba(255,255,255,0.025)",
-                  }}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[13px] font-medium text-slate-100">{option.label}</span>
-                    {selected && <Pill kind="running">active</Pill>}
-                  </div>
-                  <div className="text-[11px] text-slate-500 mt-1 leading-relaxed">
-                    {option.description}
-                  </div>
-                </button>
-              );
-            })}
+          <div
+            className="p-3 rounded-lg"
+            style={{
+              boxShadow: "inset 0 0 0 1px rgba(168,85,247,0.45)",
+              background: "rgba(168,85,247,0.08)",
+            }}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[13px] font-medium text-slate-100">CloakBrowser</span>
+              <Pill kind="running">active</Pill>
+            </div>
+            <div className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+              Licensed runtime for the controlled beta; identity isolation is not yet proven.
+            </div>
           </div>
         </Row>
 
@@ -406,23 +393,6 @@ export function Settings({ onImport }: Props): JSX.Element {
     </div>
   );
 }
-
-const engineOptions: Array<{
-  value: AppSettings["browserEngine"];
-  label: string;
-  description: string;
-}> = [
-  {
-    value: "cloakbrowser",
-    label: "CloakBrowser",
-    description: "Licensed runtime for the controlled beta; identity isolation is not yet proven.",
-  },
-  {
-    value: "cft",
-    label: "Chrome for Testing",
-    description: "Compatibility verifier only; it is not identity evidence or a production runtime.",
-  },
-];
 
 function electronVersion(): string {
   // Vite injects nothing useful here; just use a stable string for now.

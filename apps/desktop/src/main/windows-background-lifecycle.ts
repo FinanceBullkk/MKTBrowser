@@ -14,7 +14,6 @@ export function usesNormalWindowsSession(input: {
   platform: string;
   isPackaged: boolean;
   explicitUserData: boolean;
-  compatibilitySmoke: boolean;
   userDataPath?: string;
   canonicalUserDataPath?: string;
 }): boolean {
@@ -25,8 +24,7 @@ export function usesNormalWindowsSession(input: {
   return (
     input.platform === "win32" &&
     input.isPackaged &&
-    (!input.explicitUserData || usesCanonicalRoot) &&
-    !input.compatibilitySmoke
+    (!input.explicitUserData || usesCanonicalRoot)
   );
 }
 

@@ -45,7 +45,9 @@ export function readCompatibilityEnginePin(localAppData: string): CompatibilityE
       value.schemaVersion !== 1 ||
       !Number.isSafeInteger(value.sequence) ||
       Number(value.sequence) <= 0 ||
-      (value.engineKind !== "cft" && value.engineKind !== "cloakbrowser") ||
+      // CloakBrowser is the only engine a pin may name; a pin carrying the
+      // retired "cft" kind is invalid and fails closed at startup.
+      value.engineKind !== "cloakbrowser" ||
       typeof value.version !== "string" ||
       !value.version ||
       typeof value.url !== "string" ||

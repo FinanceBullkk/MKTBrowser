@@ -12,10 +12,7 @@ import {
   proxyRejected,
 } from "@mktbrowser/mcp-server";
 import type { ProfileManager } from "@mktbrowser/profile-manager";
-import {
-  ProfileDeletionPendingError,
-  reconcileDeviceFamilyToHost,
-} from "@mktbrowser/profile-manager";
+import { ProfileDeletionPendingError } from "@mktbrowser/profile-manager";
 import type { LaunchedProfile, ProfileId } from "@mktbrowser/types";
 import type { RunningProfileState } from "@mktbrowser/mcp-server";
 import { waitForCdpSessionReady } from "./cdpReadiness";
@@ -47,11 +44,7 @@ import {
   type ProfileLifecycleLogContext,
   type RunningProcess,
 } from "./browser-process-tracking.ts";
-import {
-  buildCloakBrowserFingerprintArgs,
-  buildFingerprintPreloadScript,
-  safeBuildUserAgentMetadata,
-} from "./chromium-fingerprint-args.ts";
+import { buildCloakBrowserFingerprintArgs } from "./chromium-fingerprint-args.ts";
 import {
   isCdpEndpointReachable,
   terminateBrowserProcess,
@@ -59,11 +52,7 @@ import {
   type ShutdownMethod,
 } from "./browser-shutdown-sequence.ts";
 import { createWindowWatcher, fetchErrorCode } from "./browser-window-watcher.ts";
-import { WEBRTC_BLOCK_SCRIPT, buildWebRtcSpoofScript } from "./webrtc-spoof-script.ts";
-import {
-  reconcileVersionInFingerprint,
-  resolveChromiumVersionForLaunch,
-} from "./chromium-version-detection.ts";
+import { parseChromiumVersion, reconcileVersionInFingerprint } from "./chromium-version-detection.ts";
 import { buildBrowserLaunchEnvironment } from "./browser-launch-environment.ts";
 import {
   cloakBrowserSdkLicenseExitCode,
@@ -71,10 +60,7 @@ import {
   launchCloakBrowserSdkLifecycle,
   type CloakBrowserSdkLifecycle,
 } from "./cloakbrowser-sdk-lifecycle.ts";
-import {
-  disableMacOsPersistentStateRestore,
-  ensureCftInfobarSuppressed,
-} from "./chromium-managed-preferences.ts";
+import { disableMacOsPersistentStateRestore } from "./chromium-managed-preferences.ts";
 import {
   browserDataDirForEngine,
   cleanStaleSingletonLocks,
@@ -205,19 +191,6 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     this.startupBarrier = opts.startupBarrier ?? Promise.resolve();
   }
 
-  setChromiumBootstrap(bootstrap: ChromiumBootstrap): void {
-    if (
-      this.running.size > 0 ||
-      this.launching.size > 0 ||
-      this.launchingProcesses.size > 0 ||
-      this.closing.size > 0
-    ) {
-      throw new Error("Close all profiles before changing the browser engine.");
-    }
-    this.licenseSeatCoordinator?.invalidate("engine-change");
-    this.bootstrap = bootstrap;
-  }
-
   override on<K extends keyof DriverEvents>(event: K, listener: DriverEvents[K]): this {
     return super.on(event, listener);
   }
@@ -278,8 +251,9 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
    * retrying automatically can prolong the vendor hold and must never happen here.
    */
   private async launchWithLicenseSeat(profileId: ProfileId): Promise<LaunchedProfile> {
-    // CFT has no licensed session channel. An empty CloakBrowser pool must not block its launches.
-    const pool = this.bootstrap.getEngine() === "cloakbrowser" ? this.licenseKeyPool : undefined;
+    // Every launch runs the licensed engine, so the pool decides admission. An install without a
+    // configured key constructs no pool; launches then proceed keyless on the keyless build.
+    const pool = this.licenseKeyPool;
     const waitMessage = () => licenseSeatWaitMessage({
       snapshot: pool!.snapshot(),
       nextFreeAtMs: pool!.nextFreeAtMs(),
@@ -393,34 +367,30 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
         );
       }
     }
-    const browserDataDir = browserDataDirForEngine(profile.dataDir, engine);
-    // Read the actual Chromium binary's version and reconcile the
-    // profile's spoofed UA against it. Detection vendors fingerprint the
-    // JS engine and compare against the claimed UA — claiming Chrome
-    // 148 while running 147 is an instant flag.
-    const actualVersion = await resolveChromiumVersionForLaunch({
-      engine,
-      binaryPath: chromiumPath,
-      verifiedVersion: bootstrapStatus.kind === "ready" ? bootstrapStatus.version : null,
-    });
-    // Reconcile (1) device family to host OS (claiming Win on a Mac
-    //   binary is detected via V8/CSS feature signatures), then
-    //   (2) Chrome version to the actual binary version. Both run
-    //   on every launch so legacy profiles auto-fix.
-    // CloakBrowser is built for cross-platform spoofing — claiming Windows
-    // on a Mac binary is exactly its job (--fingerprint-platform=windows
-    // patches V8/CSS/Blink at C++ level). For stock Chromium (CFT) we
-    // can't hide the host, so we still snap back. Net: respect user's
-    // platform choice on CloakBrowser, override it on CFT.
-    let fp =
-      engine === "cloakbrowser"
-        ? profile.fingerprint
-        : reconcileDeviceFamilyToHost(profile.fingerprint);
+    const browserDataDir = browserDataDirForEngine(profile.dataDir);
+    // Reconcile the profile's spoofed UA against the verified engine
+    // version. Detection vendors fingerprint the JS engine and compare
+    // against the claimed UA — claiming Chrome 148 while running 147 is an
+    // instant flag. CloakBrowser's `--version` path enters its licensed
+    // runtime and can consume the only seat without an SDK context to
+    // close, so the bootstrap's verified version is authoritative and the
+    // binary is never probed here.
+    const actualVersion =
+      bootstrapStatus.kind === "ready"
+        ? parseChromiumVersion(bootstrapStatus.version)
+        : null;
+    // Reconcile (1) the Chrome version of the fingerprint to the actual
+    // binary version. Runs on every launch so legacy profiles auto-fix.
+    // Device family is NOT snapped back to the host: CloakBrowser is built
+    // for cross-platform spoofing — claiming Windows on a Mac binary is
+    // exactly its job (--fingerprint-platform=windows patches V8/CSS/Blink
+    // at C++ level) — so the user's platform choice is respected.
+    let fp = profile.fingerprint;
     if (actualVersion) fp = reconcileVersionInFingerprint(fp, actualVersion);
 
     // Timezone handling BEFORE we build CLI args (CloakBrowser's
     // --fingerprint-timezone= is set at spawn time and reads fp.timezone
-    // at that moment; CFT applies it later via Emulation.setTimezoneOverride).
+    // at that moment).
     //
     // With a proxy: align fp.timezone to the egress IP's timezone. Detection
     // vendors run an "IP timezone vs JS timezone" check, and attaching a proxy
@@ -508,17 +478,6 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       );
     });
 
-    // Best-effort: suppress CFT's "is only for automated testing" infobar
-    // via the macOS managed-preference. Idempotent — only prompts for
-    // admin if the plist doesn't already exist or doesn't have the key.
-    if (process.platform === "darwin" && engine === "cft") {
-      await ensureCftInfobarSuppressed().catch((e: unknown) => {
-        console.warn(
-          "[mkt-browser] failed to suppress CFT infobar (continuing):",
-          (e as Error).message,
-        );
-      });
-    }
     // Chromium's --accept-lang flag expects a PLAIN comma-separated list
     // of language tags ("en-US,en"). It then computes q-values itself for
     // the HTTP Accept-Language header AND for `navigator.languages`. If
@@ -526,7 +485,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     // Chromium parses it as ["en-US", "en;q=0.9"] and then re-adds q's,
     // producing the malformed "en-US,en;q=0.9;q=0.9" we saw on browserscan.
     const acceptLangPlain = fp.languages.join(",");
-    const useSdkLifecycle = shouldUseCloakBrowserSdkLifecycle(engine, this.fastLicenseReuse);
+    const useSdkLifecycle = shouldUseCloakBrowserSdkLifecycle(this.fastLicenseReuse);
     const args = [
       ...(useSdkLifecycle ? [] : [`--user-data-dir=${browserDataDir}`]),
       "--remote-debugging-port=0",
@@ -567,29 +526,20 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       // Initial window size
       `--window-size=${fp.screen.width},${fp.screen.height}`,
     ];
-    if (engine === "cloakbrowser") {
-      // CloakBrowser implements fingerprint patches in C++. Feed it
-      // native flags and avoid CDP/JS overrides later; those are exactly
-      // the automation surfaces it hardens against.
-      args.push(...buildCloakBrowserFingerprintArgs(profileId, fp));
-      if (profile.proxy) {
-        args.push("--fingerprint-webrtc-ip=auto");
-      }
-      if (geoCoords) {
-        // Make navigator.geolocation report coordinates that match the
-        // proxy IP — without this, fingerprint-scan.com fires the "Check
-        // Geo API" warning when the location grant is exercised.
-        args.push(`--fingerprint-location=${geoCoords.latitude},${geoCoords.longitude}`);
-      }
-    } else {
-      // User-Agent (legacy header + navigator.userAgent). CFT needs this;
-      // CloakBrowser keeps UA + Client Hints coherent via native flags.
-      args.push(`--user-agent=${fp.userAgent}`);
+    // CloakBrowser implements fingerprint patches in C++. Feed it native
+    // flags and never layer CDP/JS overrides later; those are exactly the
+    // automation surfaces it hardens against. UA + Client Hints stay
+    // coherent via the native --fingerprint-brand-version flag.
+    args.push(...buildCloakBrowserFingerprintArgs(profileId, fp));
+    if (profile.proxy) {
+      args.push("--fingerprint-webrtc-ip=auto");
     }
-    // CFT-only: --test-type=gpu disables the "Chrome for Testing is for
-    // automated testing" infobar by entering IsGpuTest() exit branch in
-    // chrome/browser/ui/startup/infobar_utils.cc. CloakBrowser doesn't
-    // need this — and putting it in gpu-test mode crashes the binary.
+    if (geoCoords) {
+      // Make navigator.geolocation report coordinates that match the
+      // proxy IP — without this, fingerprint-scan.com fires the "Check
+      // Geo API" warning when the location grant is exercised.
+      args.push(`--fingerprint-location=${geoCoords.latitude},${geoCoords.longitude}`);
+    }
     // ── DNS coherence and leak prevention ───────────────────────────
     // Applies to EVERY profile, not only proxied ones. These flags lived
     // inside the proxy branch until browserscan measured a profile without
@@ -630,9 +580,6 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       }),
     );
 
-    if (engine === "cft") {
-      args.push("--test-type=gpu");
-    }
     if (packagedContractFixture) {
       // Restricted verification hosts cannot start Chrome's GPU sandbox. Normal launches never
       // enter this branch; the verifier separately proves a real CDP-ready browser lifecycle.
@@ -819,7 +766,7 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
       child = spawn(chromiumPath, args, {
         // The fallback launcher stays detached so an app crash leaves a recoverable browser. The
         // SDK path owns its process through Playwright and does not enter this branch.
-        detached: shouldDetachBrowserProcess(engine, this.fastLicenseReuse),
+        detached: shouldDetachBrowserProcess(this.fastLicenseReuse),
         stdio: ["ignore", "ignore", "pipe"],
         env: cleanEnv,
       });
@@ -951,38 +898,15 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     }
     const launchLogContext: ProfileLifecycleLogContext = { pid: trackedPid, port, startedAt };
 
-    // Apply per-target emulation: timezone, locale, Sec-CH-UA via
-    // userAgentMetadata (works on stock Chromium — no patches needed!),
-    // plus a WebRTC handler when a proxy is configured. Runs on the
-    // root tab + every existing tab + every future tab.
+    // Apply per-target bootstrap. No CDP Emulation.* layer at all:
+    // CloakBrowser sets UA, timezone, locale, screen and WebGL natively at
+    // C++ level through its --fingerprint-* switches, and layering CDP
+    // overrides on top produces subtle disagreements between layers (e.g.
+    // our CDP UA string ≠ the native UA-CH brand list) that composite
+    // scorers like fingerprint-scan.com flag as "Masking detected". Trust
+    // the native binary. WebRTC egress is likewise handled natively via
+    // --fingerprint-webrtc-ip=auto on proxied profiles.
     //
-    // Order matters: WebRTC injection goes FIRST so that even if
-    // Emulation commands fail, the IP leak is already plugged.
-    const useProxy = !!profile.proxy;
-
-    // Probe the proxy's public IP so we can spoof WebRTC ICE candidates
-    // to match it (the convincing fingerprint pattern: VPN user with
-    // WebRTC enabled, candidates pointing to the egress IP). If the
-    // probe fails (proxy down, ipapi blocked) we fall back to disabling
-    // RTCPeerConnection entirely — less stealthy but still leak-proof.
-    // WebRTC: if we have a proxy with a known egress IP, spoof ICE
-    // candidates to match. Otherwise (or if probe failed) fall back to
-    // a kill-switch that disables RTCPeerConnection — less stealthy but
-    // leak-proof. CloakBrowser handles WebRTC natively when the
-    // --fingerprint-webrtc-ip=auto flag is set, so we skip this preload.
-    const webrtcScript =
-      engine === "cloakbrowser"
-        ? null
-        : webrtcSpoofIp
-          ? buildWebRtcSpoofScript(webrtcSpoofIp)
-          : WEBRTC_BLOCK_SCRIPT;
-    // Unified fingerprint preload — covers everything CDP `Emulation`
-    // domain doesn't (navigator.platform, hardwareConcurrency, deviceMemory,
-    // WebGL UNMASKED_VENDOR/RENDERER). CloakBrowser already handles these
-    // natively in C++, so we skip our preload entirely on it — double-
-    // patching produces inconsistent values that detection vendors flag.
-    const fingerprintScript =
-      engine === "cloakbrowser" ? null : buildFingerprintPreloadScript(fp, { includeWebGl: true });
     // Launch can hang before the window watcher exists, so durable stage pairs reveal the exact
     // CDP await.
     writeProfileLifecycleLog(profileId, launchLogContext, "BOOTSTRAP-START");
@@ -999,117 +923,10 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
             targetDetails,
           );
         }
-        // 1. WebRTC kill-switch / spoof when proxy is on.
-        //    CloakBrowser handles WebRTC natively (webrtcScript is null).
-        if (useProxy && webrtcScript) {
-          // addScriptToEvaluateOnNewDocument applies on EVERY future
-          // document load in this target — works for iframes too. The
-          // immediate Runtime.evaluate is a belt-and-braces patch of the
-          // currently-loaded document; it expects an active execution
-          // context which iframes that haven't finished navigating yet
-          // don't have. Silence "Cannot find default execution context"
-          // — addScript already covered the next load.
-          await send("Page.addScriptToEvaluateOnNewDocument", {
-            source: webrtcScript,
-          }).catch((e: unknown) => {
-            console.error("[mkt-browser] WebRTC addScript failed:", e);
-          });
-          await send("Runtime.evaluate", { expression: webrtcScript }).catch((e: unknown) => {
-            const msg = (e as Error).message;
-            if (!/default execution context/i.test(msg)) {
-              console.error("[mkt-browser] WebRTC eval failed:", e);
-            }
-          });
-        }
-        // 1b. Generic fingerprint patches (deviceMemory, hwConcurrency,
-        //     navigator.platform, WebGL UNMASKED_*). CloakBrowser handles
-        //     these in C++ — skip our preload to avoid double-patching.
-        if (fingerprintScript) {
-          await send("Page.addScriptToEvaluateOnNewDocument", {
-            source: fingerprintScript,
-          }).catch((e: unknown) => {
-            console.error("[mkt-browser] fingerprint addScript failed:", e);
-          });
-          await send("Runtime.evaluate", { expression: fingerprintScript }).catch((e: unknown) => {
-            const msg = (e as Error).message;
-            if (!/default execution context/i.test(msg)) {
-              console.error("[mkt-browser] fingerprint eval failed:", e);
-            }
-          });
-        }
-        // 1c. Screen / device metrics — TOP-LEVEL TARGETS ONLY. iframes
-        //     reject with "Command can only be executed on top-level
-        //     targets" — they inherit metrics from their parent page.
-        //     Skip for CloakBrowser: --fingerprint-screen-{width,height}
-        //     already configures native screen at C++ level, and
-        //     setDeviceMetricsOverride on top can produce inconsistent
-        //     window.innerWidth vs screen.width values that detection
-        //     vendors flag.
-        if (ctx.isRoot && engine !== "cloakbrowser") {
-          try {
-            await send("Emulation.setDeviceMetricsOverride", {
-              width: 0,
-              height: 0,
-              deviceScaleFactor: fp.dpr,
-              mobile: false,
-              screenWidth: fp.screen.width,
-              screenHeight: fp.screen.height,
-              screenOrientation: { type: "landscapePrimary", angle: 0 },
-            });
-          } catch (e) {
-            console.error("[mkt-browser] setDeviceMetricsOverride failed:", e);
-          }
-        }
-        // 2-4. Timezone / Locale / UA+UA-CH overrides via CDP.
-        //
-        // ONLY run for CFT. CloakBrowser sets these natively at C++ level
-        // through --fingerprint-timezone / --fingerprint-locale /
-        // --fingerprint-brand-version. Layering CDP `Emulation.*` on top
-        // produces subtle disagreements between layers (e.g. our CDP UA
-        // string ≠ CloakBrowser's native UA-CH brand list) that
-        // composite scorers like fingerprint-scan.com flag as "Masking
-        // detected". Trust the native binary on CloakBrowser.
-        if (engine !== "cloakbrowser") {
-          try {
-            await send("Emulation.setTimezoneOverride", {
-              timezoneId: fp.timezone,
-            });
-          } catch (e) {
-            console.error("[mkt-browser] setTimezoneOverride failed:", e);
-          }
-          try {
-            await send("Emulation.setLocaleOverride", { locale: fp.locale });
-          } catch (e) {
-            // "Another locale override is already in effect" fires when
-            // Target.setAutoAttach re-attaches an already-configured target;
-            // the override is in place, we just can't replace it. Harmless.
-            const msg = (e as Error).message;
-            if (!/already in effect/i.test(msg)) {
-              console.error("[mkt-browser] setLocaleOverride failed:", e);
-            }
-          }
-          const meta = safeBuildUserAgentMetadata(fp);
-          try {
-            const params: Record<string, unknown> = {
-              userAgent: fp.userAgent,
-              // Plain language list — see --accept-lang comment above.
-              acceptLanguage: acceptLangPlain,
-              platform: fp.platform,
-            };
-            if (meta) params.userAgentMetadata = meta;
-            await send("Emulation.setUserAgentOverride", params);
-          } catch (e) {
-            console.error("[mkt-browser] setUserAgentOverride failed:", e);
-          }
-        } else {
-          // CloakBrowser: no CDP Emulation.* layer at all. UA, timezone and —
-          // since the 151 measurement above — locale each have a native
-          // --fingerprint-* patch, and a CDP override on top would be a second
-          // source of truth that can disagree with the patch under a scanner.
-        }
-        // Diagnostic: capture what the page actually sees AFTER overrides.
-        // Logs once per session — if browserscan reports "Different browser
-        // name", these values tell us whether our override landed.
+        // Diagnostic: capture what the page actually sees AFTER the native
+        // fingerprint patches. Logs once per session — if browserscan
+        // reports "Different browser name", these values tell us whether
+        // the native patches landed.
         if (traceTarget) {
           writeProfileLifecycleLog(
             profileId,
@@ -1219,28 +1036,26 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     // Every earlier check for a refusal sampled `childExit` at a moment the child was still alive,
     // because the engine serves CDP before the licence server has answered. Waiting for the window
     // to close is what turns "resolved with a pid for a browser that is about to die" into a thrown
-    // refusal the rotation loop can act on. Skipped for engines with no licence channel, and it
-    // returns immediately once the child exits, so a refusal is detected as fast as it happens.
-    if (engine === "cloakbrowser") {
-      if (sdkLifecycle) {
-        try {
-          await sdkLifecycle.settleLicenceVerdict(spawnedAtMs);
-        } catch (error) {
-          const exitCode = cloakBrowserSdkLicenseExitCode(error);
-          if (exitCode !== null) throw launchExitError(exitCode, "SDK licence verification");
-          throw error;
-        }
-      } else if (child) {
-        await settleLicenceVerdict(launchProcess, child, spawnedAtMs);
+    // refusal the rotation loop can act on. It returns immediately once the child exits, so a
+    // refusal is detected as fast as it happens.
+    if (sdkLifecycle) {
+      try {
+        await sdkLifecycle.settleLicenceVerdict(spawnedAtMs);
+      } catch (error) {
+        const exitCode = cloakBrowserSdkLicenseExitCode(error);
+        if (exitCode !== null) throw launchExitError(exitCode, "SDK licence verification");
+        throw error;
       }
-      if (
-        child?.pid &&
-        launchProcess.childExit &&
-        trackedPid === child.pid &&
-        !isPidAlive(trackedPid)
-      ) {
-        throw launchExitError(launchProcess.childExit.exitCode, "licence verification");
-      }
+    } else if (child) {
+      await settleLicenceVerdict(launchProcess, child, spawnedAtMs);
+    }
+    if (
+      child?.pid &&
+      launchProcess.childExit &&
+      trackedPid === child.pid &&
+      !isPidAlive(trackedPid)
+    ) {
+      throw launchExitError(launchProcess.childExit.exitCode, "licence verification");
     }
 
     if (hasLicensedLease) await this.licenseLeaseRecorder?.active(profileId);
@@ -1394,8 +1209,9 @@ export class ChromiumBrowserDriver extends EventEmitter implements BrowserDriver
     _method: ShutdownMethod,
     seatReleasedOverride?: boolean,
   ): Promise<void> {
-    // CFT has no vendor seat lifecycle. The recorder is process-global, so key ownership is the
-    // guard that prevents a CFT failure from mutating an older CloakBrowser lease for this profile.
+    // A launch without a configured key holds no vendor seat. The recorder is process-global, so
+    // key ownership is the guard that prevents a keyless failure from mutating an older licensed
+    // lease for this profile.
     if (this.licenseKeyPool?.keyFor(profileId) === null || !this.licenseKeyPool) return;
     const seatReleased = seatReleasedOverride ?? false;
     // The pool forgets this the moment the app exits. The journal is what carries a resting seat

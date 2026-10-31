@@ -60,7 +60,7 @@ test("makes starting state durable before either licensed Browser launcher", () 
 test("keeps page control on a port and routes fast Windows Cloak through the official SDK", () => {
   const launch = method("private async launchTracked", "private async handleRunningChildExit");
 
-  assert.match(launch, /shouldUseCloakBrowserSdkLifecycle\(engine, this\.fastLicenseReuse\)/);
+  assert.match(launch, /shouldUseCloakBrowserSdkLifecycle\(this\.fastLicenseReuse\)/);
   assert.match(launch, /"--remote-debugging-port=0"/);
   assert.match(launch, /useSdkLifecycle \? \[\] : \[`--user-data-dir=\$\{browserDataDir\}`\]/);
   assert.match(launch, /initialUrl && !useSdkLifecycle/);

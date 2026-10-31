@@ -3,15 +3,15 @@ import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 
 /**
- * Which Chromium-derived binary the bootstrap downloads on first run.
- *   - "cft": Chrome for Testing — Google's official automation channel and a reproducible
- *     compatibility engine. It is not identity-isolation evidence.
- *   - "cloakbrowser": the licensed provider engine selected for controlled testing. Provider
- *     modifications and licence status do not prove that native identity surfaces are isolated;
- *     the current release keeps that claim explicitly open. The binary is downloaded to the user
- *     machine and never bundled.
+ * Which Chromium-derived binary the bootstrap downloads on first run. CloakBrowser is the only
+ * engine: the licensed provider engine selected for controlled testing. Provider modifications and
+ * licence status do not prove that native identity surfaces are isolated; the current release keeps
+ * that claim explicitly open. The binary is downloaded to the user machine and never bundled.
+ *
+ * The type survives as a single-member union so older settings files that carry a different value
+ * keep loading (coerced to the only valid engine) instead of crashing.
  */
-export type BrowserEngine = "cft" | "cloakbrowser";
+export type BrowserEngine = "cloakbrowser";
 
 export interface AppSettings {
   /** Theme — "dark" only for now, kept for forward compatibility */
@@ -61,8 +61,8 @@ export interface AppSettings {
 const DEFAULTS: AppSettings = {
   theme: "dark",
   mcpHttpEnabled: true,
-  // Fresh profile-manager installs need no vendor licence. Explicit saved selections are retained.
-  browserEngine: "cft",
+  // The only engine. A stored "cft" selection from an older build coerces to this on load.
+  browserEngine: "cloakbrowser",
   cloakBrowserLicenseKey: "",
   cloakBrowserLicenseKeys: [],
   startupOrphanSweep: true,
@@ -118,10 +118,10 @@ export class SettingsStore {
       theme: "dark",
       mcpHttpEnabled:
         typeof raw.mcpHttpEnabled === "boolean" ? raw.mcpHttpEnabled : DEFAULTS.mcpHttpEnabled,
+      // Anything an older build may have saved ("cft", or an unknown value) coerces to the only
+      // engine this build runs, without rewriting the file underneath the operator.
       browserEngine:
-        raw.browserEngine === "cft" || raw.browserEngine === "cloakbrowser"
-          ? raw.browserEngine
-          : DEFAULTS.browserEngine,
+        raw.browserEngine === "cloakbrowser" ? raw.browserEngine : DEFAULTS.browserEngine,
       cloakBrowserLicenseKey:
         typeof raw.cloakBrowserLicenseKey === "string"
           ? raw.cloakBrowserLicenseKey.trim()

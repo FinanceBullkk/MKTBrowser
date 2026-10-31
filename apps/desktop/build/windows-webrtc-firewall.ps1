@@ -2,7 +2,6 @@ param(
   [Parameter(Mandatory = $true)]
   [ValidateSet("CheckProfiles", "CheckOwner", "Install", "Uninstall", "Verify", "VerifyAbsent")]
   [string]$Mode,
-  [string]$CftPath,
   [string]$CloakBrowserPath,
   [string]$OwnedRuleInventoryPath
 )
@@ -132,7 +131,7 @@ function Owned-Rules {
   })
 }
 
-function Assert-FirewallOwnership([string]$Cft, [string]$Cloak) {
+function Assert-FirewallOwnership([string]$Cloak) {
   foreach ($rule in @(Owned-Rules)) {
     # "Any" is the cmdlets' word for a rule bound to no program at all. It must fail closed exactly
     # like a blank did under COM, and never reach GetFullPath, which would resolve it against the
@@ -140,8 +139,7 @@ function Assert-FirewallOwnership([string]$Cft, [string]$Cloak) {
     if ([string]::IsNullOrWhiteSpace($rule.ApplicationName) -or
         $rule.ApplicationName -eq "Any") { throw "different-user-owner" }
     $program = [IO.Path]::GetFullPath($rule.ApplicationName)
-    if (-not $program.Equals($Cft, [StringComparison]::OrdinalIgnoreCase) -and
-        -not $program.Equals($Cloak, [StringComparison]::OrdinalIgnoreCase)) {
+    if (-not $program.Equals($Cloak, [StringComparison]::OrdinalIgnoreCase)) {
       throw "different-user-owner"
     }
   }
@@ -159,15 +157,12 @@ try {
     exit 0
   }
 
-  if ([string]::IsNullOrWhiteSpace($CftPath) -or
-      [string]::IsNullOrWhiteSpace($CloakBrowserPath)) { throw "unexpected-runtime-path" }
-  $cft = [IO.Path]::GetFullPath($CftPath)
+  if ([string]::IsNullOrWhiteSpace($CloakBrowserPath)) { throw "unexpected-runtime-path" }
   $cloak = [IO.Path]::GetFullPath($CloakBrowserPath)
-  if (-not $cft.EndsWith("\chromium\cft\runtime\chrome.exe", [StringComparison]::OrdinalIgnoreCase) -or
-      -not $cloak.EndsWith("\chromium\cloakbrowser\runtime\chrome.exe", [StringComparison]::OrdinalIgnoreCase)) {
+  if (-not $cloak.EndsWith("\chromium\cloakbrowser\runtime\chrome.exe", [StringComparison]::OrdinalIgnoreCase)) {
     throw "unexpected-runtime-path"
   }
-  Assert-FirewallOwnership $cft $cloak
+  Assert-FirewallOwnership $cloak
 
   if ($Mode -eq "CheckOwner") { exit 0 }
 
@@ -176,8 +171,10 @@ try {
     exit 0
   }
 
+  # The Uninstall branch above removes every rule in the group, including the
+  # "(Chrome for Testing)" rule older installers created; the sweep at the end
+  # of this branch drops any survivor that does not match the one candidate.
   $candidates = @(
-    @{ Candidate = "$prefix Candidate (Chrome for Testing)"; Final = "$prefix (Chrome for Testing)"; Program = $cft },
     @{ Candidate = "$prefix Candidate (CloakBrowser)"; Final = "$prefix (CloakBrowser)"; Program = $cloak }
   )
 

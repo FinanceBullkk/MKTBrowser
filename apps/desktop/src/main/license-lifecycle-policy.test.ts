@@ -16,17 +16,15 @@ test("fast sequential reuse is enabled by default and has a conservative rollbac
 });
 
 test("only the enabled Windows Cloak lifecycle follows the proven attached-process path", () => {
-  assert.equal(shouldDetachBrowserProcess("cloakbrowser", true, "win32"), false);
-  assert.equal(shouldDetachBrowserProcess("cloakbrowser", false, "win32"), true);
-  assert.equal(shouldDetachBrowserProcess("cft", true, "win32"), true);
-  assert.equal(shouldDetachBrowserProcess("cloakbrowser", true, "darwin"), true);
-  assert.equal(shouldDetachBrowserProcess("cloakbrowser", true, "linux"), true);
+  assert.equal(shouldDetachBrowserProcess(true, "win32"), false);
+  assert.equal(shouldDetachBrowserProcess(false, "win32"), true);
+  assert.equal(shouldDetachBrowserProcess(true, "darwin"), true);
+  assert.equal(shouldDetachBrowserProcess(true, "linux"), true);
 });
 
 test("only the enabled Windows Cloak lifecycle uses the official SDK adapter", () => {
-  assert.equal(shouldUseCloakBrowserSdkLifecycle("cloakbrowser", true, "win32"), true);
-  assert.equal(shouldUseCloakBrowserSdkLifecycle("cloakbrowser", false, "win32"), false);
-  assert.equal(shouldUseCloakBrowserSdkLifecycle("cft", true, "win32"), false);
-  assert.equal(shouldUseCloakBrowserSdkLifecycle("cloakbrowser", true, "darwin"), false);
-  assert.equal(shouldUseCloakBrowserSdkLifecycle("cloakbrowser", true, "linux"), false);
+  assert.equal(shouldUseCloakBrowserSdkLifecycle(true, "win32"), true);
+  assert.equal(shouldUseCloakBrowserSdkLifecycle(false, "win32"), false);
+  assert.equal(shouldUseCloakBrowserSdkLifecycle(true, "darwin"), false);
+  assert.equal(shouldUseCloakBrowserSdkLifecycle(true, "linux"), false);
 });

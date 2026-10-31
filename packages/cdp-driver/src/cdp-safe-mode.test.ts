@@ -23,7 +23,7 @@ function createSession(engine: string) {
 }
 
 test("H24: safe mode refuses an untracked CDP domain enable before sending it", async () => {
-  const { session, calls } = createSession("cft");
+  const { session, calls } = createSession("unknown");
 
   await assert.rejects(
     session.cdpSend("Debugger.enable", {}, undefined, { safe: true }),
@@ -33,7 +33,7 @@ test("H24: safe mode refuses an untracked CDP domain enable before sending it", 
 });
 
 test("safe mode pairs an approved domain enable with its disable", async () => {
-  const { session, calls } = createSession("cft");
+  const { session, calls } = createSession("unknown");
 
   await session.cdpSend("DOM.enable", {}, undefined, { safe: true });
 
