@@ -9,60 +9,38 @@ browser service, or an authorization boundary. MKTTool Web decides which account
 the Relay verifies signed tickets and holds operator secrets, and MKT Browser stores and launches
 profiles on the operator device.
 
-## Where things stand
-
-Everything below this section is an append-only log of dated checkpoints. Each entry is correct for
-its own date and is deliberately not rewritten, so the newest entry is not necessarily the current
-state. This block is the current state, and is the only part of this file that gets updated in
-place.
+## Where things stand (after the 31 October 2026 surgery)
 
 | | |
 |---|---|
-| Current source candidate | `20260930-browser-0.3.30-relay-22-self-service-onboarding-cft`; Browser `0.3.30`, control contract `6`, profile schema `3` |
-| Current source | `52325793fc564ffcfffe7bfb10c8139363eb56b2` on `main`; self-service onboarding, first-party license/PE attribution, and archive/runtime-download hardening |
-| Source behavior | verified sequential admission, SDK shutdown and explicit capacity refresh |
-| Pinned Relay | v22 archive `43a49411...b494c`; two local builds matched, packaged smoke passed, and immutable R2 bytes were full-read verified |
-| Pinned engine | CFT `152.0.7977.64` (`b0db25de…8004`), exact archive published in prior sequences 24/25 and candidate sequence 33 |
-| Packaged Cloak lifecycle | **PASS** — R27 completed `P1 -> P2 -> P1 -> P2`, 4/4 usable launches in 3.647-3.929 s with clean seat return |
-| Native fingerprint gate | **FAIL** — R28 completed 10/10 launches; criteria A/B/C all failed, so identity and real-account-safety claims remain prohibited |
-| Candidate status | **HOLD** — retained 0.3.30 Build A is published only at an immutable candidate key; signed v22 compatibility sequence 33 is published and read back; neither is operator-promoted |
-| Local gate | Browser source/quality, two-build normalized payload comparison (130/130), Relay v22 packaging, and exact-source binding pass at their measured scopes |
-| Retained 0.3.30 installer | 148,993,705 bytes; SHA-256 `2144a3c2472a7ac746561200cd7d172f2937e00f1207491a0dabc86c0615c34f` |
-| Prior two-build equivalence | PASS for 0.3.23 — 129 files; `app.asar` byte-identical (51,770,195 bytes) |
-| Prior clean-VM lifecycle | PASS (scope-limited) for exact 0.3.23 — clean `9/9`, repair `13/13`, uninstall `15/15` |
-| 0.3.30 clean-VM lifecycle | **PASS** — exact Build A clean install 9/9, installed-state repair 13/13, and terminal uninstall rerun 15/15 on the MSI-hosted snapshot clone; preceding harness/Defender-check FAIL receipts remain recorded |
-| Clean-VM CFT activation | **OPEN** — signed provisioning and real engine execution were not attempted; the VM clock drifted roughly 30-40 seconds under VirtualBox NEM |
-| Prior compatibility publication | PASS for 0.3.23 — sequences 23/24/25 immutable objects read back |
-| 0.3.30 candidate published / operator-promoted | **Yes / No** — production's approved download remains Browser 0.3.29 / Relay v21 |
+| Product | Desktop profile manager: profile CRUD/archive, proxy binding, extensions, MCP server, one-seat CloakBrowser licensing |
+| Engine of record | **CloakBrowser only** (vendor antidetect, licence-gated). The Chrome-for-Testing engine path, its fingerprint-injection branches, and the engine-switch UI were removed on 31 October 2026 |
+| Native fingerprint gate | Removed with the CFT path. The product is a profile manager with proxy binding, not an antidetect claim; CloakBrowser supplies the vendor's own identity handling |
+| Release ceremony | Retired (clean-VM, dual-build, receipts, canary). A release is: commit → typecheck/lint/tests/build green → one manual smoke → push. See the workspace `AGENTS.md` |
+| Pinned Relay | v22 archive `43a49411...b494c`, staged at package time by `fetch-pinned-relay.cjs` and hash-verified |
+| Updates | Relay/Browser update by reinstalling from MKTTool `/setup`; the relay self-update platform was removed |
+| Retained 0.3.30 installer | 148,993,705 bytes; SHA-256 `2144a3c2…c34f` (historical evidence, archived offline) |
 
-Packaging test files run serially to avoid measured PowerShell startup contention in the
-full local suite. Each wrapper test keeps its internal concurrency assertions and deadlines.
-The earlier contention failure remains historical; the committed 0.3.30 source quality gate
-passed before Build A was frozen.
+### Verification
 
-Relay packaging normalizes delivered Windows script line endings to CRLF while preserving the
-PowerShell BOM. The candidate pins Relay v22 archive `43a49411...b494c`, which carries local-only
-operator-key self-enrollment plus bootstrap and account-ticket hardening. Relay v21
-`45f6e669...8d3ed0` remains historical evidence. Source binding passed; real Browser
-activation and operator acceptance remain open.
+Node 22 required (`verify:node` enforces it). From the repo root:
 
-Rollout remains NO-GO until signed CFT activation, managed profile/proxy recovery,
-non-admin onboarding, physical second-PC acceptance, and the elapsed canary pass.
-The new tuple lets an allowlisted operator register their own PC and paste their own operator key
-only into local Relay; MKTTool Web receives a domain-separated fingerprint, never the key. Current
-checkpoint evidence is tracked in the workspace
-[self-service onboarding plan](../plans/260928-2219-full-team-self-service-onboarding/plan.md).
+```powershell
+corepack yarn install
+corepack yarn typecheck
+corepack yarn lint
+corepack yarn test:installer   # script contracts + all workspace suites + packaging tests
+corepack yarn build            # electron-vite build + directory package (tokenless env only)
+```
 
-The independently built 0.3.28 payloads matched, but that candidate was rejected before
-publication because it omitted the fork MIT license from the installed payload and retained
-Electron's GitHub copyright in the PE metadata. Those bytes are negative evidence and must not be
-published. The 0.3.30 installer is published for candidate testing only. The Windows package is
-still expected to be unsigned under the 12 August 2026 owner decision, so exact SmartScreen/UAC
-behavior and unfamiliar-operator reactions remain open on the retained candidate.
+`MKTTOOL_RELEASE_TOKEN` in the environment blocks direct packaging by design; the tokenized CMD
+wrapper under `apps/desktop/scripts/` is the token-bearing path for publishing.
 
-Current evidence of record is the workspace
-[MSI team-readiness report](../plans/reports/audit-261002-2008-msi-team-readiness.md).
-The 0.3.23 report remains historical evidence only.
+### Historical checkpoints (pre-surgery, append-only)
+
+Everything below this line is the pre-surgery append-only log of dated checkpoints. Each entry is
+correct for its own date and deliberately not rewritten; entries describing the CFT engine,
+release gates, or candidate promotion describe machinery that no longer exists.
 
 ## Fast sequential profile reuse live checkpoint - 22 September 2026
 
