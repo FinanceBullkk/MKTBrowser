@@ -14,6 +14,7 @@ profiles on the operator device.
 | | |
 |---|---|
 | Product | Desktop profile manager: profile CRUD/archive, proxy binding, extensions, MCP server, one-seat CloakBrowser licensing |
+| Development status | **Frozen as a launcher** (owner decision, 31 October 2026): no further feature work. CloakBrowser supplies the antidetect layer; improvement happens at the vendor and in operating discipline, not in this codebase |
 | Engine of record | **CloakBrowser only** (vendor antidetect, licence-gated). The Chrome-for-Testing engine path, its fingerprint-injection branches, and the engine-switch UI were removed on 31 October 2026 |
 | Native fingerprint gate | Removed with the CFT path. The product is a profile manager with proxy binding, not an antidetect claim; CloakBrowser supplies the vendor's own identity handling |
 | Release ceremony | Retired (clean-VM, dual-build, receipts, canary). A release is: commit → typecheck/lint/tests/build green → one manual smoke → push. See the workspace `AGENTS.md` |
