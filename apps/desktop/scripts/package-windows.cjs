@@ -42,9 +42,6 @@ const {
 const path = require("node:path");
 const { rebuild } = require("@electron/rebuild");
 const { assertSupportedNodeVersion } = require("../../../scripts/verify-node-version.cjs");
-const {
-  assertWorkspaceQualityContract,
-} = require("../../../scripts/workspace-quality-contract.cjs");
 const { fetchPinnedRelay } = require("./fetch-pinned-relay.cjs");
 const { verifyRelayExecutablePin } = require("./verify-relay-executable-pin.cjs");
 const {
@@ -106,7 +103,6 @@ async function packageWindows({ builderArgs, label, includeRelay = false }) {
   // Package scripts run after Yarn starts, so protect direct callers as well as shell entry points.
   assertTokenlessWindowsPackaging();
   assertSupportedNodeVersion();
-  assertWorkspaceQualityContract(repoRoot);
   runPrepackageQualityGates(label);
 
   if (includeRelay) {

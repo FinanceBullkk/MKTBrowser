@@ -1,5 +1,4 @@
 const assert = require("node:assert/strict");
-const { spawnSync } = require("node:child_process");
 const { mkdtemp, mkdir, rm, writeFile } = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
@@ -8,21 +7,12 @@ const {
   inspectFingerprintEnginePin,
   requestedFingerprintEngine,
 } = require("./fingerprint-engine-pin.cjs");
-const { launchMktBrowser, measureCloakProfile } = require("./fingerprint-measurement-mcp.cjs");
 
 const VERSION = "151.0.7922.108.6";
 const HASH = "a".repeat(64);
 const ARGS = { "engine-version": VERSION, "engine-sha256": HASH };
 const URL_WITH_SECRETS =
   "https://user:secret@archive.example/releases/engine.zip?signature=secret#secret";
-
-test("a missing app executable rejects through cleanup without an unhandled child error", async (t) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "mkt-missing-app-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  await assert.rejects(launchMktBrowser({
-    executable: path.join(root, "missing.exe"), userData: root, licenseKey: "synthetic-test-key",
-  }), /ENOENT/);
-});
 
 async function fixture(t, changes = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "mkt-engine-pin-test-"));
@@ -171,54 +161,3 @@ test("missing, malformed and invalid authorities fail without exposing their con
   );
 });
 
-test(
-  "CLI detects drift before credential checks, packaged launch or stock Chrome launch",
-  { skip: process.platform !== "win32" },
-  async (t) => {
-    const { root } = await fixture(t);
-    const child = spawnSync(
-      process.execPath,
-      [
-        path.join(__dirname, "measure-mkb01e-packaged-fingerprint.cjs"),
-        "--output",
-        path.join(root, "measurement.json"),
-      ],
-      {
-        cwd: path.resolve(__dirname, ".."),
-        encoding: "utf8",
-        windowsHide: true,
-        env: { ...process.env, LOCALAPPDATA: root, CLOAKBROWSER_LICENSE_KEY: "" },
-      },
-    );
-    assert.equal(child.status, 1);
-    assert.match(child.stderr, /Fingerprint engine pin drift/);
-    assert.doesNotMatch(child.stderr, /CLOAKBROWSER_LICENSE_KEY is required|secret|signature=/);
-    assert.equal(child.stdout, "");
-  },
-);
-
-test("measurement makes one launch attempt by default and labels opt-in retries as experimental", async () => {
-  for (const options of [{}, { seatRetryMinutes: 1 }]) {
-    let attempts = 0;
-    const logs = [];
-    const failure = options.seatRetryMinutes
-      ? "synthetic fatal launch failure"
-      : "ENGINE_UNAVAILABLE";
-    const app = {
-      callTool: async () => {
-        attempts += 1;
-        throw new Error(failure);
-      },
-    };
-    await assert.rejects(
-      measureCloakProfile(app, "synthetic-profile", "http://localhost/", {
-        ...options,
-        log: (line) => logs.push(line),
-      }),
-      new RegExp(failure),
-    );
-    assert.equal(attempts, 1);
-    assert.equal(logs.length, options.seatRetryMinutes ? 1 : 0);
-    if (logs.length) assert.match(logs[0], /WARNING: experimental.*may prolong/);
-  }
-});

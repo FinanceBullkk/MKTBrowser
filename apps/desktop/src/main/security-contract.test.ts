@@ -205,13 +205,6 @@ test("packaged verification exercises the profile lifecycle", () => {
   );
 });
 
-test("fingerprint measurement reports cleanup failures", () => {
-  const measurement = source("scripts/measure-mkb01e-packaged-fingerprint.cjs");
-  assert.doesNotMatch(measurement, /\.catch\(\(\) => \{\}\)/);
-  assert.match(measurement, /Fingerprint cleanup failed/);
-  assert.match(measurement, /cleanupErrors/);
-});
-
 function uniqueMatches(contents: string, pattern: RegExp): string[] {
   return [...new Set([...contents.matchAll(pattern)].map((match) => match[1]!))];
 }

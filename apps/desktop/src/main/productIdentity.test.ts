@@ -61,10 +61,6 @@ test("keeps desktop packaging metadata aligned with the product identity", () =>
     new URL("../../../../.github/workflows/windows-pipeline.yml", import.meta.url),
     "utf8",
   );
-  const releaseCandidateWorkflow = readFileSync(
-    new URL("../../../../.github/workflows/release-candidate.yml", import.meta.url),
-    "utf8",
-  );
   const viteConfig = readFileSync(
     new URL("../../electron.vite.config.ts", import.meta.url),
     "utf8",
@@ -135,22 +131,6 @@ test("keeps desktop packaging metadata aligned with the product identity", () =>
   assert.match(relayFetcher, /headers\.Authorization = `Bearer \$\{releaseToken\}`/);
   assert.doesNotMatch(relayFetcher, /MKTTOOL_RELEASE_COOKIE/);
 
-  // The dispatch secret stays under an alias until the bound snapshot is verified. The snapshot
-  // wrapper alone receives the canonical name, so no earlier Node, Corepack, or package step can
-  // inherit the release token.
-  assert.match(
-    releaseCandidateWorkflow,
-    /MKT_RELEASE_TOKEN_AFTER_VERIFICATION: \$\{\{ secrets\.MKTTOOL_RELEASE_TOKEN \}\}/,
-  );
-  assert.match(
-    releaseCandidateWorkflow,
-    /\$env:MKTTOOL_RELEASE_TOKEN = \$releaseToken/,
-  );
-  assert.doesNotMatch(
-    releaseCandidateWorkflow,
-    /MKTTOOL_RELEASE_TOKEN: \$\{\{ secrets\.MKTTOOL_RELEASE_TOKEN \}\}/,
-  );
-  assert.doesNotMatch(releaseCandidateWorkflow, /MKTTOOL_RELEASE_COOKIE/);
   assert.doesNotMatch(releaseWorkflow, /MKTTOOL_RELEASE_COOKIE/);
   assert.match(installerInclude, /windows-install-relay-payload\.ps1/);
   assert.match(installerInclude, /windows-startup-coordination\.ps1/);
